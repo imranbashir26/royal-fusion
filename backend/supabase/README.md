@@ -7,45 +7,47 @@ This folder contains the production database direction for Royal Fusion.
 Use Supabase for transactional eCommerce data:
 
 - Customer profiles and addresses
-- Admin memberships and roles
-- Products, categories, prices, stock, variants, images
+- Admin roles and permissions
+- Products, categories, collections, prices, stock, variants, and Cloudinary media references
 - Orders and order items
-- Coupons and shipping/payment settings
+- Promotions, coupons, shipping, payment status, and commerce settings
 - Reviews, contact messages, newsletter subscribers
 - Admin audit logs
 
-Sanity should own editorial content such as blogs, policy pages, homepage copy, and fragrance guides.
+Cloudinary owns commerce image files. Sanity owns journals and blogs only. Homepage banners,
+promotions, collections, and featured-product controls remain in Supabase and are managed by
+the Royal Fusion Admin Dashboard.
 
 ## Apply Schema
 
 1. Create a Supabase project.
 2. Open the SQL editor.
 3. Run `migrations/001_initial_schema.sql`.
-4. Run `seed/001_starter_catalog.sql` to load the current Royal Fusion categories, product catalog, and settings.
-5. Confirm every public table has RLS enabled.
-6. Create the first user through Supabase Auth.
-7. Insert that user's UUID into `admin_memberships` with role `Owner/Admin`.
+4. Run `migrations/002_launch_schema_foundation.sql`.
+5. Run `seed/001_starter_catalog.sql` to load fictional relational catalog and configuration data.
+6. Run the local/staging verification documented in `tests/README.md`.
+7. Confirm every exposed table has RLS enabled.
+8. Create the first user through Supabase Auth.
+9. Assign the `owner_admin` role in `user_roles` using a backend-only administrative operation.
 
 Example:
 
 ```sql
-insert into public.admin_memberships (user_id, role, status)
-values ('AUTH_USER_UUID_HERE', 'Owner/Admin', 'Active');
+insert into public.user_roles (user_id, role_id)
+select 'AUTH_USER_UUID_HERE', id from public.roles where key = 'owner_admin';
 ```
 
-## Storage Buckets
+## Cloudinary Media
 
-Create these Supabase Storage buckets:
+Supabase stores only Cloudinary identifiers and secure delivery URLs. Commerce media includes:
 
-- `product-images`: public read, admin-only write
-- `site-assets`: public read, admin/content-editor write
-- `cms-exports`: private, owner/admin only if needed
+- Product gallery media in `product_media`
+- Category media on `categories`
+- Collection banners on `collections`
+- Homepage banners and campaigns in `promotions`
+- Open Graph media in `seo_settings`
 
-Recommended file limits:
-
-- Product/site images: `image/jpeg`, `image/png`, `image/webp`
-- Max size: 3 MB per file before optimization
-- Convert public storefront assets to WebP during upload when possible
+Cloudinary upload signatures and API secrets must remain in Express. Never send them to Vite.
 
 ## Required Environment Variables
 
@@ -85,17 +87,33 @@ These must be replaced before production launch. The service layer should stay, 
 `seed/001_starter_catalog.sql` is generated from the current prototype data and includes:
 
 - The 7 current Royal Fusion products
-- Current category list
-- Site settings, shipping settings, payment settings, homepage JSON, and SEO JSON
+- Relational categories, collections, products, and product variants
+- Fictional Cloudinary-ready media placeholders
+- Public settings, shipping configuration, one homepage promotion, and SEO settings
 
-The seed is idempotent by product/category slug and site setting id.
+The seed contains no customers, credentials, payment account details, or production identifiers.
+It is idempotent by stable keys such as slug, SKU, code, and setting key.
+
+## Checkout Boundary
+
+`create_order_transaction` is callable only by `service_role`. It accepts variant IDs and
+quantities, locks inventory, reloads prices, applies coupon and shipping rules, creates all
+order records, and rolls back on failure. Do not call it from the browser. Express must verify
+the customer/admin request before invoking it with server-only credentials.
+
+## Verification And Rollback
+
+- Local/staging checks: `tests/README.md`
+- Migration rollback: `rollback/002_launch_schema_foundation_rollback.sql`
+
+Prefer restoring a pre-migration backup over destructive rollback when real data exists.
 
 ## First Production Build Order
 
-1. Add Supabase client packages.
-2. Add typed Supabase service modules.
-3. Migrate `products`, `categories`, `orders`, `coupons`, `reviews`, settings, and users.
-4. Replace customer auth store with Supabase Auth.
-5. Replace local media upload with Supabase Storage.
-6. Keep admin UI, but connect its API calls to Supabase-backed endpoints.
-7. Add audit logging for admin mutations.
+1. Validate migrations, RLS, checkout, rollback, and seed data locally.
+2. Generate typed Supabase database definitions.
+3. Implement backend Supabase repositories without switching application traffic.
+4. Replace customer and administrator identity with Supabase Auth.
+5. Replace local media upload with backend-signed Cloudinary upload.
+6. Connect admin operations to permission-checked Express endpoints.
+7. Connect storefront reads only after RLS and mapping tests pass.

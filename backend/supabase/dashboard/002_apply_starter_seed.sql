@@ -1,5 +1,6 @@
--- Royal Fusion fictional starter catalog.
--- Apply only after migrations 001 and 002. Contains no customers, credentials, or production identifiers.
+-- OPTIONAL: Royal Fusion fictional starter catalog for a new project.
+-- Apply only after 001_apply_complete_schema.sql. Contains no customers,
+-- orders, users, credentials, private settings, or production identifiers.
 
 begin;
 
@@ -228,31 +229,5 @@ values
   ('contact', '{"email":"support@example.invalid","phone":"+92 300 0000000","businessAddress":"Fictional address, Pakistan"}'::jsonb, true),
   ('commerce', '{"announcementEnabled":false,"announcementText":""}'::jsonb, true)
 on conflict (key) do update set value = excluded.value, active = excluded.active, updated_at = now();
-
-insert into public.site_settings (id, settings, shipping, payments, homepage, seo, public_settings, private_settings)
-values (
-  'site', '{}'::jsonb, '{}'::jsonb, '[]'::jsonb, '{}'::jsonb, '[]'::jsonb,
-  '{"migrationNote":"Public storefront settings are stored in public_site_settings."}'::jsonb,
-  '{}'::jsonb
-)
-on conflict (id) do update set
-  public_settings = excluded.public_settings,
-  private_settings = excluded.private_settings,
-  updated_at = now();
-
-insert into public.seo_settings (
-  id, page_key, route_path, title, description, canonical_url, robots,
-  og_title, og_description, og_image_cloudinary_public_id, og_image_secure_url, active
-)
-values
-  ('70000000-0000-4000-8000-000000000001', 'home', '/', 'Royal Fusion', 'Fictional starter homepage metadata.', '', 'index,follow', 'Royal Fusion', 'Fictional starter Open Graph metadata.', 'royal-fusion/placeholders/homepage-og', 'https://res.cloudinary.com/replace-cloud-name/image/upload/v1/royal-fusion/placeholders/homepage-og.webp', true),
-  ('70000000-0000-4000-8000-000000000002', 'shop', '/shop', 'Shop Royal Fusion', 'Fictional starter shop metadata.', '', 'index,follow', 'Shop Royal Fusion', 'Fictional starter shop Open Graph metadata.', 'royal-fusion/placeholders/shop-og', 'https://res.cloudinary.com/replace-cloud-name/image/upload/v1/royal-fusion/placeholders/shop-og.webp', true)
-on conflict (page_key) do update set
-  route_path = excluded.route_path, title = excluded.title, description = excluded.description,
-  canonical_url = excluded.canonical_url, robots = excluded.robots, og_title = excluded.og_title,
-  og_description = excluded.og_description,
-  og_image_cloudinary_public_id = excluded.og_image_cloudinary_public_id,
-  og_image_secure_url = excluded.og_image_secure_url,
-  active = excluded.active, updated_at = now();
 
 commit;
