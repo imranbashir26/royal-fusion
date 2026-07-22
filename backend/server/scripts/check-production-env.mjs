@@ -5,9 +5,10 @@ const required = [
   'JWT_SECRET',
   'ADMIN_SETUP_KEY',
   'VITE_SUPABASE_URL',
-  'VITE_SUPABASE_ANON_KEY',
+  'VITE_SUPABASE_PUBLISHABLE_KEY',
   'SUPABASE_URL',
-  'SUPABASE_SERVICE_ROLE_KEY',
+  'SUPABASE_SECRET_KEY',
+  'USE_SUPABASE',
   'VITE_SANITY_PROJECT_ID',
   'VITE_SANITY_DATASET',
   'VITE_SANITY_API_VERSION',
@@ -26,6 +27,9 @@ if ((process.env.JWT_SECRET ?? '').length < 32) weak.push('JWT_SECRET must be at
 if ((process.env.ADMIN_SETUP_KEY ?? '').length < 24) weak.push('ADMIN_SETUP_KEY must be at least 24 characters.')
 if ((process.env.CLIENT_ORIGIN ?? '').includes('localhost')) {
   weak.push('CLIENT_ORIGIN must be the production origin, not localhost.')
+}
+if (process.env.USE_SUPABASE !== 'true') {
+  weak.push('USE_SUPABASE must be true for the production Supabase deployment.')
 }
 
 if (missing.length || weak.length) {

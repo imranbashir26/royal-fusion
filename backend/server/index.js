@@ -14,6 +14,11 @@ import { publicRouter } from './routes/public.js'
 import { updateDb, nowIso } from './utils/database.js'
 import { validateRuntimeEnv } from './utils/env.js'
 import { sanitizeBody } from './utils/sanitize.js'
+import {
+  checkSupabaseConnectivity,
+  getDatabaseProvider,
+  isSupabaseConfigured,
+} from './services/supabaseClient.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -44,8 +49,13 @@ app.use(cookieParser())
 app.use(sanitizeBody)
 app.use('/uploads', express.static(path.resolve(__dirname, 'uploads')))
 
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'royal-fusion-api' })
+app.get('/api/health', async (_req, res) => {
+  res.json({
+    status: 'ok',
+    databaseProvider: getDatabaseProvider(),
+    supabaseConfigured: isSupabaseConfigured(),
+    supabaseConnectivity: await checkSupabaseConnectivity(),
+  })
 })
 
 app.use('/api/public', publicRouter)
