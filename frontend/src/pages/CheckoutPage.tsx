@@ -1,9 +1,8 @@
 import { CheckCircle2, CreditCard, Landmark, PackageCheck, Wallet } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, Navigate } from 'react-router-dom'
 import { Button } from '../components/common/Button'
-import { EmptyState } from '../components/common/EmptyState'
 import { PageHeader } from '../components/common/PageHeader'
 import { orderService } from '../services/orderService'
 import { useCartStore } from '../store/cartStore'
@@ -37,7 +36,8 @@ const paymentMethods: Array<{
 
 export function CheckoutPage() {
   const { products, payments, shipping } = useStorefront()
-  const { items, clearCart } = useCartStore()
+  const { items, selectedLineIds, removeItems } = useCartStore()
+  const selectedLineIdSet = new Set(selectedLineIds)
   const [paymentMethod, setPaymentMethod] = useState<OrderPayload['paymentMethod']>('Cash on Delivery')
   const [form, setForm] = useState({
     name: '',
@@ -53,8 +53,11 @@ export function CheckoutPage() {
   const [discount, setDiscount] = useState(0)
   const [shippingFee, setShippingFee] = useState(Number(shipping.defaultShippingFee ?? 0))
   const [success, setSuccess] = useState<{ id: string; message: string } | null>(null)
+  const [orderError, setOrderError] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const enrichedItems = items
+  const selectedCartItems = items.filter((item) => selectedLineIdSet.has(item.lineId))
+  const enrichedItems = selectedCartItems
     .map((item) => {
       const product = products.find((candidate) => candidate.id === item.productId)
       const size = product?.sizeOptions.find((option) => option.value === item.size)
@@ -66,6 +69,10 @@ export function CheckoutPage() {
     (total, item) => total + item!.unitPrice * item!.quantity,
     0,
   )
+  const selectedQuantity = enrichedItems.reduce((total, item) => total + item!.quantity, 0)
+  const selectedItemsSignature = selectedCartItems
+    .map((item) => `${item.lineId}:${item.quantity}`)
+    .join('|')
   const effectiveShippingFee =
     subtotal - discount >= Number(shipping.freeShippingAbove ?? Number.POSITIVE_INFINITY)
       ? 0
@@ -79,6 +86,12 @@ export function CheckoutPage() {
           description: String(payment.instructions ?? ''),
         }))
       : paymentMethods
+
+  useEffect(() => {
+    setDiscount(0)
+    setCouponMessage('')
+    setShippingFee(Number(shipping.defaultShippingFee ?? 0))
+  }, [selectedItemsSignature, shipping.defaultShippingFee])
 
   const validateCoupon = async () => {
     if (!couponCode.trim()) return
@@ -102,31 +115,49 @@ export function CheckoutPage() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const response = await orderService.createOrder({
-      items,
-      contact: {
-        name: form.name,
-        email: form.email,
-        phone: form.phone,
-      },
-      shipping: {
-        address: form.address,
-        city: form.city,
-        province: form.province,
-        notes: form.notes,
-      },
-      paymentMethod,
-      couponCode,
-    })
-    setSuccess({ id: response.id, message: response.message })
-    clearCart()
+    if (isSubmitting || enrichedItems.length === 0) return
+
+    setOrderError('')
+    setIsSubmitting(true)
+    const orderedLineIds = enrichedItems.map((item) => item!.lineId)
+
+    try {
+      const response = await orderService.createOrder({
+        items: enrichedItems.map((item) => ({
+          productId: item!.productId,
+          size: item!.size,
+          quantity: item!.quantity,
+        })),
+        contact: {
+          name: form.name,
+          email: form.email,
+          phone: form.phone,
+        },
+        shipping: {
+          address: form.address,
+          city: form.city,
+          province: form.province,
+          notes: form.notes,
+        },
+        paymentMethod,
+        couponCode,
+      })
+      setSuccess({ id: response.id, message: response.message })
+      removeItems(orderedLineIds)
+    } catch {
+      setOrderError(
+        "We couldn't place your order. Please try again. Your cart and checkout details have been kept.",
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   if (success) {
     return (
       <>
         <PageHeader
-          description="Your mock checkout has completed successfully."
+          description="Your order has been confirmed successfully."
           eyebrow="Order Confirmed"
           title="A Royal Package Is Being Prepared"
         />
@@ -134,7 +165,7 @@ export function CheckoutPage() {
           <div className="marble-panel rounded-lg p-8 text-center">
             <CheckCircle2 className="mx-auto h-16 w-16 text-[#2f8f5b]" aria-hidden="true" />
             <h2 className="mt-5 font-serif text-4xl font-semibold text-burgundy">{success.message}</h2>
-            <p className="mt-3 text-brownroyal/70">Mock order ID: {success.id}</p>
+            <p className="mt-3 text-brownroyal/70">Order ID: {success.id}</p>
             <Link className={buttonClasses({ className: 'mt-7' })} to="/shop">
               Continue Shopping
             </Link>
@@ -146,19 +177,11 @@ export function CheckoutPage() {
 
   if (enrichedItems.length === 0) {
     return (
-      <>
-        <PageHeader
-          description="Add perfumes to your cart before starting checkout."
-          eyebrow="Checkout"
-          title="Checkout UI"
-        />
-        <section className="container-lux py-12">
-          <EmptyState
-            description="There are no cart items to checkout right now."
-            title="Your checkout is empty"
-          />
-        </section>
-      </>
+      <Navigate
+        replace
+        state={{ cartMessage: 'Select at least one product to continue.' }}
+        to="/cart"
+      />
     )
   }
 
@@ -225,14 +248,26 @@ export function CheckoutPage() {
             {couponMessage && <p className="text-sm font-semibold text-oldgold">{couponMessage}</p>}
           </CheckoutPanel>
 
-          <Button size="lg" type="submit">
+          {orderError && (
+            <p
+              className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-800"
+              role="alert"
+            >
+              {orderError}
+            </p>
+          )}
+
+          <Button disabled={isSubmitting} size="lg" type="submit">
             <PackageCheck className="h-5 w-5" aria-hidden="true" />
-            Place Mock Order
+            {isSubmitting ? 'Placing Order...' : 'Place Order'}
           </Button>
         </form>
 
         <aside className="h-fit rounded-lg border border-champagne/25 bg-ivory/90 p-6 shadow-xl shadow-brownroyal/10 lg:sticky lg:top-24">
           <h2 className="font-serif text-3xl font-semibold text-burgundy">Order Summary</h2>
+          <p className="mt-1 text-sm font-semibold text-brownroyal/60">
+            {enrichedItems.length} selected {enrichedItems.length === 1 ? 'item' : 'items'}
+          </p>
           <div className="mt-5 space-y-4">
             {enrichedItems.map((item) => (
               <div className="flex justify-between gap-4 border-b border-champagne/20 pb-3" key={`${item!.productId}-${item!.size}`}>
@@ -253,6 +288,7 @@ export function CheckoutPage() {
             <span>{formatCurrency(orderTotal)}</span>
           </div>
           <div className="mt-4 space-y-2 text-sm text-brownroyal/70">
+            <div className="flex justify-between"><span>Selected quantity</span><span>{selectedQuantity}</span></div>
             <div className="flex justify-between"><span>Subtotal</span><span>{formatCurrency(subtotal)}</span></div>
             <div className="flex justify-between"><span>Discount</span><span>{formatCurrency(discount)}</span></div>
             <div className="flex justify-between"><span>Shipping</span><span>{formatCurrency(effectiveShippingFee)}</span></div>

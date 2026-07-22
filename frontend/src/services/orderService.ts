@@ -1,27 +1,29 @@
 import type { OrderPayload } from '../types'
 import { apiClient } from './apiClient'
 
+export interface OrderResponse {
+  id: string
+  status: 'confirmed'
+  message: string
+  order: {
+    id: string
+    orderNumber: string
+    status: 'Pending'
+  }
+}
+
 export const orderService = {
-  async createOrder(payload: OrderPayload) {
-    try {
-      return await apiClient.request<{
-        id: string
-        status: string
-        message: string
-      }>('/public/orders', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      })
-    } catch {
-      return apiClient.post(
-      {
-        id: `RF-${Date.now()}`,
-        status: 'confirmed',
-        message: 'Your Royal Fusion order has been received.',
-      },
-      payload,
-      )
+  async createOrder(payload: OrderPayload): Promise<OrderResponse> {
+    const response = await apiClient.request<unknown>('/public/orders', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+
+    if (!isConfirmedOrderResponse(response)) {
+      throw new Error('The order API returned an invalid confirmation.')
     }
+
+    return response
   },
   validateCoupon: (payload: {
     code: string
@@ -40,4 +42,22 @@ export const orderService = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+}
+
+function isConfirmedOrderResponse(response: unknown): response is OrderResponse {
+  if (!response || typeof response !== 'object') return false
+  const candidate = response as Partial<OrderResponse>
+  const order = candidate.order
+
+  return Boolean(
+    typeof candidate.id === 'string' &&
+    candidate.id.trim() &&
+    candidate.status === 'confirmed' &&
+    typeof candidate.message === 'string' &&
+    candidate.message.trim() &&
+    order &&
+    order.id === candidate.id &&
+    order.orderNumber === candidate.id &&
+    order.status === 'Pending',
+  )
 }
