@@ -1,0 +1,51 @@
+export default {
+  name: 'blogPost',
+  title: 'Blog Post',
+  type: 'document',
+  fields: [
+    { name: 'title', title: 'Title', type: 'string', validation: (Rule: any) => Rule.required().min(3).max(120) },
+    {
+      name: 'slug',
+      title: 'Slug',
+      type: 'slug',
+      options: { source: 'title', maxLength: 96 },
+      validation: (Rule: any) => Rule.required(),
+    },
+    { name: 'excerpt', title: 'Excerpt', type: 'text', rows: 3, validation: (Rule: any) => Rule.required().max(240) },
+    { name: 'featuredImage', title: 'Featured Image', type: 'image', options: { hotspot: true }, validation: (Rule: any) => Rule.required() },
+    { name: 'imageAlt', title: 'Image Alt Text', type: 'string', validation: (Rule: any) => Rule.required().max(160) },
+    { name: 'category', title: 'Category', type: 'reference', to: [{ type: 'blogCategory' }] },
+    { name: 'author', title: 'Author', type: 'reference', to: [{ type: 'author' }] },
+    { name: 'tags', title: 'Tags', type: 'array', of: [{ type: 'string' }] },
+    { name: 'readTime', title: 'Read Time', type: 'string', initialValue: '4 min read' },
+    { name: 'publishedAt', title: 'Published At', type: 'datetime' },
+    {
+      name: 'status',
+      title: 'Status',
+      type: 'string',
+      options: { list: ['Draft', 'Published', 'Unpublished'], layout: 'radio' },
+      initialValue: 'Draft',
+      validation: (Rule: any) => Rule.required(),
+    },
+    {
+      name: 'body',
+      title: 'Body',
+      type: 'array',
+      of: [
+        { type: 'block' },
+        { type: 'image', options: { hotspot: true } },
+      ],
+      validation: (Rule: any) => Rule.required(),
+    },
+    { name: 'seoTitle', title: 'SEO Title', type: 'string', validation: (Rule: any) => Rule.max(70) },
+    { name: 'seoDescription', title: 'SEO Meta Description', type: 'text', rows: 3, validation: (Rule: any) => Rule.max(160) },
+    { name: 'ogImage', title: 'Open Graph Image', type: 'image', options: { hotspot: true } },
+  ],
+  preview: {
+    select: {
+      title: 'title',
+      subtitle: 'status',
+      media: 'featuredImage',
+    },
+  },
+}

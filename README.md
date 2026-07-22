@@ -1,32 +1,79 @@
-# React + TypeScript + Vite
+# Royal Fusion
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Royal Fusion is a luxury perfume eCommerce prototype with a React storefront, admin dashboard, and Express API. The repository is split into independent frontend and backend workspaces while keeping root-level project documentation.
 
-Currently, two official plugins are available:
+## Structure
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```text
+Royal Fusion/
+├─ frontend/          # Vite, React, TypeScript, Tailwind, storefront/admin UI
+├─ backend/           # Express API, JSON prototype DB, uploads, Supabase, Sanity
+├─ PROJECT_CONTEXT.md
+├─ PRODUCTION_READINESS.md
+├─ BACKEND_PLAN.md
+├─ ADMIN_MANAGEMENT_DOCS.md
+├─ package.json       # workspace/orchestration commands
+└─ package-lock.json  # npm workspace lockfile
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## Install
+
+Install all workspaces from the root:
+
+```bash
+npm install
+```
+
+Or install independently:
+
+```bash
+cd frontend && npm install
+cd backend && npm install
+```
+
+## Development
+
+Run the frontend:
+
+```bash
+npm run dev:frontend
+```
+
+Run the backend API:
+
+```bash
+npm run dev:backend
+```
+
+Run both:
+
+```bash
+npm run dev:full
+```
+
+Local URLs:
+
+- Frontend: `http://localhost:5173`
+- API health: `http://127.0.0.1:4177/api/health`
+
+## Environment Files
+
+- Frontend browser-safe variables belong in `frontend/.env`.
+- Backend/server-only variables belong in `backend/.env`.
+- Use `frontend/.env.example` and `backend/.env.example` as templates.
+
+Never expose `SUPABASE_SERVICE_ROLE_KEY`, `SANITY_API_TOKEN`, or other privileged secrets in frontend/Vite code.
+
+## Prototype Database
+
+The live JSON database is `backend/server/data/db.json` and is ignored because it can contain admin users, password hashes, customers, orders, messages, and subscribers. A sanitized starter file is kept at `backend/server/data/db.example.json`; the backend copies it to `db.json` automatically when a local database does not exist.
+
+## Useful Commands
+
+```bash
+npm run build
+npm run lint
+npm run api:smoke
+npm run env:check:prod
+npm run admin:create -- --email owner@example.com --password "StrongPassword123!" --name "Owner Name"
+```

@@ -3,31 +3,24 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "oxlint",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "@tailwindcss/vite": "^4.3.1",
-    "clsx": "^2.1.1",
-    "framer-motion": "^12.42.0",
-    "lucide-react": "^1.22.0",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "react-router-dom": "^7.18.0",
-    "tailwind-merge": "^3.6.0",
-    "tailwindcss": "^4.3.1",
-    "zustand": "^5.0.14"
+    "dev": "npm run dev --workspace frontend",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "dev:api": "npm run dev --workspace backend",
+    "dev:backend": "npm run dev --workspace backend",
+    "dev:full": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "build": "npm run build --workspace frontend",
+    "lint": "npm run lint --workspace frontend",
+    "preview": "npm run preview --workspace frontend",
+    "admin:create": "npm run admin:create --workspace backend --",
+    "api:smoke": "npm run api:smoke --workspace backend",
+    "env:check:prod": "npm run env:check:prod --workspace backend"
   },
   "devDependencies": {
-    "@types/node": "^24.13.2",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.2",
-    "oxlint": "^1.69.0",
-    "typescript": "~6.0.2",
-    "vite": "^8.1.0"
+    "concurrently": "^10.0.3"
   }
 }

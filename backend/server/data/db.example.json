@@ -1,0 +1,30 @@
+{
+  "users": [],
+  "products": [],
+  "categories": [],
+  "orders": [],
+  "customers": [],
+  "coupons": [],
+  "banners": [],
+  "blogs": [],
+  "testimonials": [],
+  "reviews": [],
+  "newsletterSubscribers": [],
+  "contactMessages": [],
+  "settings": {
+    "brandName": "Fictional Store",
+    "currency": "PKR",
+    "announcementEnabled": false,
+    "announcementText": ""
+  },
+  "homepage": {},
+  "shipping": {
+    "defaultShippingFee": 0,
+    "freeShippingAbove": 0,
+    "cityWise": [],
+    "provinceWise": []
+  },
+  "payments": [],
+  "seo": [],
+  "editablePages": []
+}

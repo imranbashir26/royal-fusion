@@ -1,0 +1,26 @@
+{
+  "name": "@royal-fusion/backend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node server/index.js",
+    "start": "node server/index.js",
+    "admin:create": "node server/scripts/create-admin.mjs",
+    "api:smoke": "node server/scripts/smoke-test.mjs",
+    "env:check:prod": "node server/scripts/check-production-env.mjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
+    "helmet": "^8.2.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.2.0",
+    "nanoid": "^5.1.16",
+    "zod": "^4.4.3"
+  }
+}

@@ -7,10 +7,35 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
+.env
+.env.*
+!.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+
+node_modules/
+dist/
 dist-ssr
+coverage/
 *.local
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+backend/node_modules/
+backend/coverage/
+backend/server/data/db.json
+backend/server/uploads/*
+!backend/server/uploads/.gitkeep
 
 # Editor directories and files
 .vscode/*
