@@ -10,12 +10,12 @@ Put local frontend values in `frontend/.env.local`. Every variable beginning wit
 | --- | --- | --- |
 | `VITE_API_URL` | Public Express API base URL | Local backend URL or the deployed Belmo backend URL |
 | `VITE_SUPABASE_URL` | Public Supabase project URL | Supabase project API settings |
-| `VITE_SUPABASE_ANON_KEY` | Public Supabase anon key | Supabase project API settings; safe only with correct RLS |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Public Supabase publishable key | Supabase project API settings; safe only with correct RLS |
 | `VITE_SANITY_PROJECT_ID` | Public Sanity project identifier | Sanity project settings |
 | `VITE_SANITY_DATASET` | Public Sanity dataset name | Sanity project settings |
 | `VITE_SANITY_API_VERSION` | Public Sanity API date | The API version selected by the development team |
 
-These same six variables will later be configured in Vercel. The current code uses `VITE_API_URL` and `VITE_SUPABASE_ANON_KEY`; the proposed names `VITE_API_BASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` are not currently read by the application.
+These same six variables will later be configured in Vercel. The current code uses `VITE_API_URL`; the proposed name `VITE_API_BASE_URL` is not currently read by the application.
 
 ## Backend
 
@@ -27,6 +27,7 @@ Public operational configuration:
 - `PORT`: Express listening port.
 - `CLIENT_ORIGIN`: comma-separated frontend origins allowed by CORS.
 - `SUPABASE_URL`: Supabase project URL used by server integrations.
+- `USE_SUPABASE`: set to `true` to initialize the backend Supabase client; `false` preserves the JSON workflow.
 - `RF_DB_PATH`: optional path override for the prototype JSON database.
 
 Server-only secrets:
@@ -34,14 +35,14 @@ Server-only secrets:
 - `JWT_SECRET`: signs and verifies prototype administrator tokens.
 - `ADMIN_SETUP_KEY`: protects production administrator setup.
 - `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`: optional initial prototype owner setup; remove them from deployment configuration after use.
-- `SUPABASE_SERVICE_ROLE_KEY`: privileged Supabase key for Express only.
+- `SUPABASE_SECRET_KEY`: privileged Supabase key for Express only.
 - `SANITY_API_TOKEN`: server token only if Express later performs authenticated Sanity operations.
 - `SENTRY_DSN`: server monitoring configuration; treat it as restricted operational configuration.
 - `RESEND_API_KEY`: server email credential.
 
 Belmo will later receive `NODE_ENV`, `PORT` if required by the platform, `CLIENT_ORIGIN`, `JWT_SECRET`, and the server integration values that the deployed backend actually uses. The current application does not read Cloudinary credentials or `DATABASE_URL`, so they have not been added yet.
 
-The proposed names `FRONTEND_ORIGIN`, `SUPABASE_SECRET_KEY`, `SANITY_WRITE_TOKEN`, `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, and `DATABASE_URL` are currently unused. Do not configure them until matching backend code is implemented or the existing names are intentionally migrated.
+The proposed names `FRONTEND_ORIGIN`, `SANITY_WRITE_TOKEN`, `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, and `DATABASE_URL` are currently unused. Do not configure them until matching backend code is implemented or the existing names are intentionally migrated.
 
 ## Sanity Studio
 

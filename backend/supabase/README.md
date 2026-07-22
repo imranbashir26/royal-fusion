@@ -55,7 +55,7 @@ Frontend:
 
 ```env
 VITE_SUPABASE_URL=
-VITE_SUPABASE_ANON_KEY=
+VITE_SUPABASE_PUBLISHABLE_KEY=
 VITE_SANITY_PROJECT_ID=
 VITE_SANITY_DATASET=production
 VITE_SANITY_API_VERSION=2025-01-01
@@ -65,11 +65,12 @@ Backend/server-only:
 
 ```env
 SUPABASE_URL=
-SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_SECRET_KEY=
+USE_SUPABASE=
 SANITY_API_TOKEN=
 ```
 
-Never expose `SUPABASE_SERVICE_ROLE_KEY` in Vite/browser code.
+Never expose `SUPABASE_SECRET_KEY` in Vite/browser code.
 
 ## Migration Notes From Current Prototype
 

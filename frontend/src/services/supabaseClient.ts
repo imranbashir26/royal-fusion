@@ -6,10 +6,10 @@ export function getSupabaseClient() {
   if (browserClient !== undefined) return browserClient
 
   const url = import.meta.env.VITE_SUPABASE_URL
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+  const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
 
-  browserClient = url && anonKey
-    ? createClient(url, anonKey, {
+  browserClient = url && publishableKey
+    ? createClient(url, publishableKey, {
         auth: {
           persistSession: true,
           autoRefreshToken: true,
@@ -22,5 +22,5 @@ export function getSupabaseClient() {
 }
 
 export function isSupabaseConfigured() {
-  return Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY)
+  return Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY)
 }

@@ -62,7 +62,7 @@ Local URLs:
 - Backend/server-only variables belong in `backend/.env`.
 - Use `frontend/.env.example` and `backend/.env.example` as templates.
 
-Never expose `SUPABASE_SERVICE_ROLE_KEY`, `SANITY_API_TOKEN`, or other privileged secrets in frontend/Vite code.
+Never expose `SUPABASE_SECRET_KEY`, `SANITY_API_TOKEN`, or other privileged secrets in frontend/Vite code.
 
 ## Prototype Database
 

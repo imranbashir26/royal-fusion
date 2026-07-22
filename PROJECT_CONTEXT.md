@@ -167,9 +167,10 @@ Current/prototype variables:
 Supabase variables:
 
 - `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
 - `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_SECRET_KEY`
+- `USE_SUPABASE`
 
 Sanity variables:
 
@@ -185,7 +186,7 @@ Monitoring/email variables:
 
 Important rule:
 
-- Never expose `SUPABASE_SERVICE_ROLE_KEY`, `SANITY_API_TOKEN`, or other privileged secrets in browser/Vite code.
+- Never expose `SUPABASE_SECRET_KEY`, `SANITY_API_TOKEN`, or other privileged secrets in browser/Vite code.
 
 ## CMS And Admin Workflow
 
