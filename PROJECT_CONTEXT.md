@@ -82,8 +82,8 @@ Production migration target:
 - `backend/server/uploads/products`: optimized product image assets served by the prototype API.
 - `backend/supabase/migrations`: production Supabase SQL schema.
 - `backend/supabase/seed`: starter SQL seed from current prototype data.
-- `backend/sanity/schemas`: Sanity Studio schema starters.
-- `backend/sanity/queries.md`: GROQ query starters.
+- `sanity/schemas`: Sanity Studio schema starters.
+- `sanity/queries.md`: GROQ query starters.
 
 ## Local Setup
 
@@ -146,9 +146,9 @@ Supabase setup artifacts:
 
 Sanity setup artifacts:
 
-- `backend/sanity/schemas/*`
-- `backend/sanity/queries.md`
-- `backend/sanity/README.md`
+- `sanity/schemas/*`
+- `sanity/queries.md`
+- `sanity/README.md`
 
 ## Environment Variables
 
@@ -306,7 +306,7 @@ Recommended order:
 6. Replace JSON product/category/order/coupon/settings persistence with Supabase.
 7. Connect admin dashboard CRUD to Supabase-backed APIs or Edge Functions.
 8. Create/connect Sanity project.
-9. Add Sanity Studio using the schemas in `backend/sanity/schemas`.
+9. Add Sanity Studio using the schemas in `sanity/schemas`.
 10. Connect blogs, homepage content, banners, FAQs, policies, and fragrance guide to Sanity.
 11. Replace local uploads with Supabase Storage.
 12. Finalize checkout, stock deduction, coupons, shipping, and order confirmation.
@@ -324,7 +324,7 @@ If this project is opened in another Codex account, start by reading:
 2. `PRODUCTION_READINESS.md`
 3. `BACKEND_PLAN.md`
 4. `backend/supabase/README.md`
-5. `backend/sanity/README.md`
+5. `sanity/README.md`
 6. `ADMIN_MANAGEMENT_DOCS.md`
 
 Then inspect current files before making changes, because the repo is actively evolving.

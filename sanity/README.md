@@ -23,7 +23,7 @@ Option A: Sanity Studio inside this repo
 npm create sanity@latest -- --project <projectId> --dataset production --template clean
 ```
 
-Then copy `backend/sanity/schemas/*` into the generated Studio schema folder.
+Then copy `sanity/schemas/*` into the generated Studio schema folder.
 
 Option B: Separate Sanity Studio repo
 
