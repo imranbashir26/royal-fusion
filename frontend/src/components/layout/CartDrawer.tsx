@@ -10,7 +10,17 @@ import { ProductBottle } from '../products/ProductBottle'
 
 export function CartDrawer() {
   const { products } = useStorefront()
-  const { isCartOpen, closeCart, items, removeItem, updateQuantity } = useCartStore()
+  const {
+    isCartOpen,
+    closeCart,
+    items,
+    selectedLineIds,
+    removeItem,
+    setAllItemsSelected,
+    toggleItemSelection,
+    updateQuantity,
+  } = useCartStore()
+  const selectedLineIdSet = new Set(selectedLineIds)
 
   const enrichedItems = items
     .map((item) => {
@@ -20,10 +30,13 @@ export function CartDrawer() {
     })
     .filter(Boolean)
 
-  const subtotal = enrichedItems.reduce(
+  const selectedItems = enrichedItems.filter((item) => selectedLineIdSet.has(item!.lineId))
+  const subtotal = selectedItems.reduce(
     (total, item) => total + item!.unitPrice * item!.quantity,
     0,
   )
+  const allSelected =
+    enrichedItems.length > 0 && enrichedItems.every((item) => selectedLineIdSet.has(item!.lineId))
 
   return (
     <AnimatePresence>
@@ -47,7 +60,9 @@ export function CartDrawer() {
             <div className="flex items-center justify-between border-b border-champagne/25 px-5 py-4">
               <div>
                 <p className="font-serif text-2xl font-semibold text-burgundy">Royal Cart</p>
-                <p className="text-sm text-brownroyal/60">{items.length} selected fragrance lines</p>
+                <p className="text-sm text-brownroyal/60">
+                  {selectedItems.length} of {enrichedItems.length} items selected
+                </p>
               </div>
               <button
                 aria-label="Close cart"
@@ -75,12 +90,30 @@ export function CartDrawer() {
                 </div>
               ) : (
                 <div className="space-y-4">
+                  <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-champagne/25 bg-marble/70 px-4 py-3 font-semibold text-brownroyal">
+                    <input
+                      checked={allSelected}
+                      className="h-5 w-5 accent-burgundy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-oldgold focus-visible:ring-offset-2"
+                      onChange={(event) => setAllItemsSelected(event.target.checked)}
+                      type="checkbox"
+                    />
+                    Select All
+                  </label>
                   {enrichedItems.map((item) => (
                     <div
                       className="rounded-lg border border-champagne/25 bg-marble/70 p-4"
                       key={`${item!.productId}-${item!.size}`}
                     >
-                      <div className="flex gap-4">
+                      <div className="flex gap-3">
+                        <label className="flex shrink-0 cursor-pointer items-start pt-2">
+                          <input
+                            checked={selectedLineIdSet.has(item!.lineId)}
+                            className="h-5 w-5 accent-burgundy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-oldgold focus-visible:ring-offset-2"
+                            onChange={() => toggleItemSelection(item!.lineId)}
+                            type="checkbox"
+                          />
+                          <span className="sr-only">Select {item!.product.name}, {item!.size}</span>
+                        </label>
                         <div className="w-24 shrink-0 rounded-lg bg-cream">
                           <ProductBottle
                             compact
@@ -126,9 +159,14 @@ export function CartDrawer() {
             {enrichedItems.length > 0 && (
               <div className="border-t border-champagne/25 bg-marble p-5">
                 <div className="mb-4 flex items-center justify-between">
-                  <span className="text-brownroyal/70">Subtotal</span>
+                  <span className="text-brownroyal/70">Selected subtotal</span>
                   <span className="text-xl font-extrabold text-burgundy">{formatCurrency(subtotal)}</span>
                 </div>
+                {selectedItems.length === 0 && (
+                  <p className="mb-4 text-sm font-semibold text-burgundy" role="status">
+                    Select at least one product to continue.
+                  </p>
+                )}
                 <div className="grid grid-cols-2 gap-3">
                   <Link
                     className={buttonClasses({ variant: 'outline' })}
@@ -137,9 +175,15 @@ export function CartDrawer() {
                   >
                     View Cart
                   </Link>
-                  <Link className={buttonClasses({})} onClick={closeCart} to="/checkout">
-                    Checkout
-                  </Link>
+                  {selectedItems.length > 0 ? (
+                    <Link className={buttonClasses({})} onClick={closeCart} to="/checkout">
+                      Checkout
+                    </Link>
+                  ) : (
+                    <button className={buttonClasses({})} disabled type="button">
+                      Checkout
+                    </button>
+                  )}
                 </div>
               </div>
             )}

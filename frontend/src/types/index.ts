@@ -103,13 +103,16 @@ export interface Faq {
 }
 
 export interface CartItem {
+  lineId: string
   productId: string
   size: string
   quantity: number
 }
 
+export type OrderItem = Omit<CartItem, 'lineId'>
+
 export interface OrderPayload {
-  items: CartItem[]
+  items: OrderItem[]
   contact: {
     name: string
     email: string
