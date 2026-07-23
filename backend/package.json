@@ -8,7 +8,10 @@
     "start": "node server/index.js",
     "admin:create": "node server/scripts/create-admin.mjs",
     "api:smoke": "node server/scripts/smoke-test.mjs",
-    "env:check:prod": "node server/scripts/check-production-env.mjs"
+    "env:check:prod": "node server/scripts/check-production-env.mjs",
+    "test": "node --test --test-concurrency=1 server/tests/auth-contract-foundation.test.js server/tests/guest-checkout-regression.test.js",
+    "test:auth-contracts": "node --test --test-concurrency=1 server/tests/auth-contract-foundation.test.js",
+    "test:guest-checkout": "node --test --test-concurrency=1 server/tests/guest-checkout-regression.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.8",

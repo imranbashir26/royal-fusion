@@ -18,7 +18,11 @@
     "preview": "npm run preview --workspace frontend",
     "admin:create": "npm run admin:create --workspace backend --",
     "api:smoke": "npm run api:smoke --workspace backend",
-    "env:check:prod": "npm run env:check:prod --workspace backend"
+    "env:check:prod": "npm run env:check:prod --workspace backend",
+    "test:backend": "npm test --workspace backend",
+    "test:auth": "npm run test:auth-contracts --workspace backend",
+    "test:guest-checkout": "npm run test:guest-checkout --workspace backend",
+    "test:auth-foundation": "npm run test:backend"
   },
   "devDependencies": {
     "concurrently": "^10.0.3"
