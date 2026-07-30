@@ -1,6 +1,6 @@
 # Supabase SQL Editor Deployment
 
-These scripts are for a **new, empty Supabase project**. They are a dashboard-friendly copy of the repository migrations and fictional starter data. They contain no credentials and do not connect the application to Supabase.
+These scripts are for a **new, empty Supabase project**. The dashboard bundle contains migrations `001` and `002`; authentication migrations `003` and `004` remain additive repository migrations and must be run afterward in order. The files contain no credentials and do not connect the application to Supabase.
 
 ## Before You Start
 
@@ -12,10 +12,13 @@ These scripts are for a **new, empty Supabase project**. They are a dashboard-fr
 ## Execution Order
 
 1. Open `001_apply_complete_schema.sql`, paste its complete contents into a new query, and select **Run** once.
-2. Confirm the query reports success before continuing. This creates the full schema, functions, triggers, grants, constraints, and RLS policies.
-3. Optional: open `002_apply_starter_seed.sql` in a new query and select **Run**. It adds only fictional catalog, media placeholder, shipping, promotion, and public-setting data.
-4. Open `003_verify_deployment.sql` in a new query and select **Run**.
-5. Review every row in the first result set. Every `check_passed` value must be `true`. Also review the policy inventory returned afterward.
+2. Confirm the query reports success before continuing. This creates the migration `001` and `002` commerce foundation.
+3. Open `../migrations/003_auth_schema_hardening.sql`, paste it into a new query, and select **Run** once.
+4. Open `../migrations/004_auth_session_refresh_lease.sql`, paste it into a new query, and select **Run** once.
+5. Optional: open `002_apply_starter_seed.sql` in a new query and select **Run**. It adds only fictional catalog, media placeholder, shipping, promotion, and public-setting data.
+6. Open `003_verify_deployment.sql` in a new query and select **Run**.
+7. Review every consolidated result row. Every `check_passed` value must be `true`.
+8. In a disposable local or staging database, also run `../tests/005_auth_schema_hardening_verification.sql` and `../tests/006_auth_session_refresh_lease_verification.sql`. Never run fixture-based verification against production.
 
 The seed is optional. Skip it when real catalog data will be imported through a controlled migration or the Royal Fusion admin dashboard.
 
@@ -26,11 +29,11 @@ The seed is optional. Skip it when real catalog data will be imported through a 
 3. Check that the project was empty and that the entire script was pasted without truncation.
 4. If `001_apply_complete_schema.sql` failed, inspect whether its active transaction rolled back. The file contains migration transactions; do not assume every object was removed without checking.
 5. Do not repeatedly edit and rerun individual statements in production. Correct the repository migration first, regenerate the dashboard script, and test against a disposable local or staging project.
-6. Rerun `003_verify_deployment.sql` after any approved correction. It is read-only and identifies missing objects and unsafe grants.
+6. Rerun `003_verify_deployment.sql` after any approved correction. It is read-only and identifies the commerce-foundation objects and grants it covers. Use the authentication verification files for migrations `003` and `004`.
 
 ## Rollback Warning
 
-The repository rollback file at `../rollback/002_launch_schema_foundation_rollback.sql` reverses migration 002 only. It does **not** remove migration 001, and rollback can destroy launch-schema data. Never run rollback SQL against production without a verified backup, a maintenance window, and an approved recovery plan.
+Rollback files are migration-specific. The `003` and `004` rollbacks refuse unsafe removal after authentication lifecycle data exists; a forward fix is required after use. Never run rollback SQL against production without a verified backup, a maintenance window, and an approved recovery plan.
 
 For a disposable new project where deployment fails before real data exists, deleting and recreating the Supabase project is usually clearer than manually attempting a partial rollback. Do not use that approach after customers, orders, or other production data exist.
 

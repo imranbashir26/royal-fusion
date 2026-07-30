@@ -9,10 +9,12 @@
     "admin:create": "node server/scripts/create-admin.mjs",
     "api:smoke": "node server/scripts/smoke-test.mjs",
     "env:check:prod": "node server/scripts/check-production-env.mjs",
-    "test": "node --test --test-concurrency=1 server/tests/auth-contract-foundation.test.js server/tests/guest-checkout-regression.test.js",
+    "test": "node --test --test-concurrency=1 server/tests/auth-contract-foundation.test.js server/tests/auth-backend-cookie-sessions.test.js server/tests/guest-checkout-regression.test.js",
     "test:auth-contracts": "node --test --test-concurrency=1 server/tests/auth-contract-foundation.test.js",
     "test:guest-checkout": "node --test --test-concurrency=1 server/tests/guest-checkout-regression.test.js",
-    "test:sql-auth-schema": "node server/scripts/check-auth-schema-sql.mjs"
+    "test:sql-auth-schema": "node server/scripts/check-auth-schema-sql.mjs",
+    "test:auth-sessions": "node --test --test-concurrency=1 server/tests/auth-backend-cookie-sessions.test.js",
+    "test:sql-auth-sessions": "node server/scripts/check-auth-session-sql.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.8",
