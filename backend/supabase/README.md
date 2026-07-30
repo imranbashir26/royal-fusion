@@ -24,18 +24,20 @@ the Royal Fusion Admin Dashboard.
 2. Open the SQL editor.
 3. Run `migrations/001_initial_schema.sql`.
 4. Run `migrations/002_launch_schema_foundation.sql`.
-5. Run `seed/001_starter_catalog.sql` to load fictional relational catalog and configuration data.
-6. Run the local/staging verification documented in `tests/README.md`.
-7. Confirm every exposed table has RLS enabled.
-8. Create the first user through Supabase Auth.
-9. Assign the `owner_admin` role in `user_roles` using a backend-only administrative operation.
+5. Run `migrations/003_auth_schema_hardening.sql`.
+6. Run `seed/001_starter_catalog.sql` to load fictional relational catalog and configuration data.
+7. Run the local/staging verification documented in `tests/README.md`.
+8. Confirm every exposed table has RLS enabled.
 
-Example:
+Migration `003` creates canonical `owner` and `manager` roles, backend-only invitation,
+session, bootstrap, and guest-order-claim records, final-Owner protection, and narrower
+customer ownership policies. It does not create users, provision an Owner, activate
+Supabase Auth in Express, or change the current frontend/JSON authentication behavior.
 
-```sql
-insert into public.user_roles (user_id, role_id)
-select 'AUTH_USER_UUID_HERE', id from public.roles where key = 'owner_admin';
-```
+The first Owner must later be assigned by the reviewed release-only backend command.
+Do not assign it through a browser or expose a bootstrap endpoint. Legacy `owner_admin`
+and `shop_manager` roles remain present but inactive; legacy Shop Manager assignments
+are not converted automatically.
 
 ## Cloudinary Media
 
@@ -105,7 +107,12 @@ the customer/admin request before invoking it with server-only credentials.
 ## Verification And Rollback
 
 - Local/staging checks: `tests/README.md`
-- Migration rollback: `rollback/002_launch_schema_foundation_rollback.sql`
+- Migration 002 rollback: `rollback/002_launch_schema_foundation_rollback.sql`
+- Authentication hardening rollback: `rollback/003_auth_schema_hardening_rollback.sql`
+
+The migration 003 rollback refuses to run after invitations, sessions, claims, canonical
+role assignments, bootstrap state, or related audit evidence exists. Use a forward-fix
+migration once any authentication workflow has used the schema.
 
 Prefer restoring a pre-migration backup over destructive rollback when real data exists.
 
