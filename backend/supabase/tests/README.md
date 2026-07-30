@@ -9,10 +9,13 @@ Run these scripts only against a local Supabase instance or a disposable staging
 3. Apply `migrations/002_launch_schema_foundation.sql`.
 4. Apply `migrations/003_auth_schema_hardening.sql`.
 5. Apply migration `003` a second time to verify deterministic role reseeding and repeat safety.
-6. Apply `seed/001_starter_catalog.sql` twice to verify seed idempotency.
-7. Run `tests/002_foundation_verification.sql`.
-8. Run `tests/005_auth_schema_hardening_verification.sql`.
-9. In two separate SQL sessions, start `003_concurrent_checkout_session_a.sql`, then start `004_concurrent_checkout_session_b.sql` while session A is sleeping.
+6. Apply `migrations/004_auth_session_refresh_lease.sql`.
+7. Apply migration `004` a second time to verify repeat safety.
+8. Apply `seed/001_starter_catalog.sql` twice to verify seed idempotency.
+9. Run `tests/002_foundation_verification.sql`.
+10. Run `tests/005_auth_schema_hardening_verification.sql`.
+11. Run `tests/006_auth_session_refresh_lease_verification.sql`.
+12. In two separate SQL sessions, start `003_concurrent_checkout_session_a.sql`, then start `004_concurrent_checkout_session_b.sql` while session A is sleeping.
 
 The foundation test verifies required objects, foreign keys through fixture inserts, constraints, anonymous visibility, customer isolation, administrator boundaries, stock reduction, coupon limits, checkout idempotency, and full rollback after failure.
 
@@ -27,3 +30,9 @@ audit immutability, SECURITY DEFINER search paths, and grant boundaries. It roll
 fixtures. Run `npm run test:sql-auth-schema` from the repository root for dependency-free
 static checks when PostgreSQL/Supabase CLI is unavailable; static checks do not replace
 executing the SQL verification against a disposable local database.
+
+`006_auth_session_refresh_lease_verification.sql` verifies that only one refresh lease
+can be held, the wrong lease owner cannot release it, browser roles cannot execute lease
+functions, recovery context exists, and heartbeat updates do not create noisy audit rows.
+It uses fictional fixtures and rolls back. `npm run test:sql-auth-sessions` performs only
+static checks when PostgreSQL/Supabase CLI is unavailable.

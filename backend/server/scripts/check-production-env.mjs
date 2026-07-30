@@ -1,17 +1,19 @@
 import 'dotenv/config'
+import { createAuthConfig } from '../auth/config.js'
 
 const required = [
   'CLIENT_ORIGIN',
-  'JWT_SECRET',
-  'ADMIN_SETUP_KEY',
-  'VITE_SUPABASE_URL',
-  'VITE_SUPABASE_PUBLISHABLE_KEY',
   'SUPABASE_URL',
   'SUPABASE_SECRET_KEY',
-  'USE_SUPABASE',
-  'VITE_SANITY_PROJECT_ID',
-  'VITE_SANITY_DATASET',
-  'VITE_SANITY_API_VERSION',
+  'CUSTOMER_AUTH_PROVIDER',
+  'ADMIN_AUTH_PROVIDER',
+  'ENABLE_GUEST_ORDER_LINKING',
+  'ENABLE_ADMIN_MFA',
+  'AUTH_CSRF_SECRET',
+  'AUTH_CALLBACK_URL',
+  'AUTH_SECURE_COOKIES',
+  'AUTH_TRUST_PROXY',
+  'AUTH_ALLOW_DEV_LOOPBACK',
 ]
 
 const optionalRecommended = [
@@ -23,13 +25,10 @@ const optionalRecommended = [
 const missing = required.filter((key) => !process.env[key])
 const weak = []
 
-if ((process.env.JWT_SECRET ?? '').length < 32) weak.push('JWT_SECRET must be at least 32 characters.')
-if ((process.env.ADMIN_SETUP_KEY ?? '').length < 24) weak.push('ADMIN_SETUP_KEY must be at least 24 characters.')
-if ((process.env.CLIENT_ORIGIN ?? '').includes('localhost')) {
-  weak.push('CLIENT_ORIGIN must be the production origin, not localhost.')
-}
-if (process.env.USE_SUPABASE !== 'true') {
-  weak.push('USE_SUPABASE must be true for the production Supabase deployment.')
+try {
+  createAuthConfig({ ...process.env, NODE_ENV: 'production' })
+} catch (error) {
+  weak.push(error.message)
 }
 
 if (missing.length || weak.length) {

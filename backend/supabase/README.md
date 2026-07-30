@@ -25,9 +25,10 @@ the Royal Fusion Admin Dashboard.
 3. Run `migrations/001_initial_schema.sql`.
 4. Run `migrations/002_launch_schema_foundation.sql`.
 5. Run `migrations/003_auth_schema_hardening.sql`.
-6. Run `seed/001_starter_catalog.sql` to load fictional relational catalog and configuration data.
-7. Run the local/staging verification documented in `tests/README.md`.
-8. Confirm every exposed table has RLS enabled.
+6. Run `migrations/004_auth_session_refresh_lease.sql`.
+7. Run `seed/001_starter_catalog.sql` to load fictional relational catalog and configuration data.
+8. Run the local/staging verification documented in `tests/README.md`.
+9. Confirm every exposed table has RLS enabled.
 
 Migration `003` creates canonical `owner` and `manager` roles, backend-only invitation,
 session, bootstrap, and guest-order-claim records, final-Owner protection, and narrower
@@ -38,6 +39,11 @@ The first Owner must later be assigned by the reviewed release-only backend comm
 Do not assign it through a browser or expose a bootstrap endpoint. Legacy `owner_admin`
 and `shop_manager` roles remain present but inactive; legacy Shop Manager assignments
 are not converted automatically.
+
+Migration `004` adds an atomic refresh lease, recovery-session context, and focused
+session audit events for the Express cookie-session gateway. It stores no access token,
+refresh token, or cookie value. Its backend-only functions are executable only by
+`service_role`.
 
 ## Cloudinary Media
 
@@ -109,10 +115,14 @@ the customer/admin request before invoking it with server-only credentials.
 - Local/staging checks: `tests/README.md`
 - Migration 002 rollback: `rollback/002_launch_schema_foundation_rollback.sql`
 - Authentication hardening rollback: `rollback/003_auth_schema_hardening_rollback.sql`
+- Cookie-session rollback: `rollback/004_auth_session_refresh_lease_rollback.sql`
 
 The migration 003 rollback refuses to run after invitations, sessions, claims, canonical
 role assignments, bootstrap state, or related audit evidence exists. Use a forward-fix
 migration once any authentication workflow has used the schema.
+
+Migration `004` rollback refuses to run after any application session exists because
+discarding recovery context or refresh state would be unsafe. Use a forward-fix migration.
 
 Prefer restoring a pre-migration backup over destructive rollback when real data exists.
 

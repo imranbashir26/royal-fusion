@@ -25,22 +25,37 @@ Public operational configuration:
 
 - `NODE_ENV`: runtime mode, such as development or production.
 - `PORT`: Express listening port.
-- `CLIENT_ORIGIN`: comma-separated frontend origins allowed by CORS.
+- `CLIENT_ORIGIN`: comma-separated exact frontend origins allowed by CORS. Put the canonical storefront origin first; successful Auth callbacks redirect there.
 - `SUPABASE_URL`: Supabase project URL used by server integrations.
 - `USE_SUPABASE`: set to `true` to initialize the backend Supabase client; `false` preserves the JSON workflow.
 - `RF_DB_PATH`: optional path override for the prototype JSON database.
 
 Server-only secrets:
 
-- `JWT_SECRET`: signs and verifies prototype administrator tokens.
-- `ADMIN_SETUP_KEY`: protects production administrator setup.
-- `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`: optional initial prototype owner setup; remove them from deployment configuration after use.
+- `AUTH_CSRF_SECRET`: signs session-bound CSRF values and callback state. Use a dedicated random value.
+- `JWT_SECRET`: signs prototype administrator tokens in explicit non-production prototype mode only.
+- `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`: optional non-production prototype administrator setup. Production ignores automatic prototype setup.
 - `SUPABASE_SECRET_KEY`: privileged Supabase key for Express only.
 - `SANITY_API_TOKEN`: server token only if Express later performs authenticated Sanity operations.
 - `SENTRY_DSN`: server monitoring configuration; treat it as restricted operational configuration.
 - `RESEND_API_KEY`: server email credential.
 
-Belmo will later receive `NODE_ENV`, `PORT` if required by the platform, `CLIENT_ORIGIN`, `JWT_SECRET`, and the server integration values that the deployed backend actually uses. The current application does not read Cloudinary credentials or `DATABASE_URL`, so they have not been added yet.
+Authentication configuration:
+
+- `CUSTOMER_AUTH_PROVIDER` and `ADMIN_AUTH_PROVIDER`: `prototype` or `supabase`; production accepts only `supabase`.
+- `ENABLE_GUEST_ORDER_LINKING`: server-controlled future flag; keep `false` until its approved branch is released.
+- `ENABLE_ADMIN_MFA`: production must be `true`; enrollment and administration arrive in a later branch.
+- `AUTH_SECURE_COOKIES`: production must be `true`.
+- `AUTH_TRUST_PROXY`: production must be `true` behind the approved HTTPS proxy.
+- `AUTH_ALLOW_DEV_LOOPBACK`: may be `true` only for explicit non-production loopback development.
+- `AUTH_CALLBACK_URL`: HTTPS Express verification callback in production.
+- `CUSTOMER_SESSION_IDLE_SECONDS`, `CUSTOMER_SESSION_ABSOLUTE_SECONDS`, `ADMIN_SESSION_IDLE_SECONDS`, and `ADMIN_SESSION_ABSOLUTE_SECONDS`: protected server session limits.
+- `AUTH_ACCESS_COOKIE_SECONDS`, `AUTH_REFRESH_WINDOW_SECONDS`, and `AUTH_REFRESH_LEASE_SECONDS`: access-cookie and refresh-rotation controls.
+- `AUTH_RECENT_AUTH_SECONDS`, `AUTH_RECOVERY_SESSION_SECONDS`, and `AUTH_VERIFICATION_STATE_SECONDS`: protected sensitive-action and callback limits.
+
+`USE_SUPABASE` remains only the database-connectivity flag. It does not select either authentication provider. Catalog, checkout, order, and admin CRUD workflows still use JSON.
+
+Belmo will later receive `NODE_ENV`, `PORT` if required by the platform, `CLIENT_ORIGIN`, the authentication configuration above, `AUTH_CSRF_SECRET`, `SUPABASE_URL`, and `SUPABASE_SECRET_KEY`. `JWT_SECRET` and prototype administrator values are not production Supabase Auth configuration. The current application does not read Cloudinary credentials or `DATABASE_URL`, so they have not been added yet.
 
 The proposed names `FRONTEND_ORIGIN`, `SANITY_WRITE_TOKEN`, `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, and `DATABASE_URL` are currently unused. Do not configure them until matching backend code is implemented or the existing names are intentionally migrated.
 

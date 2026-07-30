@@ -23,7 +23,9 @@
     "test:auth": "npm run test:auth-contracts --workspace backend",
     "test:guest-checkout": "npm run test:guest-checkout --workspace backend",
     "test:auth-foundation": "npm run test:backend",
-    "test:sql-auth-schema": "npm run test:sql-auth-schema --workspace backend"
+    "test:sql-auth-schema": "npm run test:sql-auth-schema --workspace backend",
+    "test:auth-sessions": "npm run test:auth-sessions --workspace backend",
+    "test:sql-auth-sessions": "npm run test:sql-auth-sessions --workspace backend"
   },
   "devDependencies": {
     "concurrently": "^10.0.3"
