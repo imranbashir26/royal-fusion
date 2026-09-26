@@ -2,7 +2,8 @@ import { motion, useReducedMotion } from 'framer-motion'
 import { ArrowRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
-import heroVideo from '../../assets/hero/royal-fusion-hero-bg.mp4'
+import heroVideoWebm from '../../assets/hero/royal-fusion-hero-bg.webm'
+import heroVideoMp4 from '../../assets/hero/royal-fusion-hero-bg.mp4'
 import heroPoster from '../../assets/hero/royal-fusion-hero-poster.webp'
 import heroBottle from '../../assets/hero/crimson-crystal-transparent.webp'
 import { useStorefront } from '../../storefront/StorefrontProvider'
@@ -54,12 +55,15 @@ function CampaignMedia() {
           className="absolute inset-0 h-full w-full object-cover" fetchPriority="high" loading="eager" />
         {canPlay && (
           <video ref={videoRef} autoPlay muted loop playsInline preload="metadata"
-            poster={heroPoster} src={heroVideo} tabIndex={-1}
+            poster={heroPoster} tabIndex={-1}
             className="absolute inset-0 h-full w-full object-cover pointer-events-none"
             style={{ opacity: videoReady ? 1 : 0 }}
             onPlaying={() => setVideoReady(true)}
             onError={() => setVideoReady(false)}
-            onEmptied={() => setVideoReady(false)} />
+            onEmptied={() => setVideoReady(false)}>
+            <source src={heroVideoWebm} type="video/webm" />
+            <source src={heroVideoMp4} type="video/mp4" />
+          </video>
         )}
       </div>
       <div className="hero-atmospheric-overlay absolute inset-0 z-10" />
