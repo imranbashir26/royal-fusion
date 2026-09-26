@@ -32,7 +32,7 @@ export function RoyalCollectionSection() {
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 bg-gradient-to-t from-deep-wine via-transparent via-20% to-transparent lg:bg-gradient-to-r lg:via-deep-wine/30 lg:via-8% lg:to-transparent lg:to-22%"
         />
-        <div aria-hidden="true" className="pointer-events-none absolute inset-0 hidden min-[1537px]:block min-[1537px]:bg-gradient-to-l min-[1537px]:from-deep-wine min-[1537px]:to-transparent min-[1537px]:to-12%" />
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 hidden lg:block lg:bg-gradient-to-l lg:from-deep-wine lg:via-deep-wine/30 lg:via-8% lg:to-transparent lg:to-22%" />
       </div>
       <div className="flex items-center py-10 sm:py-12">
         <motion.div
