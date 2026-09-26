@@ -8,6 +8,7 @@ import {
   Package,
   Quote,
   Search,
+  Sparkles,
   ShoppingBag,
   Star,
   Tags,
@@ -24,6 +25,7 @@ export type FieldType =
   | 'date'
   | 'images'
   | 'json'
+  | 'color'
 
 export interface AdminField {
   name: string
@@ -45,22 +47,42 @@ export interface AdminResourceConfig {
   readOnly?: boolean
 }
 
-export const adminNav = [
-  { label: 'Dashboard', to: '/admin/dashboard', icon: Boxes, permission: 'dashboard:read' },
-  { label: 'Products', to: '/admin/products', icon: Package, permission: 'products:manage' },
-  { label: 'Categories', to: '/admin/categories', icon: Tags, permission: 'categories:manage' },
-  { label: 'Orders', to: '/admin/orders', icon: ShoppingBag, permission: 'orders:manage' },
-  { label: 'Customers', to: '/admin/customers', icon: Users, permission: 'customers:read' },
-  { label: 'Coupons', to: '/admin/coupons', icon: BadgePercent, permission: 'coupons:manage' },
-  { label: 'Banners', to: '/admin/banners', icon: Image, permission: 'banners:manage' },
-  { label: 'Blogs', to: '/admin/blogs', icon: FileText, permission: 'blogs:manage' },
-  { label: 'Testimonials', to: '/admin/testimonials', icon: Quote, permission: 'testimonials:manage' },
-  { label: 'Reviews', to: '/admin/reviews', icon: Star, permission: 'reviews:manage' },
-  { label: 'Newsletter', to: '/admin/newsletter', icon: Mail, permission: 'newsletter:manage' },
-  { label: 'Messages', to: '/admin/contact-messages', icon: MessageSquare, permission: 'contactMessages:manage' },
-  { label: 'Settings', to: '/admin/settings', icon: Boxes, permission: 'settings:manage' },
-  { label: 'SEO', to: '/admin/seo', icon: Search, permission: 'seo:manage' },
-  { label: 'Users', to: '/admin/users', icon: Users, permission: 'users:manage' },
+export interface AdminNavItem {
+  label: string
+  to: string
+  icon: typeof Package
+  permission: string
+  group: string
+}
+
+export const adminNavGroups = [
+  'Core',
+  'Perfume Catalog',
+  'Sales & Orders',
+  'Marketing & Offers',
+  'Content & Journal',
+  'Store Control',
+]
+
+export const adminNav: AdminNavItem[] = [
+  { label: 'Dashboard Overview', to: '/admin/dashboard', icon: Boxes, permission: 'dashboard:read', group: 'Core' },
+  { label: 'Perfumes & Products', to: '/admin/products', icon: Package, permission: 'products:read', group: 'Perfume Catalog' },
+  { label: 'Fragrance Categories', to: '/admin/categories', icon: Tags, permission: 'categories:manage', group: 'Perfume Catalog' },
+  { label: 'Curated Collections', to: '/admin/collections', icon: Boxes, permission: 'collections:manage', group: 'Perfume Catalog' },
+  { label: 'Fragrance Finder', to: '/admin/fragrance-finder', icon: Sparkles, permission: 'homepage.manage', group: 'Perfume Catalog' },
+  { label: 'Customer Reviews', to: '/admin/reviews', icon: Star, permission: 'reviews:manage', group: 'Perfume Catalog' },
+  { label: 'Orders & Deliveries', to: '/admin/orders', icon: ShoppingBag, permission: 'orders:manage', group: 'Sales & Orders' },
+  { label: 'Customer Database', to: '/admin/customers', icon: Users, permission: 'customers:read', group: 'Sales & Orders' },
+  { label: 'Newsletter List', to: '/admin/newsletter', icon: Mail, permission: 'newsletter:manage', group: 'Sales & Orders' },
+  { label: 'Contact Messages', to: '/admin/contact-messages', icon: MessageSquare, permission: 'contactMessages:manage', group: 'Sales & Orders' },
+  { label: 'Coupons & Discounts', to: '/admin/coupons', icon: BadgePercent, permission: 'coupons:manage', group: 'Marketing & Offers' },
+  { label: 'Banners & Campaigns', to: '/admin/banners', icon: Image, permission: 'banners:manage', group: 'Marketing & Offers' },
+  { label: 'Blogs & Scent Journal', to: '/admin/blogs', icon: FileText, permission: 'blogs:manage', group: 'Content & Journal' },
+  { label: 'Testimonials', to: '/admin/testimonials', icon: Quote, permission: 'testimonials:manage', group: 'Content & Journal' },
+  { label: 'Custom Policy Pages', to: '/admin/editable-pages', icon: FileText, permission: 'editablePages:manage', group: 'Content & Journal' },
+  { label: 'Store Settings', to: '/admin/settings', icon: Boxes, permission: 'settings:manage', group: 'Store Control' },
+  { label: 'SEO Settings', to: '/admin/seo', icon: Search, permission: 'seo:manage', group: 'Store Control' },
+  { label: 'Admin Users & Roles', to: '/admin/users', icon: Users, permission: 'users:manage', group: 'Store Control' },
 ]
 
 const statusOptions = ['Published', 'Draft', 'Unpublished', 'Archived']
@@ -70,9 +92,9 @@ export const resourceConfigs: Record<string, AdminResourceConfig> = {
     label: 'Products',
     singular: 'Product',
     endpoint: 'products',
-    permission: 'products:manage',
+    permission: 'products:read',
     icon: Package,
-    columns: ['name', 'sku', 'category', 'price', 'stock', 'status'],
+    columns: ['name', 'sku', 'category', 'price', 'stockQuantity', 'status'],
     fields: [
       { name: 'name', label: 'Product name', required: true },
       { name: 'slug', label: 'Slug', required: true },
@@ -82,9 +104,8 @@ export const resourceConfigs: Record<string, AdminResourceConfig> = {
       { name: 'price', label: 'Price', type: 'number', required: true },
       { name: 'salePrice', label: 'Sale price', type: 'number' },
       { name: 'oldPrice', label: 'Old price', type: 'number' },
-      { name: 'stock', label: 'Stock quantity', type: 'number', required: true },
-      { name: 'stockStatus', label: 'Stock status', type: 'select', options: ['In Stock', 'Low Stock', 'Out of Stock'] },
-      { name: 'category', label: 'Category', required: true },
+      { name: 'stockQuantity', label: 'Stock quantity', type: 'number', required: true },
+      { name: 'categoryId', label: 'Category', type: 'select' },
       { name: 'tags', label: 'Tags', type: 'tags' },
       { name: 'gender', label: 'Gender', type: 'select', options: ['Men', 'Women', 'Unisex'] },
       { name: 'scentFamily', label: 'Fragrance family', required: true },
@@ -96,9 +117,11 @@ export const resourceConfigs: Record<string, AdminResourceConfig> = {
       { name: 'longevity', label: 'Longevity' },
       { name: 'occasion', label: 'Occasion', type: 'tags' },
       { name: 'inspiredBy', label: 'Inspired By / Impression Of' },
-      { name: 'gallery', label: 'Product images', type: 'images', required: true, help: 'Upload at least one image, preview it, choose main image, and reorder by dragging text order if needed.' },
-      { name: 'mainImage', label: 'Main image URL or bottle tone' },
-      { name: 'image', label: 'Card image URL or bottle tone' },
+      { name: 'gallery', label: 'Product images', type: 'images', help: 'Add HTTPS image URLs or root-relative paths. Choose a main image and reorder existing references.' },
+      { name: 'image', label: 'Primary image URL' },
+      { name: 'cardImage', label: 'Product Card PNG', type: 'images', help: 'Add a PNG or WebP URL. Displayed on the solid card background.' },
+      { name: 'cardHoverImage', label: 'Product Card Hover Image', type: 'images', help: 'Add an editorial image URL for the card hover preview.' },
+      { name: 'cardBackgroundColor', label: 'Product Card Background', type: 'color', help: 'Solid background HEX color for the product card PNG (e.g. #E7C78F).' },
       { name: 'badge', label: 'Badge' },
       { name: 'variations', label: 'Variations', type: 'json', help: 'JSON array with name, price, salePrice, SKU, stock, image, active.' },
       { name: 'isFeatured', label: 'Featured product', type: 'checkbox' },
@@ -126,7 +149,26 @@ export const resourceConfigs: Record<string, AdminResourceConfig> = {
       { name: 'image', label: 'Category image', type: 'images' },
       { name: 'displayOrder', label: 'Display order', type: 'number' },
       { name: 'showOnHomepage', label: 'Homepage visibility', type: 'checkbox' },
-      { name: 'status', label: 'Status', type: 'select', options: ['Published', 'Draft', 'Unpublished'] },
+      { name: 'status', label: 'Status', type: 'select', options: statusOptions },
+      { name: 'seoTitle', label: 'SEO title' },
+      { name: 'seoDescription', label: 'SEO description', type: 'textarea' },
+    ],
+  },
+  collections: {
+    label: 'Collections',
+    singular: 'Collection',
+    endpoint: 'collections',
+    permission: 'collections:manage',
+    icon: Boxes,
+    columns: ['name', 'slug', 'displayOrder', 'featured', 'status'],
+    fields: [
+      { name: 'name', label: 'Collection name', required: true },
+      { name: 'slug', label: 'Slug', required: true },
+      { name: 'description', label: 'Description', type: 'textarea' },
+      { name: 'bannerSecureUrl', label: 'Banner image', type: 'images', help: 'Banner image URL or Cloudinary asset for the collection.' },
+      { name: 'displayOrder', label: 'Display order', type: 'number' },
+      { name: 'featured', label: 'Featured collection', type: 'checkbox' },
+      { name: 'status', label: 'Status', type: 'select', options: statusOptions },
       { name: 'seoTitle', label: 'SEO title' },
       { name: 'seoDescription', label: 'SEO description', type: 'textarea' },
     ],

@@ -6,7 +6,7 @@ export function NotFoundPage() {
   return (
     <>
       <PageHeader
-        description="The royal corridor you followed does not exist in this boutique prototype."
+        description="The page you followed is not available."
         eyebrow="404"
         title="Page Not Found"
       />

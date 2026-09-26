@@ -15,14 +15,12 @@ import {
   productSchema,
   reviewSchema,
   seoSchema,
-  subscriberSchema,
   testimonialSchema
 } from '../utils/schemas.js'
 
 export const adminRouter = Router()
 
 const RESOURCE_ALIASES = {
-  newsletter: 'newsletterSubscribers',
   'contact-messages': 'contactMessages',
   'editable-pages': 'editablePages',
   homepage: 'homepage',
@@ -38,7 +36,6 @@ const schemaByResource = {
   blogs: blogSchema,
   testimonials: testimonialSchema,
   reviews: reviewSchema,
-  newsletterSubscribers: subscriberSchema,
   contactMessages: contactMessageAdminSchema,
   seo: seoSchema,
   editablePages: editablePageSchema
@@ -240,6 +237,12 @@ adminRouter.post('/orders/:id/tracking', requirePermission('orders:manage'), asy
 
 function authorizeResource(mode) {
   return (req, res, next) => {
+    if (req.params.resource === 'newsletter' || req.params.resource === 'newsletterSubscribers') {
+      return res.status(404).json({ message: 'Unknown admin resource.' })
+    }
+    if (['settings', 'homepage', 'shipping', 'payments'].includes(req.params.resource)) {
+      return res.status(404).json({ message: 'Unknown admin resource.' })
+    }
     const resource = normalizeResource(req.params.resource)
     if (resource === 'users') {
       return res.status(400).json({ message: 'Use secure admin user endpoints.' })

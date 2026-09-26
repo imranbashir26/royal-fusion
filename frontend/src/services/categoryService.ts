@@ -3,5 +3,5 @@ import type { Category } from '../types'
 import { apiClient } from './apiClient'
 
 export const categoryService = {
-  getCategories: () => apiClient.get<Category[]>(categories),
+  getCategories: () => import.meta.env.PROD ? Promise.resolve([]) : apiClient.get<Category[]>(categories),
 }

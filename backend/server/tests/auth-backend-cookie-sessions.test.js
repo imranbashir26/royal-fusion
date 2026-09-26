@@ -29,6 +29,7 @@ import {
 } from '../middleware/authSecurity.js'
 import { createAuthV1Router } from '../routes/authV1.js'
 import { AuthSessionError } from '../services/authSessionService.js'
+import { AdminAuthorizationService } from '../services/adminAuthorizationService.js'
 import {
   AuthGatewayError,
   SupabaseAuthGateway,
@@ -716,14 +717,162 @@ test('backend auth runtime sources contain no frontend imports or direct externa
   )
 })
 
+test('administrator signin rejects wrong password, non-admin users, and browser-supplied roles', async () => {
+  const api = await startAuthApi()
+  const jar = {}
+  const preAuth = await fetchSession(api, jar)
+  const base = {
+    method: 'POST', origin: api.allowedOrigin, csrf: preAuth.data.csrfToken, jar,
+  }
+  const wrong = await request(api, '/api/v1/auth/admin/signin', {
+    ...base, body: { email: 'wrong@example.invalid', password: 'fictional-password', verificationCode: '123456' },
+  })
+  assert.equal(wrong.response.status, 401)
+  const wrongOrigin = await request(api, '/api/v1/auth/admin/signin', {
+    ...base, origin: 'https://shop.example.invalid.evil.test',
+    body: { email: 'customer@example.invalid', password: 'fictional-password', verificationCode: '123456' },
+  })
+  assert.equal(wrongOrigin.body.error.code, AUTH_ERROR_CODES.ORIGIN_NOT_ALLOWED)
+  const normal = await request(api, '/api/v1/auth/admin/signin', {
+    ...base, body: { email: 'customer@example.invalid', password: 'fictional-password', verificationCode: '123456' },
+  })
+  assert.equal(normal.response.status, 403)
+  const spoofed = await request(api, '/api/v1/auth/admin/signin', {
+    ...base,
+    body: { email: 'customer@example.invalid', password: 'fictional-password', verificationCode: '123456', administrator: true, permissions: ['*'] },
+  })
+  assert.equal(spoofed.response.status, 400)
+  assert.equal((await request(api, '/api/v1/auth/session', { jar })).body.data.authenticated, false)
+})
+
+test('administrator session requires MFA, restores permissions, refreshes, and signs out', async () => {
+  const gateway = new TestAuthGateway()
+  const adminAuthorization = { resolve: async (userId) => ({
+    userId, name: 'Test Owner', role: 'Owner', roleKey: 'owner', permissions: ['*'],
+  }) }
+  const api = await startAuthApi({ gateway, adminAuthorization })
+  const jar = {}
+  const preAuth = await fetchSession(api, jar)
+  const base = {
+    method: 'POST', origin: api.allowedOrigin, csrf: preAuth.data.csrfToken, jar,
+  }
+  const challenge = await request(api, '/api/v1/auth/admin/signin', {
+    ...base, body: { email: 'owner@example.invalid', password: 'fictional-password' },
+  })
+  assert.equal(challenge.body.error.code, AUTH_ERROR_CODES.MFA_REQUIRED)
+  const signedIn = await request(api, '/api/v1/auth/admin/signin', {
+    ...base, body: { email: 'owner@example.invalid', password: 'fictional-password', verificationCode: '123456' },
+  })
+  assert.equal(signedIn.response.status, 200)
+  assert.equal(signedIn.body.data.administrator.roleKey, 'owner')
+  assert.deepEqual(signedIn.body.data.administrator.permissions, ['*'])
+  assertNoCredentialFields(signedIn.body)
+  absorbCookies(signedIn.response, jar)
+  const restored = await request(api, '/api/v1/auth/session', { jar })
+  assert.equal(restored.body.data.administrator.role, 'Owner')
+  const refreshed = await request(api, '/api/v1/auth/refresh', {
+    method: 'POST', origin: api.allowedOrigin, csrf: restored.body.data.csrfToken, jar,
+  })
+  assert.equal(refreshed.response.status, 200)
+  assert.equal(refreshed.body.data.administrator.roleKey, 'owner')
+  absorbCookies(refreshed.response, jar)
+  const invalidCsrf = await request(api, '/api/v1/auth/signout', {
+    method: 'POST', origin: api.allowedOrigin, csrf: 'wrong', jar,
+  })
+  assert.equal(invalidCsrf.body.error.code, AUTH_ERROR_CODES.CSRF_INVALID)
+  const signedOut = await request(api, '/api/v1/auth/signout', {
+    method: 'POST', origin: api.allowedOrigin, csrf: refreshed.body.data.csrfToken, jar,
+  })
+  assert.equal(signedOut.response.status, 204)
+  absorbCookies(signedOut.response, jar)
+  assert.equal((await request(api, '/api/v1/auth/session', { jar })).body.data.authenticated, false)
+})
+
+test('deactivated administrator loses restored and refreshed access', async () => {
+  let active = true
+  const adminAuthorization = { resolve: async (userId) => active ? {
+    userId, name: 'Test Manager', role: 'Manager', roleKey: 'manager', permissions: ['catalog.read'],
+  } : null }
+  const api = await startAuthApi({ adminAuthorization })
+  const jar = {}
+  const preAuth = await fetchSession(api, jar)
+  const signedIn = await request(api, '/api/v1/auth/admin/signin', {
+    method: 'POST', origin: api.allowedOrigin, csrf: preAuth.data.csrfToken, jar,
+    body: { email: 'manager@example.invalid', password: 'fictional-password', verificationCode: '123456' },
+  })
+  assert.equal(signedIn.response.status, 200)
+  absorbCookies(signedIn.response, jar)
+  active = false
+  const refreshDenied = await request(api, '/api/v1/auth/refresh', {
+    method: 'POST', origin: api.allowedOrigin, csrf: signedIn.body.data.csrfToken, jar,
+  })
+  assert.equal(refreshDenied.response.status, 403)
+  absorbCookies(refreshDenied.response, jar)
+  active = true
+  const secondPreAuth = await fetchSession(api, jar)
+  const secondSignIn = await request(api, '/api/v1/auth/admin/signin', {
+    method: 'POST', origin: api.allowedOrigin, csrf: secondPreAuth.data.csrfToken, jar,
+    body: { email: 'manager@example.invalid', password: 'fictional-password', verificationCode: '123456' },
+  })
+  assert.equal(secondSignIn.response.status, 200)
+  absorbCookies(secondSignIn.response, jar)
+  active = false
+  const denied = await request(api, '/api/v1/auth/session', { jar })
+  assert.equal(denied.response.status, 403)
+  assert.equal(denied.body.error.code, AUTH_ERROR_CODES.PERMISSION_DENIED)
+  absorbCookies(denied.response, jar)
+  assert.equal((await request(api, '/api/v1/auth/session', { jar })).body.data.authenticated, false)
+})
+
+test('canonical database assignments determine administrator roles and effective permissions', async () => {
+  const userId = '00000000-0000-4000-8000-000000000301'
+  const rows = {
+    profiles: [{ id: userId, full_name: 'Canonical Owner', status: 'Active' }],
+    user_roles: [{ user_id: userId, role_id: 'owner-role', active: true, revoked_at: null, expires_at: null }],
+    roles: [{ id: 'owner-role', key: 'owner', name: 'Owner', active: true }],
+    role_permissions: [{ role_id: 'owner-role', permission_id: 'wildcard' }],
+    permissions: [{ id: 'wildcard', key: '*' }],
+  }
+  const service = new AdminAuthorizationService(fakeAdminTables(rows))
+  assert.deepEqual(await service.resolve(userId), {
+    userId, name: 'Canonical Owner', role: 'Owner', roleKey: 'owner', permissions: ['*'],
+  })
+  rows.user_roles[0].active = false
+  assert.equal(await service.resolve(userId), null)
+  rows.user_roles[0].active = true
+  rows.profiles[0].status = 'Inactive'
+  assert.equal(await service.resolve(userId), null)
+  rows.profiles[0].status = 'Active'
+  rows.roles[0].key = 'shop_manager'
+  assert.equal(await service.resolve(userId), null)
+})
+
+function fakeAdminTables(tables) {
+  return {
+    from(table) {
+      let rows = tables[table] ?? []
+      const query = {
+        select() { return query },
+        eq(key, value) { rows = rows.filter((row) => row[key] === value); return query },
+        is(key, value) { rows = rows.filter((row) => row[key] === value); return query },
+        in(key, values) { rows = rows.filter((row) => values.includes(row[key])); return query },
+        maybeSingle() { return Promise.resolve({ data: rows[0] ?? null, error: null }) },
+        then(resolve) { return Promise.resolve({ data: rows, error: null }).then(resolve) },
+      }
+      return query
+    },
+  }
+}
+
 async function startAuthApi({
   gateway = new TestAuthGateway(),
   rateLimitOverrides,
   env = {},
+  adminAuthorization = { resolve: async () => null },
 } = {}) {
   const config = testConfig(env)
   const repository = new InMemorySessionRepository()
-  const runtime = createAuthRuntime({ config, gateway, repository })
+  const runtime = createAuthRuntime({ config, gateway, repository, adminAuthorization })
   const app = express()
   app.use(requestContext)
   app.use(cors({
@@ -792,6 +941,20 @@ class TestAuthGateway {
     return this.current
   }
 
+  async signInAdministrator({ email, password, verificationCode, requireMfa }) {
+    const result = await this.signIn({ email, password })
+    if (requireMfa && verificationCode !== '123456') {
+      throw new AuthGatewayError(verificationCode
+        ? AUTH_ERROR_CODES.MFA_CHALLENGE_FAILED
+        : AUTH_ERROR_CODES.MFA_REQUIRED)
+    }
+    this.current = {
+      ...result,
+      identity: { ...result.identity, assuranceLevel: requireMfa ? 'aal2' : 'aal1' },
+    }
+    return this.current
+  }
+
   async verifyAccessToken(accessToken) {
     this.failIfUnavailable()
     if (accessToken !== this.current.accessToken) {
@@ -807,7 +970,13 @@ class TestAuthGateway {
       throw new AuthGatewayError(AUTH_ERROR_CODES.SESSION_EXPIRED)
     }
     this.calls.refresh += 1
-    this.current = credentials(`refresh-${this.calls.refresh}`)
+    this.current = {
+      ...credentials(`refresh-${this.calls.refresh}`),
+      identity: {
+        ...this.current.identity,
+        assuranceLevel: this.current.identity.assuranceLevel,
+      },
+    }
     return this.current
   }
 

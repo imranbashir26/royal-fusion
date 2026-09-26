@@ -1,24 +1,40 @@
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Manrope:wght@400;500;600;700;800&display=swap');
 @import 'tailwindcss';
 
 @theme {
   --font-serif: 'Cormorant Garamond', Georgia, serif;
   --font-sans: 'Manrope', Inter, ui-sans-serif, system-ui, sans-serif;
-  --color-ivory: #fff8ec;
-  --color-cream: #f6ead7;
-  --color-marble: #fbf4e8;
-  --color-champagne: #d7ad58;
-  --color-oldgold: #a97822;
-  --color-burgundy: #6f1831;
-  --color-velvet: #8b1f3d;
-  --color-brownroyal: #4b2f22;
+
+  /* Modern Royal Editorial Luxury Palette */
+  --color-royal-burgundy: #7a1632;
+  --color-deep-wine: #551326;
+  --color-royal-crimson: #b51f3e;
+  --color-champagne: #c89a3d;
+  --color-warm-ivory: #fbf6ec;
+  --color-soft-cream: #f5ead8;
+  --color-pure-white: #ffffff;
+  --color-espresso: #30231e;
+  --color-muted-taupe: #806f65;
+  --color-soft-border: #e7d5b9;
+
+  /* Standardized compatibility aliases for existing codebase references */
+  --color-burgundy: #7a1632;
+  --color-velvet: #551326;
+  --color-oldgold: #c89a3d;
+  --color-ivory: #fbf6ec;
+  --color-cream: #f5ead8;
+  --color-marble: #fbf6ec;
+  --color-brownroyal: #30231e;
   --color-moss: #68704a;
   --color-roseveil: #d99292;
 }
 
 :root {
-  color: #4b2f22;
-  background: #fff8ec;
+  --announcement-height: 38px;
+  --navbar-height: 80px;
+  --header-total-height: calc(var(--announcement-height) + var(--navbar-height));
+  color: #30231e;
+  background: #fbf6ec;
   font-family: 'Manrope', Inter, ui-sans-serif, system-ui, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -39,16 +55,19 @@ body {
   min-height: 100svh;
   margin: 0;
   overflow-x: hidden;
+  color: #30231e;
   background:
-    radial-gradient(circle at 20% 10%, rgba(215, 173, 88, 0.16), transparent 28rem),
-    linear-gradient(180deg, #fff8ec 0%, #f6ead7 48%, #fff8ec 100%);
+    radial-gradient(circle at 20% 8%, rgba(200, 154, 61, 0.08), transparent 28rem),
+    linear-gradient(180deg, #fbf6ec 0%, #f5ead8 48%, #fbf6ec 100%);
 }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
+@layer base {
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
 }
 
 button,
@@ -66,31 +85,154 @@ img {
 }
 
 ::selection {
-  color: #fff8ec;
-  background: #6f1831;
+  color: #ffffff;
+  background: #7a1632;
 }
 
+/* ==========================================================================
+   Global Container & Section Spacing System
+   ========================================================================== */
+
 .container-lux {
-  width: min(1180px, calc(100% - 32px));
+  width: min(1360px, 100%);
   margin-inline: auto;
+  padding-inline: 1.25rem; /* 20px mobile */
+}
+
+@media (min-width: 768px) {
+  .container-lux {
+    padding-inline: 2rem; /* 32px tablet */
+  }
+}
+
+@media (min-width: 1024px) {
+  .container-lux {
+    padding-inline: 3.5rem; /* 56px desktop */
+  }
+}
+
+.section-spacing {
+  padding-block: clamp(4rem, 8vw, 7.5rem);
+}
+
+.section-spacing-sm {
+  padding-block: clamp(3rem, 5vw, 5rem);
+}
+
+/* ==========================================================================
+   Editorial Typography Scale
+   ========================================================================== */
+
+.text-editorial-hero {
+  font-family: var(--font-serif);
+  font-size: clamp(2.75rem, 6vw, 4.75rem);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+.text-editorial-h1 {
+  font-family: var(--font-serif);
+  font-size: clamp(2.25rem, 4.5vw, 3.75rem);
+  line-height: 1.1;
+  letter-spacing: -0.015em;
+}
+
+.text-editorial-h2 {
+  font-family: var(--font-serif);
+  font-size: clamp(1.85rem, 3.2vw, 3rem);
+  line-height: 1.18;
+}
+
+.text-editorial-h3 {
+  font-family: var(--font-serif);
+  font-size: clamp(1.4rem, 2.2vw, 2rem);
+  line-height: 1.25;
+}
+
+.text-editorial-body-lg {
+  font-family: var(--font-sans);
+  font-size: clamp(1.05rem, 1.2vw, 1.2rem);
+  line-height: 1.7;
+}
+
+.text-editorial-body {
+  font-family: var(--font-sans);
+  font-size: clamp(0.95rem, 1vw, 1.0625rem);
+  line-height: 1.65;
+}
+
+.eyebrow-label {
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: var(--color-champagne);
+}
+
+/* ==========================================================================
+   Card Primitives
+   ========================================================================== */
+
+.luxury-card {
+  border-radius: 14px;
+  border: 1px solid var(--color-soft-border);
+  background-color: var(--color-pure-white);
+  box-shadow: 0 4px 20px rgba(48, 35, 30, 0.04);
+  transition: border-color 300ms ease, box-shadow 300ms ease;
+}
+
+.luxury-card:hover {
+  border-color: rgba(200, 154, 61, 0.45);
+  box-shadow: 0 10px 30px rgba(48, 35, 30, 0.07);
 }
 
 .marble-panel {
   position: relative;
-  border: 1px solid rgba(215, 173, 88, 0.28);
+  border-radius: 14px;
+  border: 1px solid var(--color-soft-border);
   background:
-    linear-gradient(135deg, rgba(255, 248, 236, 0.95), rgba(246, 234, 215, 0.9)),
-    repeating-linear-gradient(115deg, rgba(215, 173, 88, 0.08) 0 1px, transparent 1px 18px);
-  box-shadow: 0 24px 70px rgba(75, 47, 34, 0.11);
-}
-
-.gold-text {
-  color: #a97822;
+    linear-gradient(135deg, rgba(251, 246, 236, 0.96), rgba(245, 234, 216, 0.92));
+  box-shadow: 0 10px 30px rgba(48, 35, 30, 0.05);
 }
 
 .luxury-shadow {
-  box-shadow: 0 22px 60px rgba(75, 47, 34, 0.14);
+  box-shadow: 0 12px 36px rgba(48, 35, 30, 0.08);
 }
+
+.gold-text {
+  color: #c89a3d;
+}
+
+/* ==========================================================================
+   Form Primitives
+   ========================================================================== */
+
+.input-luxury {
+  height: 2.75rem;
+  border-radius: 0.625rem;
+  border: 1px solid var(--color-soft-border);
+  background-color: var(--color-warm-ivory);
+  color: var(--color-espresso);
+  padding-inline: 1rem;
+  font-size: 0.9375rem;
+  outline: none;
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+}
+
+.input-luxury:focus {
+  border-color: var(--color-royal-burgundy);
+  box-shadow: 0 0 0 2px rgba(122, 22, 50, 0.15);
+}
+
+.input-luxury::placeholder {
+  color: var(--color-muted-taupe);
+  opacity: 0.65;
+}
+
+/* ==========================================================================
+   Effects & Visual Accents
+   ========================================================================== */
 
 .button-shimmer {
   position: relative;
@@ -107,7 +249,7 @@ img {
   background: linear-gradient(
     90deg,
     transparent,
-    rgba(255, 255, 255, 0.55),
+    rgba(255, 255, 255, 0.4),
     transparent
   );
   transition: transform 700ms ease;
@@ -118,22 +260,22 @@ img {
 }
 
 .curtain-texture {
-  background-color: #5b1028;
+  background-color: #551326;
   background-image:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.14), transparent 10%, rgba(15, 2, 8, 0.34) 24%, transparent 38%, rgba(255, 214, 154, 0.08) 52%, transparent 68%, rgba(15, 2, 8, 0.38) 84%, rgba(255, 255, 255, 0.08)),
-    repeating-linear-gradient(90deg, #3f071a 0 10px, #64132c 10px 24px, #8b2340 24px 34px, #571026 34px 50px, #2f0514 50px 58px),
-    linear-gradient(180deg, rgba(255, 225, 186, 0.14), transparent 28%, rgba(0, 0, 0, 0.28) 100%);
+    linear-gradient(90deg, rgba(255, 255, 255, 0.12), transparent 10%, rgba(15, 2, 8, 0.28) 24%, transparent 38%, rgba(200, 154, 61, 0.08) 52%, transparent 68%, rgba(15, 2, 8, 0.3) 84%, rgba(255, 255, 255, 0.06)),
+    repeating-linear-gradient(90deg, #3f071a 0 10px, #551326 10px 24px, #7a1632 24px 34px, #4d1022 34px 50px, #2b0512 50px 58px),
+    linear-gradient(180deg, rgba(251, 246, 236, 0.1), transparent 28%, rgba(0, 0, 0, 0.24) 100%);
   box-shadow:
-    inset 0 0 38px rgba(255, 218, 164, 0.12),
-    inset 0 -52px 70px rgba(20, 0, 8, 0.35);
+    inset 0 0 38px rgba(200, 154, 61, 0.1),
+    inset 0 -52px 70px rgba(20, 0, 8, 0.3);
 }
 
 .curtain-left {
-  border-right: 1px solid rgba(246, 205, 132, 0.28);
+  border-right: 1px solid rgba(200, 154, 61, 0.25);
 }
 
 .curtain-right {
-  border-left: 1px solid rgba(246, 205, 132, 0.28);
+  border-left: 1px solid rgba(200, 154, 61, 0.25);
 }
 
 .hide-scrollbar {
@@ -145,29 +287,182 @@ img {
 }
 
 .luxury-scrollbar {
-  scrollbar-color: #d7ad58 #f6ead7;
+  scrollbar-color: #c89a3d #f5ead8;
 }
 
+.hero-atmospheric-overlay,
 .hero-mask {
-  background:
-    linear-gradient(90deg, rgba(255, 248, 236, 0.98) 0%, rgba(255, 248, 236, 0.82) 38%, rgba(255, 248, 236, 0.12) 70%),
-    linear-gradient(180deg, rgba(111, 24, 49, 0.08), rgba(75, 47, 34, 0.1));
+  background: linear-gradient(
+    90deg,
+    rgba(251, 246, 236, 0.98) 0%,
+    rgba(251, 246, 236, 0.94) 30%,
+    rgba(251, 246, 236, 0.65) 50%,
+    rgba(251, 246, 236, 0.18) 72%,
+    rgba(251, 246, 236, 0) 86%
+  );
 }
 
 .bottle-glass {
   background:
     linear-gradient(90deg, rgba(255, 255, 255, 0.34), transparent 18%, rgba(255, 255, 255, 0.12) 52%, rgba(255, 255, 255, 0.42)),
-    var(--bottle-liquid, linear-gradient(180deg, #9f2345, #5e1128));
+    var(--bottle-liquid, linear-gradient(180deg, #7a1632, #551326));
+}
+
+@media (max-width: 1024px) {
+  .hero-atmospheric-overlay,
+  .hero-mask {
+    background: linear-gradient(
+      90deg,
+      rgba(251, 246, 236, 0.98) 0%,
+      rgba(251, 246, 236, 0.92) 42%,
+      rgba(251, 246, 236, 0.65) 65%,
+      rgba(251, 246, 236, 0.20) 85%,
+      rgba(251, 246, 236, 0) 100%
+    );
+  }
 }
 
 @media (max-width: 640px) {
-  .container-lux {
-    width: min(100% - 24px, 1180px);
-  }
-
+  .hero-atmospheric-overlay,
   .hero-mask {
     background:
-      linear-gradient(90deg, rgba(255, 248, 236, 0.98) 0%, rgba(255, 248, 236, 0.92) 72%, rgba(255, 248, 236, 0.45) 100%),
-      linear-gradient(180deg, rgba(111, 24, 49, 0.04), rgba(75, 47, 34, 0.08));
+      linear-gradient(
+        180deg,
+        rgba(251, 246, 236, 0.96) 0%,
+        rgba(251, 246, 236, 0.88) 55%,
+        rgba(251, 246, 236, 0.40) 100%
+      ),
+      linear-gradient(
+        90deg,
+        rgba(251, 246, 236, 0.98) 0%,
+        rgba(251, 246, 236, 0.92) 70%,
+        rgba(251, 246, 236, 0.60) 100%
+      );
+  }
+}
+
+/* ==========================================================================
+   Viewport-aware Desktop Hero Height Strategy
+   ========================================================================== */
+
+/* Shared cover geometry keeps the product on the stationary pedestal.
+   Source surface center: (1355, 692) in the 1920 × 1080 scene. */
+.hero-campaign {
+  container-type: size;
+}
+
+.hero-campaign-scene,
+.hero-product-anchor {
+  --scene-width: max(100cqw, 177.7778cqh);
+  --scene-left: calc((100cqw - var(--scene-width)) / 2);
+  --scene-top: calc((100cqh - var(--scene-width) * 0.5625) / 2);
+  --product-height: clamp(290px, 55cqh, 350px);
+}
+
+.hero-campaign-scene {
+  width: var(--scene-width);
+  height: calc(var(--scene-width) * 0.5625);
+  left: var(--scene-left);
+  top: var(--scene-top);
+}
+
+.hero-product-anchor {
+  left: calc(var(--scene-left) + var(--scene-width) * 0.70573);
+  top: calc(var(--scene-top) + var(--scene-width) * 0.36042);
+}
+
+.hero-bottle {
+  height: var(--product-height);
+  width: calc(var(--product-height) * 1120 / 1402);
+  left: calc(var(--product-height) * -560 / 1402);
+  /* Account for the supplied image's transparent bottom margin without cropping. */
+  bottom: calc(var(--product-height) * -0.022);
+  transform-origin: 50% 98%;
+}
+
+.hero-contact-shadow {
+  width: calc(var(--product-height) * 0.36);
+  height: calc(var(--product-height) * 0.035);
+  left: calc(var(--product-height) * -0.18);
+  top: calc(var(--product-height) * -0.013);
+  border-radius: 50%;
+  background: #604536;
+  filter: blur(4px);
+}
+
+.hero-bottle-reflection {
+  mask-size: 100% 100%;
+  mask-repeat: no-repeat;
+  overflow: hidden;
+}
+
+.hero-bottle-highlight {
+  background: linear-gradient(105deg, transparent 45%, rgba(255, 246, 222, 0.12) 49%, transparent 53%);
+}
+
+@media (min-width: 640px) and (max-width: 1023px) {
+  .hero-campaign-scene,
+  .hero-product-anchor {
+    --scene-left: calc(80cqw - var(--scene-width) * 0.70573);
+    --product-height: clamp(230px, 44cqh, 270px);
+  }
+
+  .hero-animated-campaign .hero-content > div {
+    max-width: 62%;
+  }
+
+  .hero-animated-campaign .hero-content a {
+    padding-inline: 1rem;
+  }
+}
+
+@media (max-width: 639px) {
+  .hero-animated-campaign .hero-atmospheric-overlay {
+    background:
+      linear-gradient(180deg, transparent 0 225px, rgba(251, 246, 236, 0.96) 290px),
+      linear-gradient(90deg, rgba(251, 246, 236, 0.98) 0%, rgba(251, 246, 236, 0.94) 45%, rgba(251, 246, 236, 0.2) 73%, transparent 100%);
+  }
+
+  .hero-campaign-scene,
+  .hero-product-anchor {
+    --scene-width: max(177.7778cqh, calc((100cqh - 210px) * 4.95));
+    --scene-left: calc(82cqw - var(--scene-width) * 0.70573);
+    --scene-top: calc(210px - var(--scene-width) * 0.36042);
+    --product-height: 165px;
+  }
+
+  .hero-animated-campaign .hero-content h1 {
+    max-width: 70%;
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .hero-animated-campaign .hero-content > div {
+    max-width: 60%;
+  }
+}
+
+.hero-viewport-height {
+  height: auto;
+  min-height: 520px;
+}
+
+@media (min-width: 640px) {
+  .hero-viewport-height {
+    min-height: 540px;
+  }
+}
+
+@media (min-width: 768px) {
+  .hero-viewport-height {
+    min-height: 560px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .hero-viewport-height {
+    height: clamp(540px, calc(100svh - var(--header-total-height, 118px)), 620px);
+    min-height: 540px;
+    max-height: 620px;
   }
 }

@@ -1,4 +1,4 @@
-import { Heart, Home, MessageCircle, Search, ShoppingBag } from 'lucide-react'
+import { Heart, Home, Search, ShoppingBag } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useCartStore } from '../../store/cartStore'
 
@@ -50,10 +50,6 @@ export function MobileBottomBar({ onSearchOpen }: MobileBottomBarProps) {
           </span>
         )}
       </button>
-      <a className="sr-only" href="https://wa.me/923000000000">
-        <MessageCircle className="h-5 w-5" aria-hidden="true" />
-        WhatsApp
-      </a>
     </nav>
   )
 }

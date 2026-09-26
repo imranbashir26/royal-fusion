@@ -4,8 +4,15 @@ import { useState } from 'react'
 import { Button } from '../components/common/Button'
 import { PageHeader } from '../components/common/PageHeader'
 import { contactService } from '../services/contactService'
+import { useStorefront } from '../storefront/StorefrontProvider'
+import { publicAddress, publicEmail, publicPhone, whatsappUrl } from '../utils/contactDetails'
 
 export function ContactPage() {
+  const { settings } = useStorefront()
+  const phone = publicPhone(settings.phoneNumber)
+  const email = publicEmail(settings.emailAddress)
+  const address = publicAddress(settings.businessAddress)
+  const whatsapp = whatsappUrl(settings.whatsappNumber)
   const [form, setForm] = useState({
     name: '',
     email: '',
@@ -13,12 +20,19 @@ export function ContactPage() {
     message: '',
   })
   const [status, setStatus] = useState('')
+  const [hasError, setHasError] = useState(false)
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const response = await contactService.sendMessage(form)
-    setStatus(response.message)
-    setForm({ name: '', email: '', phone: '', message: '' })
+    try {
+      const response = await contactService.sendMessage(form)
+      setStatus(response.message)
+      setHasError(false)
+      setForm({ name: '', email: '', phone: '', message: '' })
+    } catch {
+      setStatus('Your message could not be sent. Please try again later.')
+      setHasError(true)
+    }
   }
 
   return (
@@ -30,12 +44,15 @@ export function ContactPage() {
       />
       <section className="container-lux grid gap-8 py-12 md:py-16 lg:grid-cols-[0.9fr_1.1fr]">
         <div className="space-y-4">
-          <ContactCard icon={<Phone />} label="Phone" value="+92 300 0000000" />
-          <ContactCard icon={<Mail />} label="Email" value="hello@royalfusion.pk" />
-          <ContactCard icon={<MapPin />} label="Location" value="Karachi, Pakistan" />
-          <a
+          {phone && <ContactCard icon={<Phone />} label="Phone" value={phone} />}
+          {email && <ContactCard icon={<Mail />} label="Email" value={email} />}
+          {address && <ContactCard icon={<MapPin />} label="Location" value={address} />}
+          {!phone && !email && !address && !whatsapp && (
+            <p className="text-base leading-7 text-brownroyal/74">Use the form to send your question to the Royal Fusion team.</p>
+          )}
+          {whatsapp && <a
             className="flex items-center gap-4 rounded-lg border border-champagne/25 bg-[#2f8f5b] p-5 text-white shadow-sm transition hover:-translate-y-1"
-            href="https://wa.me/923000000000"
+            href={whatsapp}
             rel="noreferrer"
             target="_blank"
           >
@@ -44,7 +61,7 @@ export function ContactPage() {
               <span className="block font-serif text-2xl font-semibold">WhatsApp Orders</span>
               <span className="text-sm text-white/80">Fast support for fragrance selection</span>
             </span>
-          </a>
+          </a>}
         </div>
 
         <form
@@ -84,7 +101,7 @@ export function ContactPage() {
             <Send className="h-4 w-4" aria-hidden="true" />
             Send Message
           </Button>
-          {status && <p className="mt-4 font-semibold text-oldgold">{status}</p>}
+          {status && <p className={`mt-4 font-semibold ${hasError ? 'text-burgundy' : 'text-oldgold'}`} role={hasError ? 'alert' : 'status'}>{status}</p>}
         </form>
       </section>
     </>

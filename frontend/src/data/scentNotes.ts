@@ -1,7 +1,7 @@
-import citrusImage from '../assets/brand/scent-citrus.webp'
-import floralImage from '../assets/brand/scent-floral.webp'
-import orientalImage from '../assets/brand/scent-oriental.webp'
-import woodyImage from '../assets/brand/scent-woody.webp'
+import citrusImage from '../assets/scent-notes/scent-citrus.webp'
+import floralImage from '../assets/scent-notes/scent-floral.webp'
+import orientalImage from '../assets/scent-notes/scent-oriental.webp'
+import woodyImage from '../assets/scent-notes/scent-woody.webp'
 import type { ScentNote } from '../types'
 
 export const scentNotes: ScentNote[] = [

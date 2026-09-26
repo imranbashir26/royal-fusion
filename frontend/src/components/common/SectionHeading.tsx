@@ -21,23 +21,23 @@ export function SectionHeading({
   return (
     <div
       className={cn(
-        'mb-9 flex flex-col gap-4 md:mb-12',
+        'mb-8 flex flex-col gap-4 md:mb-12',
         align === 'center' && 'items-center text-center',
-        align === 'left' && 'items-start text-left md:flex-row md:justify-between',
+        align === 'left' && 'items-start text-left md:flex-row md:items-end md:justify-between',
         className,
       )}
     >
       <div className={cn(align === 'center' ? 'max-w-3xl' : 'max-w-2xl')}>
         {eyebrow && (
-          <p className="mb-3 text-xs font-bold uppercase tracking-[0.24em] text-oldgold">
+          <p className="eyebrow-label mb-3">
             {eyebrow}
           </p>
         )}
-        <h2 className="font-serif text-4xl font-semibold leading-none text-burgundy md:text-5xl">
+        <h2 className="text-editorial-h2 font-serif font-semibold text-royal-burgundy">
           {title}
         </h2>
         {description && (
-          <p className="mt-4 text-base leading-7 text-brownroyal/75 md:text-lg">
+          <p className="mt-3.5 text-base leading-relaxed text-muted-taupe md:text-lg">
             {description}
           </p>
         )}

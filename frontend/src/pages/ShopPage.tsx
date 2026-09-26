@@ -1,13 +1,15 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDown, Search, SlidersHorizontal, X } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Button } from '../components/common/Button'
 import { EmptyState } from '../components/common/EmptyState'
 import { PageHeader } from '../components/common/PageHeader'
 import { ProductGrid } from '../components/products/ProductGrid'
 import { scentNotes } from '../data/scentNotes'
+import { catalogRouteCategory, compareNewArrivals, matchesCatalogFacets } from '../services/catalogFacets'
+import { collectionProductIdsForSlug } from '../services/productionMappers'
 import { useStorefront } from '../storefront/StorefrontProvider'
 import { cn } from '../utils/cn'
 import { formatCurrency } from '../utils/format'
@@ -24,38 +26,61 @@ const genders = ['Men', 'Women', 'Unisex']
 const scentFamilies = ['All', ...scentNotes.map((note) => note.name), 'Oud', 'Fresh', 'Spicy', 'Sweet']
 
 export function ShopPage() {
-  const { products, categories } = useStorefront()
+  const { products, categories, collections = [] } = useStorefront()
   const [searchParams] = useSearchParams()
+  const collectionSlug = searchParams.get('collection')
   const [query, setQuery] = useState('')
-  const [category, setCategory] = useState(searchParams.get('category') ?? 'All')
+  const [category, setCategory] = useState(catalogRouteCategory(searchParams.get('category')))
   const [gender, setGender] = useState(searchParams.get('gender') ?? 'All')
   const [scent, setScent] = useState(searchParams.get('scent') ?? 'All')
   const [maxPrice, setMaxPrice] = useState(7000)
   const [minRating, setMinRating] = useState(false)
   const [bestOnly, setBestOnly] = useState(searchParams.get('best') === 'true')
+  const [newOnly, setNewOnly] = useState(searchParams.get('new') === 'true')
   const [attarsOnly, setAttarsOnly] = useState(searchParams.get('category') === 'Attars')
-  const [sort, setSort] = useState(searchParams.get('best') === 'true' ? 'Best Selling' : 'Featured')
+  const [sort, setSort] = useState(() => {
+    if (searchParams.get('best') === 'true') return 'Best Selling'
+    const s = searchParams.get('sort')
+    if (s && sortOptions.includes(s)) return s
+    return 'Featured'
+  })
   const [isFilterOpen, setIsFilterOpen] = useState(false)
+
+  useEffect(() => {
+    setCategory(catalogRouteCategory(searchParams.get('category')))
+    setGender(searchParams.get('gender') ?? 'All')
+    setScent(searchParams.get('scent') ?? 'All')
+    setBestOnly(searchParams.get('best') === 'true')
+    setNewOnly(searchParams.get('new') === 'true')
+    setAttarsOnly(searchParams.get('category') === 'Attars')
+    if (searchParams.get('best') === 'true') {
+      setSort('Best Selling')
+    } else {
+      const s = searchParams.get('sort')
+      if (s && sortOptions.includes(s)) {
+        setSort(s)
+      }
+    }
+  }, [searchParams])
 
   const filteredProducts = useMemo(() => {
     const normalized = query.trim().toLowerCase()
+    const assignedIds = collectionSlug ? collectionProductIdsForSlug(collections, collectionSlug) : null
     const result = products.filter((product) => {
       const matchesSearch =
         !normalized ||
-        [product.name, product.category, product.collection, product.scentFamily, product.shortDescription]
+        [product.name, product.category, product.scentFamily, product.shortDescription]
           .join(' ')
           .toLowerCase()
           .includes(normalized)
 
       return (
+        (!assignedIds || assignedIds.has(product.id)) &&
         matchesSearch &&
-        (category === 'All' || product.category === category) &&
-        (gender === 'All' || product.gender === gender) &&
+        matchesCatalogFacets(product, { category, gender, bestOnly, newOnly, attarsOnly }) &&
         (scent === 'All' || product.scentFamily === scent) &&
         product.price <= maxPrice &&
-        (!minRating || product.rating >= 4.8) &&
-        (!bestOnly || product.isBestSeller) &&
-        (!attarsOnly || product.isAttar)
+        (!minRating || (product.rating !== null && product.rating >= 4.8))
       )
     })
 
@@ -63,10 +88,10 @@ export function ShopPage() {
       if (sort === 'Best Selling') return Number(b.isBestSeller) - Number(a.isBestSeller)
       if (sort === 'Price Low to High') return a.price - b.price
       if (sort === 'Price High to Low') return b.price - a.price
-      if (sort === 'New Arrivals') return b.id.localeCompare(a.id)
+      if (sort === 'New Arrivals') return compareNewArrivals(a, b)
       return Number(b.isFeatured) - Number(a.isFeatured)
     })
-  }, [attarsOnly, bestOnly, category, gender, maxPrice, minRating, products, query, scent, sort])
+  }, [attarsOnly, bestOnly, category, collectionSlug, collections, gender, maxPrice, minRating, newOnly, products, query, scent, sort])
 
   const resetFilters = () => {
     setCategory('All')
@@ -75,6 +100,7 @@ export function ShopPage() {
     setMaxPrice(7000)
     setMinRating(false)
     setBestOnly(false)
+    setNewOnly(false)
     setAttarsOnly(false)
     setQuery('')
     setSort('Featured')
@@ -84,6 +110,7 @@ export function ShopPage() {
     <FilterPanel
       attarsOnly={attarsOnly}
       bestOnly={bestOnly}
+      newOnly={newOnly}
       categories={categories}
       category={category}
       gender={gender}
@@ -91,6 +118,7 @@ export function ShopPage() {
       minRating={minRating}
       onAttarsOnlyChange={setAttarsOnly}
       onBestOnlyChange={setBestOnly}
+      onNewOnlyChange={setNewOnly}
       onCategoryChange={setCategory}
       onGenderChange={setGender}
       onMaxPriceChange={setMaxPrice}
@@ -152,9 +180,6 @@ export function ShopPage() {
                 Showing {filteredProducts.length} luxury fragrance
                 {filteredProducts.length === 1 ? '' : 's'}
               </p>
-              <span className="hidden rounded-full bg-champagne/15 px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] text-oldgold sm:inline-flex">
-                Premium Prototype
-              </span>
             </div>
             {filteredProducts.length > 0 ? (
               <ProductGrid products={filteredProducts} />
@@ -221,6 +246,7 @@ function FilterPanel({
   maxPrice,
   minRating,
   bestOnly,
+  newOnly,
   attarsOnly,
   onCategoryChange,
   onGenderChange,
@@ -228,6 +254,7 @@ function FilterPanel({
   onMaxPriceChange,
   onMinRatingChange,
   onBestOnlyChange,
+  onNewOnlyChange,
   onAttarsOnlyChange,
   onReset,
 }: {
@@ -237,6 +264,7 @@ function FilterPanel({
   maxPrice: number
   minRating: boolean
   bestOnly: boolean
+  newOnly: boolean
   attarsOnly: boolean
   categories: Array<{ name: string }>
   onCategoryChange: (value: string) => void
@@ -245,6 +273,7 @@ function FilterPanel({
   onMaxPriceChange: (value: number) => void
   onMinRatingChange: (value: boolean) => void
   onBestOnlyChange: (value: boolean) => void
+  onNewOnlyChange: (value: boolean) => void
   onAttarsOnlyChange: (value: boolean) => void
   onReset: () => void
 }) {
@@ -291,6 +320,7 @@ function FilterPanel({
       <div className="space-y-3">
         <ToggleRow checked={minRating} label="Rating 4.8+" onChange={onMinRatingChange} />
         <ToggleRow checked={bestOnly} label="Best sellers only" onChange={onBestOnlyChange} />
+        <ToggleRow checked={newOnly} label="New arrivals only" onChange={onNewOnlyChange} />
         <ToggleRow checked={attarsOnly} label="Attars only" onChange={onAttarsOnlyChange} />
       </div>
     </div>

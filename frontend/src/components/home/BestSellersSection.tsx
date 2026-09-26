@@ -8,7 +8,7 @@ import { ProductGrid } from '../products/ProductGrid'
 
 export function BestSellersSection() {
   const { products } = useStorefront()
-  const bestSellers = products.filter((product) => product.isBestSeller).slice(0, 8)
+  const bestSellers = products.filter((product) => product.isBestSeller).slice(0, 4)
 
   return (
     <AnimatedSection>

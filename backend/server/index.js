@@ -10,6 +10,14 @@ import { fileURLToPath } from 'node:url'
 import { authRouter } from './routes/auth.js'
 import { createAuthV1Router } from './routes/authV1.js'
 import { adminRouter } from './routes/admin.js'
+import { createAdminProductsV1Router } from './routes/adminProductsV1.js'
+import { createAdminCategoriesV1Router } from './routes/adminCategoriesV1.js'
+import { createAdminCollectionsV1Router } from './routes/adminCollectionsV1.js'
+import { createAdminMediaV1Router } from './routes/adminMediaV1.js'
+import { createAdminFragranceFinderV1Router, createPublicFragranceFinderV1Router } from './routes/fragranceFinderV1.js'
+import { createAdminReviewsV1Router, createPublicReviewsV1Router } from './routes/reviewsV1.js'
+import { createAdminNewsletterV1Router, createPublicNewsletterV1Router } from './routes/newsletterV1.js'
+import { createAdminSettingsV1Router } from './routes/settingsV1.js'
 import { mediaRouter } from './routes/media.js'
 import { publicRouter } from './routes/public.js'
 import { updateDb, nowIso } from './utils/database.js'
@@ -51,7 +59,7 @@ app.use(cors({
     }))
   },
   credentials: true,
-  methods: ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'X-RF-CSRF', 'X-Request-ID', 'Authorization'],
 }))
 app.use(rateLimit({
@@ -64,6 +72,18 @@ app.use(express.json({ limit: '1mb' }))
 app.use(cookieParser())
 app.use('/api/v1/auth', createAuthV1Router(authRuntime))
 app.use(sanitizeBody)
+app.use('/api/v1/admin/products', createAdminProductsV1Router(authRuntime))
+app.use('/api/v1/admin/categories', createAdminCategoriesV1Router(authRuntime))
+app.use('/api/v1/admin/collections', createAdminCollectionsV1Router(authRuntime))
+app.use('/api/v1/admin/media', createAdminMediaV1Router(authRuntime))
+app.use('/api/v1/admin/fragrance-finder', createAdminFragranceFinderV1Router(authRuntime))
+app.use('/api/v1/public/fragrance-finder', createPublicFragranceFinderV1Router(authRuntime))
+app.use('/api/v1/admin/reviews', createAdminReviewsV1Router(authRuntime))
+app.use('/api/v1/public/reviews', createPublicReviewsV1Router(authRuntime))
+app.use('/api/v1/admin/newsletter', createAdminNewsletterV1Router(authRuntime))
+app.use('/api/v1/public/newsletter', createPublicNewsletterV1Router(authRuntime))
+app.use('/api/v1/admin/settings', createAdminSettingsV1Router(authRuntime))
+app.use('/api/v1/admin/products/:productId/media', createAdminMediaV1Router(authRuntime))
 app.use('/uploads', express.static(path.resolve(__dirname, 'uploads')))
 
 app.get('/api/health', async (_req, res) => {

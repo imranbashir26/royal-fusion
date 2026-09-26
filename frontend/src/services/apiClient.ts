@@ -1,5 +1,5 @@
 const MOCK_DELAY = 120
-export const API_BASE_URL = import.meta.env.VITE_API_URL ?? '/api'
+export const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
 export const apiClient = {
   async get<T>(data: T): Promise<T> {

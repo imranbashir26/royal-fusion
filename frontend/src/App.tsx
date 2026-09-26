@@ -77,13 +77,16 @@ function PublicApp() {
 }
 
 function ProtectedAdminRoute({ children }: { children: ReactNode }) {
-  const { isAuthenticated, isLoading } = useAdminAuth()
+  const { isAuthenticated, isAdministrator, isLoading } = useAdminAuth()
 
   if (isLoading) {
     return <FullscreenLoader label="Loading admin session..." />
   }
 
   if (!isAuthenticated) return <Navigate replace to="/admin/login" />
+  if (!isAdministrator) {
+    return <div className="grid min-h-screen place-items-center bg-marble px-4 text-center text-burgundy" role="alert">Administrator access is required.</div>
+  }
   return children
 }
 

@@ -1,15 +1,15 @@
-import type { Product, Category, Review } from '../types'
+import type { Product, Category, Collection } from '../types'
 import type { StorefrontData } from '../types/admin'
 import {
+  attachCollectionMembership,
   mapCategory,
+  mapCollection,
   mapProduct,
-  mapReview,
-  mapTestimonial,
   type SupabaseCategoryRow,
+  type SupabaseCollectionRow,
   type SupabaseProductRow,
-  type SupabaseReviewRow,
-  type SupabaseSettingsRow,
 } from './productionMappers'
+import { mapPublicSettingsRows, type PublicSettingsRow } from './publicSettingsMapper'
 import { getSupabaseClient } from './supabaseClient'
 
 export const supabaseStorefrontService = {
@@ -21,6 +21,7 @@ export const supabaseStorefrontService = {
       .from('products')
       .select('*')
       .eq('status', 'Published')
+      .eq('active', true)
       .order('created_at', { ascending: false })
 
     if (error) throw error
@@ -41,18 +42,28 @@ export const supabaseStorefrontService = {
     return (data as SupabaseCategoryRow[]).map(mapCategory)
   },
 
-  async getReviews(): Promise<Review[] | null> {
+  async getCollections(): Promise<Collection[] | null> {
     const client = getSupabaseClient()
     if (!client) return null
 
     const { data, error } = await client
-      .from('reviews')
+      .from('collections')
       .select('*')
-      .eq('status', 'Approved')
-      .order('created_at', { ascending: false })
+      .eq('active', true)
+      .order('display_order', { ascending: true })
 
     if (error) throw error
-    return (data as SupabaseReviewRow[]).map(mapReview)
+    const collections = (data as SupabaseCollectionRow[]).map(mapCollection)
+    if (collections.length === 0) return []
+
+    const { data: links, error: membershipError } = await client
+      .from('product_collections')
+      .select('collection_id,product_id,display_order')
+      .in('collection_id', collections.map((collection) => collection.id))
+      .order('display_order', { ascending: true })
+
+    if (membershipError) throw membershipError
+    return attachCollectionMembership(collections, links as Array<{ collection_id: string; product_id: string }>)
   },
 
   async getSettings(): Promise<Partial<StorefrontData> | null> {
@@ -60,41 +71,29 @@ export const supabaseStorefrontService = {
     if (!client) return null
 
     const { data, error } = await client
-      .from('site_settings')
-      .select('*')
-      .eq('id', 'site')
-      .maybeSingle()
+      .from('public_site_settings')
+      .select('key,value')
+      .in('key', ['branding', 'contact', 'commerce', 'settings', 'shipping', 'payments', 'homepage'])
+      .eq('active', true)
 
     if (error) throw error
-    const settings = data as SupabaseSettingsRow | null
-    if (!settings) return null
-
-    return {
-      settings: settings.settings as StorefrontData['settings'],
-      homepage: settings.homepage ?? {},
-      shipping: settings.shipping ?? {},
-      payments: settings.payments ?? [],
-      seo: settings.seo ?? [],
-    }
+    return mapPublicSettingsRows(data as PublicSettingsRow[])
   },
 
   async getStorefrontData(): Promise<Partial<StorefrontData> | null> {
     const client = getSupabaseClient()
     if (!client) return null
 
-    const [products, categories, reviews, settings] = await Promise.all([
+    const [products, categories, collections] = await Promise.all([
       this.getProducts(),
       this.getCategories(),
-      this.getReviews(),
-      this.getSettings(),
+      this.getCollections(),
     ])
 
     return {
       products: products ?? [],
       categories: categories ?? [],
-      reviews: reviews ?? [],
-      testimonials: (reviews ?? []).map(mapTestimonial),
-      ...(settings ?? {}),
+      collections: collections ?? [],
     }
   },
 }

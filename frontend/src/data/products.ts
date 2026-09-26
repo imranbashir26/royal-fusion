@@ -1,3 +1,4 @@
+import crimsonCrystalTransparent from '../assets/hero/crimson-crystal-transparent.webp'
 import type { Product, ScentFamily } from '../types'
 
 const standardSizes = [
@@ -21,15 +22,21 @@ function createProduct({
   name,
   slug,
   image,
+  cardImage,
+  cardHoverImage,
+  cardBackgroundColor = '#E7C78F',
   scentFamily,
   gender = 'Unisex',
-  category = 'Best Sellers',
+  category = 'Eau de Parfum',
   badge = 'Featured',
 }: {
   id: string
   name: string
   slug: string
   image: string
+  cardImage?: string
+  cardHoverImage?: string
+  cardBackgroundColor?: string
   scentFamily: ScentFamily
   gender?: Product['gender']
   category?: string
@@ -47,11 +54,13 @@ function createProduct({
     rating: 4.8,
     reviewCount: 48,
     image,
+    cardImage: cardImage || image,
+    cardHoverImage: cardHoverImage || '',
+    cardBackgroundColor: cardBackgroundColor || '#E7C78F',
     gallery: [image],
     badge,
-    description:
-      'A Royal Fusion fragrance presented with original product imagery. Full notes, pricing, and detailed story can be updated later from the admin dashboard.',
-    shortDescription: 'Premium Royal Fusion fragrance with original product imagery.',
+    description: `${name} is a ${scentFamily.toLowerCase()} fragrance from Royal Fusion.`,
+    shortDescription: `Explore ${name}, a ${scentFamily.toLowerCase()} fragrance from Royal Fusion.`,
     notes: {
       top: ['Citrus', 'Fresh Spice'],
       middle: ['Floral Accord', 'Amber'],
@@ -66,6 +75,8 @@ function createProduct({
     isBestSeller: true,
     isFeatured: true,
     isAttar: false,
+    isNewArrival: slug === 'shaheen',
+    isPremium: true,
   }
 }
 
@@ -75,6 +86,8 @@ export const products: Product[] = [
     name: 'SHAHEEN',
     slug: 'shaheen',
     image: productImages.shaheen,
+    cardHoverImage: productImages.shaheen,
+    cardBackgroundColor: '#E7C78F',
     scentFamily: 'Fresh',
     gender: 'Men',
     badge: 'New',
@@ -84,9 +97,10 @@ export const products: Product[] = [
     name: 'FLORAL FUSION',
     slug: 'floral-fusion',
     image: productImages.floralFusion,
+    cardHoverImage: productImages.floralFusion,
+    cardBackgroundColor: '#EBC0BE',
     scentFamily: 'Floral',
     gender: 'Women',
-    category: 'For Her',
     badge: 'Floral',
   }),
   createProduct({
@@ -94,6 +108,8 @@ export const products: Product[] = [
     name: 'VOICE OF HEART',
     slug: 'voice-of-heart',
     image: productImages.voiceOfHeart,
+    cardHoverImage: productImages.voiceOfHeart,
+    cardBackgroundColor: '#D7A35B',
     scentFamily: 'Spicy',
     badge: 'Signature',
   }),
@@ -102,9 +118,10 @@ export const products: Product[] = [
     name: 'PITCH BLACK',
     slug: 'pitch-black',
     image: productImages.pitchBlack,
+    cardHoverImage: productImages.pitchBlack,
+    cardBackgroundColor: '#4A3026',
     scentFamily: 'Woody',
     gender: 'Men',
-    category: 'For Him',
     badge: 'Intense',
   }),
   createProduct({
@@ -112,9 +129,10 @@ export const products: Product[] = [
     name: 'BARAAN',
     slug: 'baraan',
     image: productImages.baraan,
+    cardHoverImage: productImages.baraan,
+    cardBackgroundColor: '#F3E8D5',
     scentFamily: 'Fresh',
     gender: 'Men',
-    category: 'For Him',
     badge: 'Office',
   }),
   createProduct({
@@ -122,9 +140,10 @@ export const products: Product[] = [
     name: 'CHANGE',
     slug: 'change',
     image: productImages.change,
+    cardHoverImage: productImages.change,
+    cardBackgroundColor: '#C7AE96',
     scentFamily: 'Citrus',
     gender: 'Men',
-    category: 'For Him',
     badge: 'Bold',
   }),
   createProduct({
@@ -132,6 +151,9 @@ export const products: Product[] = [
     name: 'CRIMSON CRYSTAL',
     slug: 'crimson-crystal',
     image: productImages.crimsonCrystal,
+    cardImage: crimsonCrystalTransparent,
+    cardHoverImage: productImages.crimsonCrystal,
+    cardBackgroundColor: '#E7C78F',
     scentFamily: 'Oriental',
     gender: 'Unisex',
     badge: 'Best Seller',

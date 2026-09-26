@@ -17,7 +17,7 @@ export function AttarsPage() {
         eyebrow="Attars in Pakistan"
         title="Royal Attar Rituals"
       >
-        <Link className={buttonClasses({ className: 'mt-7', variant: 'secondary' })} to="/shop?category=Attars">
+        <Link className={buttonClasses({ className: 'mt-7', variant: 'secondary' })} to="/shop?category=Attar">
           <Droplets className="h-4 w-4" aria-hidden="true" />
           Explore Attars
         </Link>

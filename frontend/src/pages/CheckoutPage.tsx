@@ -1,6 +1,6 @@
-import { CheckCircle2, CreditCard, Landmark, PackageCheck, Wallet } from 'lucide-react'
+import { CheckCircle2, Landmark, PackageCheck, Wallet } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { Button } from '../components/common/Button'
 import { PageHeader } from '../components/common/PageHeader'
@@ -11,28 +11,6 @@ import type { OrderPayload } from '../types'
 import { buttonClasses } from '../utils/buttonClasses'
 import { cn } from '../utils/cn'
 import { formatCurrency } from '../utils/format'
-
-const paymentMethods: Array<{
-  label: OrderPayload['paymentMethod']
-  icon: typeof Wallet
-  description: string
-}> = [
-  {
-    label: 'Cash on Delivery',
-    icon: Wallet,
-    description: 'Pay when your order arrives.',
-  },
-  {
-    label: 'Bank Transfer',
-    icon: Landmark,
-    description: 'Receive transfer instructions after order.',
-  },
-  {
-    label: 'Card',
-    icon: CreditCard,
-    description: 'Card payment placeholder for future gateway.',
-  },
-]
 
 export function CheckoutPage() {
   const { products, payments, shipping } = useStorefront()
@@ -78,14 +56,22 @@ export function CheckoutPage() {
       ? 0
       : shippingFee
   const orderTotal = Math.max(0, subtotal - discount + effectiveShippingFee)
-  const activePaymentMethods =
-    payments.length > 0
-      ? payments.map((payment) => ({
-          label: String(payment.name) as OrderPayload['paymentMethod'],
-          icon: Wallet,
-          description: String(payment.instructions ?? ''),
-        }))
-      : paymentMethods
+  const configuredPaymentMethods = useMemo(() => payments
+    .filter((payment) => payment.active !== false && (payment.name === 'Cash on Delivery' || payment.name === 'Bank Transfer'))
+    .map((payment) => ({
+      label: String(payment.name) as OrderPayload['paymentMethod'],
+      icon: payment.name === 'Bank Transfer' ? Landmark : Wallet,
+      description: payment.name === 'Bank Transfer'
+        ? 'Receive transfer instructions after order.'
+        : 'Pay when your order arrives.',
+    })), [payments])
+  const activePaymentMethods = configuredPaymentMethods
+
+  useEffect(() => {
+    if (!activePaymentMethods.some((method) => method.label === paymentMethod) && activePaymentMethods[0]) {
+      setPaymentMethod(activePaymentMethods[0].label)
+    }
+  }, [activePaymentMethods, paymentMethod])
 
   useEffect(() => {
     setDiscount(0)
@@ -116,6 +102,10 @@ export function CheckoutPage() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (isSubmitting || enrichedItems.length === 0) return
+    if (!activePaymentMethods.some((method) => method.label === paymentMethod)) {
+      setOrderError('No payment method is currently available. Please try again later.')
+      return
+    }
 
     setOrderError('')
     setIsSubmitting(true)
@@ -257,7 +247,7 @@ export function CheckoutPage() {
             </p>
           )}
 
-          <Button disabled={isSubmitting} size="lg" type="submit">
+          <Button disabled={isSubmitting || activePaymentMethods.length === 0} size="lg" type="submit">
             <PackageCheck className="h-5 w-5" aria-hidden="true" />
             {isSubmitting ? 'Placing Order...' : 'Place Order'}
           </Button>

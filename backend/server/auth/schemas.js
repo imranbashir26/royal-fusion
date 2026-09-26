@@ -11,6 +11,11 @@ export const authSchemas = Object.freeze({
     phone: z.string().trim().max(40).optional().default(''),
   }).strict(),
   signIn: z.object({ email, password }).strict(),
+  adminSignIn: z.object({
+    email,
+    password,
+    verificationCode: z.string().regex(/^\d{6}$/).optional(),
+  }).strict(),
   forgotPassword: z.object({ email }).strict(),
   resetPassword: z.object({ newPassword: password }).strict(),
   resendVerification: z.object({ email }).strict(),

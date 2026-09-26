@@ -31,7 +31,7 @@ export interface Product {
   gender: Gender
   price: number
   oldPrice?: number
-  rating: number
+  rating: number | null
   reviewCount: number
   image: string
   gallery: string[]
@@ -48,6 +48,11 @@ export interface Product {
   isBestSeller: boolean
   isFeatured: boolean
   isAttar: boolean
+  isNewArrival?: boolean
+  isPremium?: boolean
+  cardImage?: string
+  cardHoverImage?: string
+  cardBackgroundColor?: string
 }
 
 export interface Category {
@@ -63,8 +68,25 @@ export interface Collection {
   name: string
   slug: string
   description: string
-  heroCopy: string
-  featuredProductSlug: string
+  heroCopy?: string
+  featuredProductSlug?: string
+  bannerImage?: string
+  displayOrder?: number
+  featured?: boolean
+  active?: boolean
+  productIds?: string[]
+}
+
+export type FinderPreferenceKey = 'fresh' | 'sweet' | 'woody' | 'oud' | 'spicy' | 'floral'
+
+export interface FinderPreference {
+  key: FinderPreferenceKey
+  label: string
+  descriptors: string
+  copy: string
+  iconKey: string
+  productId: string | null
+  displayOrder: number
 }
 
 export interface ScentNote {
@@ -77,6 +99,7 @@ export interface ScentNote {
 
 export interface Review {
   id: string
+  productId?: string
   name: string
   city: string
   rating: number
@@ -94,6 +117,7 @@ export interface BlogPost {
   readTime: string
   publishedAt: string
   image: string
+  imageAlt?: string
 }
 
 export interface Faq {

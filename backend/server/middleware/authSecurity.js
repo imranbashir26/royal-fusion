@@ -102,7 +102,7 @@ export function requireRecentAuthentication(config, clock = () => Date.now()) {
   }
 }
 
-export function createAdminIdentity({ config, sessionService }) {
+export function createAdminIdentity({ config, sessionService, adminAuthorization }) {
   return async (req, res, next) => {
     let cookies = readAuthCookies(req, config)
     try {
@@ -112,10 +112,16 @@ export function createAdminIdentity({ config, sessionService }) {
       if (restored.record.sessionClass !== 'administrator') {
         return sendCode(res, AUTH_ERROR_CODES.PERMISSION_DENIED, req.requestId)
       }
-      if (config.adminMfaEnabled && restored.record.mfaAssurance !== 'aal2') {
+      if (config.adminMfaEnabled &&
+        (restored.record.mfaAssurance !== 'aal2' || restored.identity.assuranceLevel !== 'aal2')) {
         return sendCode(res, AUTH_ERROR_CODES.MFA_REQUIRED, req.requestId)
       }
+      const administrator = await adminAuthorization.resolve(restored.identity.id)
+      if (!administrator) {
+        return sendCode(res, AUTH_ERROR_CODES.PERMISSION_DENIED, req.requestId)
+      }
       req.auth = { ...restored, cookies }
+      req.administrator = administrator
       next()
     } catch (error) {
       if (error?.code !== AUTH_ERROR_CODES.AUTH_SERVICE_UNAVAILABLE) {

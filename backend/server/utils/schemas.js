@@ -89,6 +89,9 @@ export const productSchema = z.object({
   inspiredBy: optionalString,
   image: optionalString,
   mainImage: optionalString,
+  cardImage: optionalString,
+  cardHoverImage: optionalString,
+  cardBackgroundColor: z.string().max(30).optional().default('#E7C78F'),
   gallery: z.array(z.string().min(1)).default([]),
   sizeOptions: z.array(z.object({
     label: z.string(),

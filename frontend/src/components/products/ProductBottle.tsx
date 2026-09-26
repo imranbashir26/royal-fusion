@@ -124,7 +124,7 @@ export function ProductBottle({
           compact ? 'h-36 w-28' : 'h-48 w-36 md:h-56 md:w-40',
         )}
         style={{ '--bottle-liquid': palette.liquid } as CSSProperties}
-        aria-label={`${name} perfume bottle placeholder`}
+        aria-label={`${name} perfume bottle illustration`}
         role="img"
       >
         <div className="absolute inset-x-3 top-4 h-10 rounded-full bg-white/16 blur-sm" />

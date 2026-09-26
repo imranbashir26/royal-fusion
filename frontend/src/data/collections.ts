@@ -9,6 +9,7 @@ export const collections: Collection[] = [
     heroCopy:
       'A palace-inspired edit for weddings, formal evenings, and unforgettable entrances.',
     featuredProductSlug: 'royal-spice',
+    productIds: ['p-shaheen', 'p-floral-fusion', 'p-voice-of-heart'],
   },
   {
     id: 'crystal-edit',
@@ -17,6 +18,7 @@ export const collections: Collection[] = [
     description: 'Clean, sparkling, modern fragrances with luminous florals and musks.',
     heroCopy: 'Built for polished daily wear with elegant projection and soft trails.',
     featuredProductSlug: 'crimson-crystal',
+    productIds: ['p-crimson-crystal'],
   },
   {
     id: 'oud-heritage',
@@ -25,5 +27,6 @@ export const collections: Collection[] = [
     description: 'Traditional oud and attar creations with depth, texture, and long wear.',
     heroCopy: 'A tribute to classic perfumery for those who prefer presence over noise.',
     featuredProductSlug: 'oud-ul-abyaz',
+    productIds: [],
   },
 ]

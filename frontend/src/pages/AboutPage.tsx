@@ -20,7 +20,7 @@ const values = [
   },
   {
     title: 'Customer Assurance',
-    text: '7-day return policy, multiple payment methods, and future backend-ready support.',
+    text: '7-day returns on eligible purchases and clear support for your order.',
     icon: ShieldCheck,
   },
 ]
@@ -29,7 +29,7 @@ export function AboutPage() {
   return (
     <>
       <PageHeader
-        description="Royal Fusion is a premium fragrance boutique concept for luxury perfumes, attars, and gift-ready scent experiences in Pakistan."
+        description="Royal Fusion brings luxury perfumes and gift-ready fragrance experiences to Pakistan."
         eyebrow="About Us"
         title="A Palace-Inspired Perfume House"
       />
@@ -47,9 +47,9 @@ export function AboutPage() {
             notes, occasions, gender preferences, and collections.
           </p>
           <p>
-            This prototype is designed to grow into a complete eCommerce system with
-            product APIs, reviews, orders, authentication, admin tools, and optional
-            WooCommerce REST API integration.
+            Our collection is shaped around expressive fragrances and considered
+            presentation, helping you choose a scent for everyday confidence or a
+            meaningful occasion.
           </p>
         </div>
       </section>
@@ -66,7 +66,7 @@ export function AboutPage() {
           ))}
         </div>
       </section>
-      <section className="container-lux py-12 md:py-16">
+      <section className="container-lux py-12 md:py-16" id="faqs">
         <div className="mb-8 max-w-2xl">
           <p className="text-xs font-bold uppercase tracking-[0.24em] text-oldgold">FAQs</p>
           <h2 className="mt-3 font-serif text-5xl font-semibold text-burgundy">Boutique Questions</h2>

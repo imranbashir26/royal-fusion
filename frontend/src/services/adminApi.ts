@@ -1,29 +1,11 @@
-import type { AdminDashboardData, AdminSession } from '../types/admin'
+import type { AdminDashboardData } from '../types/admin'
 import { API_BASE_URL, apiClient } from './apiClient'
 
-const ADMIN_TOKEN_KEY = 'royal-fusion-admin-token'
-
-export const adminToken = {
-  get: () => window.localStorage.getItem(ADMIN_TOKEN_KEY),
-  set: (token: string) => window.localStorage.setItem(ADMIN_TOKEN_KEY, token),
-  clear: () => window.localStorage.removeItem(ADMIN_TOKEN_KEY),
-}
-
-function authHeaders(): Record<string, string> {
-  const token = adminToken.get()
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
+// Prototype resource routes are retained for migration, but this client never
+// sends the production cookie session or a legacy bearer token to them.
+function authHeaders(): Record<string, string> { return {} }
 
 export const adminApi = {
-  login: (payload: { email: string; password: string }) =>
-    apiClient.request<AdminSession>('/admin/auth/login', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  me: () =>
-    apiClient.request<Omit<AdminSession, 'token'>>('/admin/auth/me', {
-      headers: authHeaders(),
-    }),
   dashboard: () =>
     apiClient.request<AdminDashboardData>('/admin/dashboard', {
       headers: authHeaders(),
@@ -114,14 +96,12 @@ export const adminApi = {
     window.URL.revokeObjectURL(url)
   },
   uploadImages: (files: File[], altText = '') => {
-    const token = adminToken.get()
     const formData = new FormData()
     files.forEach((file) => formData.append('images', file))
     formData.append('altText', altText)
 
     return fetch(`${API_BASE_URL}/admin/media`, {
       method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
     }).then(async (response) => {
       if (!response.ok) {

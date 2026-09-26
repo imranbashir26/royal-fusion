@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { useState } from 'react'
 import { AccountModal } from '../account/AccountModal'
+import { AnnouncementBar } from './AnnouncementBar'
 import { CartDrawer } from './CartDrawer'
 import { FloatingWhatsApp } from './FloatingWhatsApp'
 import { Footer } from './Footer'
@@ -18,6 +19,7 @@ export function Layout({ children }: LayoutProps) {
 
   return (
     <div className="min-h-screen overflow-x-hidden pb-20 text-brownroyal md:pb-0">
+      <AnnouncementBar />
       <Navbar
         onAccountOpen={() => setIsAccountOpen(true)}
         onSearchOpen={() => setIsSearchOpen(true)}

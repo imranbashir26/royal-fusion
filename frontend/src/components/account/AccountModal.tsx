@@ -1,9 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { LogOut, Mail, Phone, ShieldCheck, User, X } from 'lucide-react'
+import { LogOut, Mail, Phone, User, X } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { useAdminAuth } from '../../admin/AdminAuthProvider'
 import { Button } from '../common/Button'
 import { useCustomerAuthStore, type CustomerProfileUpdate } from '../../store/customerAuthStore'
 import { cn } from '../../utils/cn'
@@ -25,8 +23,6 @@ const emptyAuthForm = {
 }
 
 export function AccountModal({ isOpen, onClose }: AccountModalProps) {
-  const navigate = useNavigate()
-  const { login: adminLogin } = useAdminAuth()
   const currentCustomer = useCustomerAuthStore((state) => state.currentCustomer)
   const signIn = useCustomerAuthStore((state) => state.signIn)
   const signUp = useCustomerAuthStore((state) => state.signUp)
@@ -79,14 +75,6 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
     setIsSaving(true)
     try {
       if (mode === 'signin') {
-        if (authForm.email.includes('@')) {
-          const didLoginAsAdmin = await tryAdminLogin(adminLogin, authForm.email, authForm.password)
-          if (didLoginAsAdmin) {
-            onClose()
-            navigate('/admin/dashboard')
-            return
-          }
-        }
         await signIn({ identifier: authForm.email, password: authForm.password })
         setMessage('Welcome back. Your profile is ready.')
       } else {
@@ -280,10 +268,6 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
                         value={authForm.confirmPassword}
                       />
                     )}
-                    <div className="rounded-lg border border-champagne/25 bg-marble p-4 text-sm leading-6 text-brownroyal/72">
-                      <ShieldCheck className="mb-2 h-5 w-5 text-oldgold" aria-hidden="true" />
-                      Passwords are validated and hashed locally for this prototype.
-                    </div>
                     <Alert errors={errors} message={message} />
                     <Button className="w-full" disabled={isSaving} type="submit">
                       {isSaving ? 'Please wait...' : mode === 'signin' ? 'Sign In' : 'Create Account'}
@@ -297,19 +281,6 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
       )}
     </AnimatePresence>
   )
-}
-
-async function tryAdminLogin(
-  adminLogin: (email: string, password: string) => Promise<void>,
-  email: string,
-  password: string,
-) {
-  try {
-    await adminLogin(email.trim(), password)
-    return true
-  } catch {
-    return false
-  }
 }
 
 function ProfileHeader({ name, email, phone }: { name: string; email: string; phone: string }) {

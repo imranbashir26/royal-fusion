@@ -1,15 +1,29 @@
 import { Download, Edit, Plus, Search, Trash2 } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Button } from '../components/common/Button'
 import { adminApi } from '../services/adminApi'
+import { AdminAuthError } from '../services/adminAuthClient'
+import { adminProductsApi, productErrorMessage } from '../services/adminProductsApi'
+import { adminCategoriesApi, categoryErrorMessage } from '../services/adminCategoriesApi'
+import { adminCollectionsApi, collectionErrorMessage } from '../services/adminCollectionsApi'
+import { adminMediaApi } from '../services/adminMediaApi'
 import { cn } from '../utils/cn'
 import { AdminMediaUploader } from './AdminMediaUploader'
+import { useAdminAuth } from './AdminAuthProvider'
 import type { AdminField, AdminResourceConfig } from './adminConfig'
 import { resourceConfigs } from './adminConfig'
 
 type AdminRecord = Record<string, unknown> & { id?: string }
+
+const NOTE_PRESETS: Record<string, string[]> = {
+  'notes.top': ['Bergamot', 'Lemon', 'Saffron', 'Cardamom', 'Apple', 'Lavender', 'Pink Pepper', 'Grapefruit', 'Mint'],
+  'notes.middle': ['Rose', 'Jasmine', 'Oud', 'Nutmeg', 'Cinnamon', 'Cedarwood', 'Amberwood', 'Iris', 'Geranium'],
+  'notes.base': ['Amber', 'Musk', 'Sandalwood', 'Vanilla', 'Leather', 'Patchouli', 'Vetiver', 'Tonka Bean', 'Oakmoss'],
+  'tags': ['Best Seller', 'Signature Perfume', 'Long Lasting', 'Gift Set', 'Unisex', 'Attar Oil', 'Woody Notes', 'Fresh Scent'],
+  'occasion': ['Evening / Formal', 'Daily / Office', 'Date Night', 'Special Events', 'All Season', 'Summer Fresh', 'Winter Warmth'],
+}
 
 export function AdminResourcePage() {
   const { resource = 'products' } = useParams()
@@ -33,32 +47,95 @@ export function AdminResourceManager({ resource }: { resource: string }) {
 }
 
 function ConfiguredResourcePage({ config }: { config: AdminResourceConfig }) {
+  const isProduct = config.endpoint === 'products'
+  const isCategory = config.endpoint === 'categories'
+  const isCollection = config.endpoint === 'collections'
+  const isDedicated = isProduct || isCategory || isCollection
+  const { can, refreshSession } = useAdminAuth()
+  const canEdit = isProduct
+    ? can('products:manage')
+    : isCategory
+      ? can('categories:manage')
+      : isCollection
+        ? can('collections:manage')
+        : true
   const [items, setItems] = useState<AdminRecord[]>([])
   const [query, setQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [totalPages, setTotalPages] = useState(0)
+  const loadSequence = useRef(0)
   const [editingItem, setEditingItem] = useState<AdminRecord | null>(null)
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const searchQuery = isDedicated ? debouncedQuery : query
+
+  useEffect(() => {
+    if (!isDedicated) return
+    const timeout = window.setTimeout(() => setDebouncedQuery(query), 300)
+    return () => window.clearTimeout(timeout)
+  }, [isDedicated, query])
 
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current
     setIsLoading(true)
     setError('')
     try {
-      setItems(await adminApi.list<AdminRecord>(config.endpoint, query))
+      if (isProduct) {
+        const result = await adminProductsApi.list({ page, pageSize: 25, search: searchQuery, status: statusFilter })
+        if (sequence !== loadSequence.current) return
+        if (page > 1 && result.totalPages < page) {
+          setPage(Math.max(1, result.totalPages))
+          return
+        }
+        setItems(result.items)
+        setTotal(result.total)
+        setTotalPages(result.totalPages)
+      } else if (isCategory) {
+        const result = await adminCategoriesApi.list({ search: searchQuery, status: statusFilter })
+        if (sequence !== loadSequence.current) return
+        setItems(result)
+        setTotal(result.length)
+      } else if (isCollection) {
+        const result = await adminCollectionsApi.list({ search: searchQuery, status: statusFilter })
+        if (sequence !== loadSequence.current) return
+        setItems(result)
+        setTotal(result.length)
+      } else {
+        const result = await adminApi.list<AdminRecord>(config.endpoint, searchQuery)
+        if (sequence !== loadSequence.current) return
+        setItems(result)
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to load admin data.')
+      if (err instanceof AdminAuthError && err.status === 401) void refreshSession().catch(() => {})
+      if (sequence === loadSequence.current) {
+        setError(
+          isProduct
+            ? productErrorMessage(err)
+            : isCategory
+              ? categoryErrorMessage(err)
+              : isCollection
+                ? collectionErrorMessage(err)
+                : err instanceof Error
+                  ? err.message
+                  : 'Unable to load admin data.'
+        )
+      }
     } finally {
-      setIsLoading(false)
+      if (sequence === loadSequence.current) setIsLoading(false)
     }
-  }, [config.endpoint, query])
+  }, [config.endpoint, isCategory, isCollection, isProduct, page, refreshSession, searchQuery, statusFilter])
 
   useEffect(() => {
     void load()
   }, [load])
 
   const filteredItems = useMemo(() => {
+    if (isDedicated) return items
     return items.filter((item) => {
       const matchesStatus =
         statusFilter === 'All' || String(item.status ?? item.enabled ?? '') === statusFilter
@@ -66,32 +143,101 @@ function ConfiguredResourcePage({ config }: { config: AdminResourceConfig }) {
         !query || JSON.stringify(item).toLowerCase().includes(query.toLowerCase())
       return matchesStatus && matchesQuery
     })
-  }, [items, query, statusFilter])
+  }, [isDedicated, items, query, statusFilter])
 
   const openAdd = () => {
     setEditingItem(null)
     setIsFormOpen(true)
   }
 
-  const openEdit = (item: AdminRecord) => {
-    setEditingItem(item)
-    setIsFormOpen(true)
+  const openEdit = async (item: AdminRecord) => {
+    if (!item.id) {
+      setEditingItem(item)
+      setIsFormOpen(true)
+      return
+    }
+    if (isProduct) {
+      try {
+        setEditingItem(await adminProductsApi.get(item.id))
+        setIsFormOpen(true)
+      } catch (err) {
+        if (err instanceof AdminAuthError && err.status === 401) void refreshSession().catch(() => {})
+        setError(productErrorMessage(err))
+      }
+    } else if (isCategory) {
+      try {
+        setEditingItem(await adminCategoriesApi.get(item.id))
+        setIsFormOpen(true)
+      } catch (err) {
+        if (err instanceof AdminAuthError && err.status === 401) void refreshSession().catch(() => {})
+        setError(categoryErrorMessage(err))
+      }
+    } else if (isCollection) {
+      try {
+        setEditingItem(await adminCollectionsApi.get(item.id))
+        setIsFormOpen(true)
+      } catch (err) {
+        if (err instanceof AdminAuthError && err.status === 401) void refreshSession().catch(() => {})
+        setError(collectionErrorMessage(err))
+      }
+    } else {
+      setEditingItem(item)
+      setIsFormOpen(true)
+    }
   }
 
   const remove = async (item: AdminRecord) => {
     const title = String(item.name ?? item.title ?? item.code ?? item.email ?? config.singular)
-    const confirmed = window.confirm(`Delete "${title}"? This cannot be undone.`)
+    const confirmed = window.confirm(
+      isProduct
+        ? `Archive "${title}"? It will be removed from the public storefront.`
+        : `Delete "${title}"? This cannot be undone.`
+    )
     if (!confirmed) return
     if (!item.id) return
-    await adminApi.remove(config.endpoint, item.id)
-    setSuccess(`${config.singular} deleted.`)
-    void load()
+    try {
+      if (isProduct) {
+        await adminProductsApi.archive(item.id)
+        setSuccess('Product archived.')
+      } else if (isCategory) {
+        const res = await adminCategoriesApi.delete(item.id)
+        if (res.archived) {
+          setSuccess(`"${title}" is referenced by existing products and has been archived instead of deleted.`)
+        } else {
+          setSuccess(`Category "${title}" deleted.`)
+        }
+      } else if (isCollection) {
+        const res = await adminCollectionsApi.delete(item.id)
+        if (res.archived) {
+          setSuccess(`"${title}" is referenced by existing products and has been archived instead of deleted.`)
+        } else {
+          setSuccess(`Collection "${title}" deleted.`)
+        }
+      } else {
+        await adminApi.remove(config.endpoint, item.id)
+        setSuccess(`${config.singular} deleted.`)
+      }
+      await load()
+    } catch (err) {
+      if (err instanceof AdminAuthError && err.status === 401) void refreshSession().catch(() => {})
+      setError(
+        isProduct
+          ? productErrorMessage(err)
+          : isCategory
+            ? categoryErrorMessage(err)
+            : isCollection
+              ? collectionErrorMessage(err)
+              : err instanceof Error
+                ? err.message
+                : 'Unable to delete record.'
+      )
+    }
   }
 
   return (
     <div className="space-y-5">
       <AdminShellTitle title={config.label} eyebrow="Admin Management">
-        {!config.readOnly && (
+        {!config.readOnly && canEdit && (
           <Button onClick={openAdd}>
             <Plus className="h-4 w-4" />
             Add {config.singular}
@@ -100,25 +246,28 @@ function ConfiguredResourcePage({ config }: { config: AdminResourceConfig }) {
       </AdminShellTitle>
 
       <div className="rounded-lg border border-champagne/25 bg-ivory p-4 shadow-sm">
-        <div className="grid gap-3 lg:grid-cols-[1fr_180px_auto]">
+        <div className={cn('grid gap-3', isDedicated ? 'lg:grid-cols-[1fr_180px]' : 'lg:grid-cols-[1fr_180px_auto]')}>
           <label className="flex h-11 items-center gap-3 rounded-full border border-champagne/35 bg-marble px-4">
             <Search className="h-4 w-4 text-oldgold" />
             <input
               className="min-w-0 flex-1 bg-transparent text-sm outline-none"
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => { setQuery(event.target.value); if (isDedicated) setPage(1) }}
               placeholder={`Search ${config.label.toLowerCase()}...`}
               value={query}
             />
           </label>
           <select
             className="h-11 rounded-full border border-champagne/35 bg-marble px-4 text-sm font-bold outline-none"
-            onChange={(event) => setStatusFilter(event.target.value)}
+            onChange={(event) => { setStatusFilter(event.target.value); if (isDedicated) setPage(1) }}
             value={statusFilter}
           >
             <option>All</option>
             <option>Published</option>
             <option>Draft</option>
-            <option>Active</option>
+            {isDedicated && <option>Unpublished</option>}
+            {isDedicated && <option>Archived</option>}
+            {!isDedicated && <option>Active</option>}
+            {!isDedicated && <>
             <option>Inactive</option>
             <option>Approved</option>
             <option>Pending</option>
@@ -127,15 +276,16 @@ function ConfiguredResourcePage({ config }: { config: AdminResourceConfig }) {
             <option>Read</option>
             <option>true</option>
             <option>false</option>
+            </>}
           </select>
-          <button
+          {!isDedicated && <button
             className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-champagne/35 bg-marble px-4 text-sm font-bold text-brownroyal transition hover:bg-champagne/15"
             onClick={() => void adminApi.exportResource(config.endpoint)}
             type="button"
           >
             <Download className="h-4 w-4" />
             Export
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -171,16 +321,16 @@ function ConfiguredResourcePage({ config }: { config: AdminResourceConfig }) {
                     ))}
                     <td className="px-4 py-4">
                       <div className="flex justify-end gap-2">
-                        {!config.readOnly && (
-                          <Button size="sm" variant="outline" onClick={() => openEdit(item)}>
+                        {!config.readOnly && canEdit && (
+                          <Button size="sm" variant="outline" onClick={() => void openEdit(item)}>
                             <Edit className="h-4 w-4" />
                             Edit
                           </Button>
                         )}
-                        {!config.readOnly && (
+                        {!config.readOnly && canEdit && ((!isDedicated) || item.status !== 'Archived') && (
                           <Button size="sm" variant="ghost" onClick={() => void remove(item)}>
                             <Trash2 className="h-4 w-4" />
-                            Delete
+                            {isProduct ? 'Archive Product' : 'Delete'}
                           </Button>
                         )}
                         {config.endpoint === 'contact-messages' && (
@@ -197,6 +347,16 @@ function ConfiguredResourcePage({ config }: { config: AdminResourceConfig }) {
           </div>
         )}
       </div>
+
+      {isProduct && !isLoading && total > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-brownroyal">
+          <span>{total} products · Page {page} of {totalPages}</span>
+          <div className="flex gap-2">
+            <Button disabled={page <= 1} onClick={() => setPage((current) => current - 1)} size="sm" variant="outline">Previous</Button>
+            <Button disabled={page >= totalPages} onClick={() => setPage((current) => current + 1)} size="sm" variant="outline">Next</Button>
+          </div>
+        </div>
+      )}
 
       {isFormOpen && (
         <AdminRecordForm
@@ -225,14 +385,70 @@ function AdminRecordForm({
   onClose: () => void
   onSaved: (message: string) => void
 }) {
+  const { refreshSession } = useAdminAuth()
   const [form, setForm] = useState<AdminRecord>(() => ({
     ...(initialValue ?? createDefaultRecord(config.fields)),
   } as AdminRecord))
   const [error, setError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([])
+  const [categoryError, setCategoryError] = useState('')
+
+  useEffect(() => {
+    if (config.endpoint !== 'products') return
+    let active = true
+    adminCategoriesApi.list({ active: 'true' })
+      .then((result) => {
+        if (!active) return
+        setCategories(result.map(({ id, name }) => ({ id, name })))
+      })
+      .catch(() => {
+        if (active) setCategoryError('Production categories are unavailable. You can leave category unassigned.')
+      })
+    return () => { active = false }
+  }, [config.endpoint])
 
   const setValue = (field: AdminField, value: unknown) => {
     setForm((current) => setPath(current, field.name, value))
+  }
+
+  const stagedMediaRef = useRef<Array<{ fieldName: string; file: File; previewUrl: string }>>([])
+
+  const onUploadMedia = async (fieldName: string, file: File): Promise<string> => {
+    const mediaType =
+      fieldName === 'image'
+        ? 'main'
+        : fieldName === 'cardImage'
+          ? 'card'
+          : fieldName === 'cardHoverImage'
+            ? 'cardHover'
+            : 'gallery'
+
+    const productId = initialValue?.id ? String(initialValue.id) : (form.id ? String(form.id) : undefined)
+
+    if (productId) {
+      const res = await adminMediaApi.upload(file, {
+        productId,
+        mediaType,
+        altText: `${String(getPath(form, 'name') || 'Product')} ${fieldName}`,
+      })
+      return res.secureUrl
+    } else {
+      const previewUrl = URL.createObjectURL(file)
+      stagedMediaRef.current.push({ fieldName, file, previewUrl })
+      return previewUrl
+    }
+  }
+
+  const onDeleteMedia = async (_fieldName: string, imageUrl: string): Promise<void> => {
+    const productId = initialValue?.id ? String(initialValue.id) : (form.id ? String(form.id) : undefined)
+    if (productId && (imageUrl.startsWith('https://res.cloudinary.com') || imageUrl.includes('royal-fusion'))) {
+      await adminMediaApi.delete({
+        productId,
+        secureUrl: imageUrl,
+      })
+    }
+    stagedMediaRef.current = stagedMediaRef.current.filter((item) => item.previewUrl !== imageUrl)
   }
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -248,14 +464,90 @@ function AdminRecordForm({
 
       setIsSaving(true)
       if (initialValue) {
-        await adminApi.update(config.endpoint, String(initialValue.id), payload)
+        if (config.endpoint === 'products') await adminProductsApi.update(String(initialValue.id), payload)
+        else if (config.endpoint === 'categories') await adminCategoriesApi.update(String(initialValue.id), payload)
+        else if (config.endpoint === 'collections') await adminCollectionsApi.update(String(initialValue.id), payload)
+        else await adminApi.update(config.endpoint, String(initialValue.id), payload)
         onSaved(`${config.singular} updated.`)
       } else {
-        await adminApi.create(config.endpoint, payload)
-        onSaved(`${config.singular} created.`)
+        if (config.endpoint === 'products') {
+          // Clean out temporary blob preview URLs from initial product payload
+          const createPayload = { ...payload }
+          if (typeof createPayload.image === 'string' && createPayload.image.startsWith('blob:')) createPayload.image = ''
+          if (typeof createPayload.cardImage === 'string' && createPayload.cardImage.startsWith('blob:')) createPayload.cardImage = ''
+          if (typeof createPayload.cardHoverImage === 'string' && createPayload.cardHoverImage.startsWith('blob:')) createPayload.cardHoverImage = ''
+          if (Array.isArray(createPayload.gallery)) {
+            createPayload.gallery = createPayload.gallery.filter((u) => typeof u === 'string' && !u.startsWith('blob:'))
+          }
+
+          const created = await adminProductsApi.create(createPayload)
+
+          if (stagedMediaRef.current.length > 0) {
+            const uploadedPatch: Record<string, unknown> = {}
+            const failedFields: string[] = []
+
+            for (const { fieldName, file } of stagedMediaRef.current) {
+              const mediaType =
+                fieldName === 'image'
+                  ? 'main'
+                  : fieldName === 'cardImage'
+                    ? 'card'
+                    : fieldName === 'cardHoverImage'
+                      ? 'cardHover'
+                      : 'gallery'
+
+              try {
+                const uploadRes = await adminMediaApi.upload(file, {
+                  productId: created.id,
+                  mediaType,
+                  altText: `${created.name || 'Product'} ${fieldName}`,
+                })
+                if (fieldName === 'gallery') {
+                  const curr = (uploadedPatch.gallery as string[]) || (created.gallery as string[]) || []
+                  uploadedPatch.gallery = [...curr, uploadRes.secureUrl]
+                } else {
+                  uploadedPatch[fieldName] = uploadRes.secureUrl
+                }
+              } catch {
+                failedFields.push(fieldName)
+              }
+            }
+
+            if (Object.keys(uploadedPatch).length > 0) {
+              await adminProductsApi.update(created.id, uploadedPatch)
+            }
+
+            if (failedFields.length > 0) {
+              setForm((current) => ({ ...current, ...created, ...uploadedPatch, id: created.id }))
+              setError(`Product created (ID: ${created.id}), but image upload failed for: ${failedFields.join(', ')}. You can retry uploading directly now.`)
+              return
+            }
+          }
+          onSaved(`${config.singular} created.`)
+        } else if (config.endpoint === 'categories') {
+          await adminCategoriesApi.create(payload)
+          onSaved(`${config.singular} created.`)
+        } else if (config.endpoint === 'collections') {
+          await adminCollectionsApi.create(payload)
+          onSaved(`${config.singular} created.`)
+        } else {
+          await adminApi.create(config.endpoint, payload)
+          onSaved(`${config.singular} created.`)
+        }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save.')
+      if (err instanceof AdminAuthError && err.status === 401) void refreshSession().catch(() => {})
+      setError(
+        config.endpoint === 'products'
+          ? productErrorMessage(err)
+          : config.endpoint === 'categories'
+            ? categoryErrorMessage(err)
+            : config.endpoint === 'collections'
+              ? collectionErrorMessage(err)
+              : err instanceof Error
+                ? err.message
+                : 'Unable to save.'
+      )
     } finally {
       setIsSaving(false)
     }
@@ -272,33 +564,198 @@ function AdminRecordForm({
             Close
           </button>
         </div>
-        <form className="p-5" onSubmit={handleSubmit}>
-          <div className="grid gap-4 md:grid-cols-2">
-            {config.fields.map((field) => (
-              <AdminFormField
-                field={field}
-                key={field.name}
-                onChange={(value) => setValue(field, value)}
-                onMainImageSelect={(image) => {
-                  setForm((current) => ({
-                    ...current,
-                    mainImage: image,
-                    image,
-                  }))
-                }}
-                value={getPath(form, field.name)}
-              />
-            ))}
-          </div>
+        <form className="p-5 space-y-6" onSubmit={handleSubmit}>
+          {config.endpoint === 'products' ? (
+            <ProductFormSections
+              config={config}
+              categories={categories}
+              form={form}
+              getPath={getPath}
+              setForm={setForm}
+              setValue={setValue}
+              onUploadMedia={onUploadMedia}
+              onDeleteMedia={onDeleteMedia}
+            />
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2">
+              {config.fields.map((field) => (
+                <AdminFormField
+                  field={field}
+                  key={field.name}
+                  onChange={(value) => setValue(field, value)}
+                  onMainImageSelect={(image) => {
+                    setForm((current) => ({
+                      ...current,
+                      mainImage: image,
+                      image,
+                    }))
+                  }}
+                  value={getPath(form, field.name)}
+                />
+              ))}
+            </div>
+          )}
+          {categoryError && config.endpoint === 'products' && <Alert tone="error">{categoryError}</Alert>}
           {error && <Alert className="mt-5" tone="error">{error}</Alert>}
-          <div className="mt-6 flex justify-end gap-3">
+          <div className="mt-6 flex justify-end gap-3 border-t border-champagne/25 pt-4">
             <Button onClick={onClose} variant="outline">Cancel</Button>
             <Button disabled={isSaving} type="submit">
-              {isSaving ? 'Saving...' : 'Save'}
+              {isSaving ? 'Saving...' : 'Save Record'}
             </Button>
           </div>
         </form>
       </div>
+    </div>
+  )
+}
+
+function ProductFormSections({
+  config,
+  categories,
+  form,
+  getPath,
+  setValue,
+  setForm,
+  onUploadMedia,
+  onDeleteMedia,
+}: {
+  config: AdminResourceConfig
+  categories: Array<{ id: string; name: string }>
+  form: AdminRecord
+  getPath: (source: Record<string, unknown>, path: string) => unknown
+  setValue: (field: AdminField, value: unknown) => void
+  setForm: React.Dispatch<React.SetStateAction<AdminRecord>>
+  onUploadMedia?: (fieldName: string, file: File) => Promise<string>
+  onDeleteMedia?: (fieldName: string, imageUrl: string) => Promise<void>
+}) {
+  const sections = [
+    {
+      title: '🏷️ 1. Basic Information & Pricing',
+      fields: ['name', 'slug', 'sku', 'categoryId', 'price', 'salePrice', 'oldPrice', 'stockQuantity', 'bottleSize', 'shortDescription', 'description'],
+    },
+    {
+      title: '🧪 2. Fragrance Pyramid & Notes Profile',
+      fields: ['scentFamily', 'gender', 'concentration', 'longevity', 'occasion', 'inspiredBy', 'notes.top', 'notes.middle', 'notes.base'],
+    },
+    {
+      title: '🖼️ 3. Media & Product Gallery',
+      fields: ['gallery', 'image', 'imageAlt'],
+    },
+    {
+      title: '🎨 4. Product Card Presentation (Concept 7)',
+      fields: ['cardImage', 'cardHoverImage', 'cardBackgroundColor'],
+    },
+    {
+      title: '⭐ 5. Badges, Variations & Publishing',
+      fields: ['tags', 'badge', 'variations', 'isFeatured', 'isBestSeller', 'isNewArrival', 'isPremium', 'isAttar', 'status', 'seoTitle', 'seoDescription'],
+    },
+  ]
+
+  const fieldMap = new Map(config.fields.map((f) => [f.name, f]))
+
+  return (
+    <div className="space-y-6">
+      {sections.map((section) => {
+        const sectionFields = section.fields
+          .map((fieldName) => fieldMap.get(fieldName))
+          .filter((f): f is AdminField => Boolean(f))
+
+        if (sectionFields.length === 0) return null
+
+        const isPresentationSection = section.title.includes('Product Card Presentation')
+        const bgHex = String(getPath(form, 'cardBackgroundColor') || '#E7C78F')
+        const defaultCardImg = String(getPath(form, 'cardImage') || getPath(form, 'image') || '')
+        const hoverCardImg = String(getPath(form, 'cardHoverImage') || '')
+
+        return (
+          <fieldset className="rounded-lg border border-champagne/35 bg-ivory p-4 shadow-sm" key={section.title}>
+            <legend className="px-2 font-serif text-lg font-bold text-burgundy bg-ivory rounded border border-champagne/30">
+              {section.title}
+            </legend>
+            <div className="mt-3 grid gap-4 md:grid-cols-2">
+              {sectionFields.map((field) => field.name === 'categoryId' ? (
+                <label key={field.name}>
+                  <span className="mb-2 block text-sm font-bold text-brownroyal">Category</span>
+                  <select
+                    className="h-12 w-full rounded-full border border-champagne/35 bg-marble px-4 outline-none focus:border-burgundy"
+                    onChange={(event) => setValue(field, event.target.value)}
+                    value={String(getPath(form, 'categoryId') ?? '')}
+                  >
+                    <option value="">No category</option>
+                    {Boolean(getPath(form, 'categoryId')) && !categories.some(({ id }) => id === getPath(form, 'categoryId')) && (
+                      <option value={String(getPath(form, 'categoryId'))}>{String(getPath(form, 'category') || 'Current category')}</option>
+                    )}
+                    {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                  </select>
+                </label>
+              ) : (
+                <AdminFormField
+                  allowUpload={true}
+                  field={field}
+                  key={field.name}
+                  onChange={(value) => setValue(field, value)}
+                  onDelete={onDeleteMedia ? (imageUrl) => onDeleteMedia(field.name, imageUrl) : undefined}
+                  onMainImageSelect={(image) => {
+                    setForm((current) => ({
+                      ...current,
+                      image,
+                    }))
+                  }}
+                  onUpload={onUploadMedia ? (file) => onUploadMedia(field.name, file) : undefined}
+                  value={getPath(form, field.name)}
+                />
+              ))}
+            </div>
+
+            {isPresentationSection && (
+              <div className="mt-5 rounded-xl border border-champagne/35 bg-marble/60 p-4">
+                <p className="text-xs font-bold uppercase tracking-[0.14em] text-oldgold mb-3">
+                  Live Card Preview (Hover over card to preview lifestyle photoshoot)
+                </p>
+                <div className="flex flex-col sm:flex-row items-center gap-5">
+                  <div
+                    className="group relative aspect-[4/5] w-44 overflow-hidden rounded-[14px] border border-soft-border/80 shadow-md"
+                    style={{ backgroundColor: bgHex }}
+                  >
+                    {Boolean(getPath(form, 'badge')) && (
+                      <span className="absolute left-2.5 top-2.5 z-10 rounded-full border border-champagne/30 bg-royal-burgundy px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-white">
+                        {String(getPath(form, 'badge'))}
+                      </span>
+                    )}
+                    {defaultCardImg ? (
+                      <img
+                        src={defaultCardImg}
+                        alt="Product card preview"
+                        className={cn(
+                          'relative z-0 h-[82%] w-auto max-w-[82%] object-contain mx-auto my-auto absolute inset-0 m-auto transition-opacity duration-400 ease-out',
+                          hoverCardImg && 'group-hover:opacity-0',
+                        )}
+                      />
+                    ) : (
+                      <div className="grid h-full place-items-center text-xs font-bold text-brownroyal/40">
+                        No PNG selected
+                      </div>
+                    )}
+                    {hoverCardImg && (
+                      <img
+                        src={hoverCardImg}
+                        alt="Card hover preview"
+                        className="absolute inset-0 z-0 h-full w-full object-cover opacity-0 transition-opacity duration-400 ease-out group-hover:opacity-100"
+                      />
+                    )}
+                  </div>
+                  <div className="space-y-1.5 text-xs text-brownroyal/80 max-w-sm">
+                    <p className="font-serif text-base font-bold text-burgundy">{String(getPath(form, 'name') || 'Product Name')}</p>
+                    <p><strong>Configured Color:</strong> <span className="font-mono font-semibold text-burgundy">{bgHex}</span></p>
+                    <p><strong>Default Bottle Image:</strong> {getPath(form, 'cardImage') ? 'Dedicated card PNG' : 'Fallback to primary image'}</p>
+                    <p><strong>Hover Image:</strong> {hoverCardImg ? 'Configured (crossfade active)' : 'None (solid PNG retained)'}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </fieldset>
+        )
+      })}
     </div>
   )
 }
@@ -308,11 +765,17 @@ function AdminFormField({
   value,
   onChange,
   onMainImageSelect,
+  allowUpload = true,
+  onUpload,
+  onDelete,
 }: {
   field: AdminField
   value: unknown
   onChange: (value: unknown) => void
   onMainImageSelect?: (value: string) => void
+  allowUpload?: boolean
+  onUpload?: (file: File) => Promise<string>
+  onDelete?: (image: string) => Promise<void>
 }) {
   const type = field.type ?? 'text'
   const label = (
@@ -368,27 +831,150 @@ function AdminFormField({
   }
 
   if (type === 'tags') {
+    const currentTags = Array.isArray(value) ? value.map(String) : splitList(String(value ?? ''))
+    const presets = NOTE_PRESETS[field.name]
+
+    const togglePreset = (note: string) => {
+      const exists = currentTags.some((t) => t.toLowerCase() === note.toLowerCase())
+      const next = exists
+        ? currentTags.filter((t) => t.toLowerCase() !== note.toLowerCase())
+        : [...currentTags, note]
+      onChange(next)
+    }
+
     return (
-      <label>
+      <div className="space-y-2">
+        <label className="block">
+          {label}
+          <input
+            className="h-12 w-full rounded-full border border-champagne/35 bg-marble px-4 outline-none focus:border-burgundy"
+            onChange={(event) => onChange(splitList(event.target.value))}
+            placeholder="Comma separated"
+            value={currentTags.join(', ')}
+          />
+        </label>
+        {presets && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            <span className="text-[11px] font-bold text-brownroyal/60">Quick Add Note:</span>
+            {presets.map((note) => {
+              const active = currentTags.some((t) => t.toLowerCase() === note.toLowerCase())
+              return (
+                <button
+                  key={note}
+                  type="button"
+                  onClick={() => togglePreset(note)}
+                  className={cn(
+                    'rounded-full px-2.5 py-1 text-xs font-semibold transition',
+                    active
+                      ? 'bg-burgundy text-ivory'
+                      : 'bg-champagne/20 text-brownroyal hover:bg-champagne/40',
+                  )}
+                >
+                  {active ? `✓ ${note}` : `+ ${note}`}
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  if (type === 'color') {
+    const currentColor = String(value || '#E7C78F')
+    const presets = [
+      { name: 'Warm Champagne', value: '#E7C78F' },
+      { name: 'Soft Blush', value: '#EBC0BE' },
+      { name: 'Muted Amber', value: '#D7A35B' },
+      { name: 'Soft Ivory', value: '#F3E8D5' },
+      { name: 'Warm Taupe', value: '#C7AE96' },
+      { name: 'Dusty Rose', value: '#D6A3A8' },
+      { name: 'Deep Wine', value: '#6B2A3C' },
+      { name: 'Deep Espresso', value: '#4A3026' },
+    ]
+
+    const handleHexChange = (hex: string) => {
+      let formatted = hex.trim()
+      if (formatted && !formatted.startsWith('#')) {
+        formatted = `#${formatted}`
+      }
+      onChange(formatted)
+    }
+
+    return (
+      <div className="md:col-span-2 space-y-3">
         {label}
-        <input
-          className="h-12 w-full rounded-full border border-champagne/35 bg-marble px-4 outline-none focus:border-burgundy"
-          onChange={(event) => onChange(splitList(event.target.value))}
-          placeholder="Comma separated"
-          value={Array.isArray(value) ? value.join(', ') : String(value ?? '')}
-        />
-      </label>
+        <div className="flex flex-wrap items-center gap-2">
+          {presets.map((preset) => {
+            const isSelected = currentColor.toLowerCase() === preset.value.toLowerCase()
+            return (
+              <button
+                key={preset.value}
+                type="button"
+                onClick={() => onChange(preset.value)}
+                className={cn(
+                  'flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition',
+                  isSelected
+                    ? 'border-burgundy bg-burgundy/10 text-burgundy shadow-xs ring-1 ring-burgundy/30'
+                    : 'border-champagne/40 bg-marble text-brownroyal hover:border-champagne hover:bg-champagne/15',
+                )}
+              >
+                <span
+                  className="h-3.5 w-3.5 rounded-full border border-black/15 shadow-xs"
+                  style={{ backgroundColor: preset.value }}
+                />
+                <span>{preset.name}</span>
+                <span className="font-mono text-[10px] text-brownroyal/60">({preset.value})</span>
+              </button>
+            )
+          })}
+        </div>
+        <div className="flex flex-wrap items-center gap-3 pt-1">
+          <div className="flex h-11 items-center gap-2 rounded-full border border-champagne/35 bg-marble px-3">
+            <input
+              type="color"
+              value={currentColor.startsWith('#') && (currentColor.length === 7 || currentColor.length === 4) ? currentColor : '#E7C78F'}
+              onChange={(e) => onChange(e.target.value.toUpperCase())}
+              className="h-7 w-7 cursor-pointer rounded-full border-0 bg-transparent p-0"
+              title="Pick custom color"
+            />
+            <input
+              type="text"
+              placeholder="#E7C78F"
+              value={String(value ?? '')}
+              onChange={(e) => handleHexChange(e.target.value)}
+              className="w-24 font-mono text-sm font-semibold uppercase outline-none bg-transparent text-brownroyal"
+            />
+          </div>
+          <span className="text-xs text-brownroyal/65">
+            Click any luxury preset or use the color picker / enter HEX.
+          </span>
+        </div>
+        {field.help && <p className="mt-1 text-xs text-brownroyal/60">{field.help}</p>}
+      </div>
     )
   }
 
   if (type === 'images') {
     const images = Array.isArray(value) ? value.map(String) : value ? [String(value)] : []
+    const isSingleImageField =
+      field.name === 'image' ||
+      field.name === 'avatar' ||
+      field.name === 'cardImage' ||
+      field.name === 'cardHoverImage'
+
     return (
       <div className="md:col-span-2">
         {label}
         <AdminMediaUploader
-          onChange={(next) => onChange(field.name === 'image' || field.name === 'avatar' ? next[0] ?? '' : next)}
+          allowUpload={allowUpload}
+          multiple={!isSingleImageField}
+          onChange={(next) =>
+            onChange(isSingleImageField ? next[next.length - 1] ?? next[0] ?? '' : next)
+          }
+          onDelete={onDelete}
           onMainImageSelect={onMainImageSelect}
+          onUpload={onUpload}
           value={images}
         />
         {field.help && <p className="mt-2 text-xs text-brownroyal/60">{field.help}</p>}
@@ -535,7 +1121,7 @@ function validateAdminRecord(config: AdminResourceConfig, payload: Record<string
   if (config.endpoint === 'products') {
     const price = Number(payload.price)
     const salePrice = Number(payload.salePrice ?? 0)
-    const stock = Number(payload.stock)
+    const stock = Number(payload.stockQuantity)
     if (!Number.isFinite(price) || price <= 0) errors.push('Product price must be greater than 0.')
     if (!Number.isInteger(stock) || stock < 0) errors.push('Stock quantity must be 0 or more.')
     if (salePrice > 0 && salePrice >= price) errors.push('Sale price must be lower than regular price.')
@@ -586,7 +1172,7 @@ function isEmptyAdminValue(value: unknown) {
 }
 
 function hasProductImage(payload: Record<string, unknown>) {
-  return !isEmptyAdminValue(payload.image) || !isEmptyAdminValue(payload.mainImage) || !isEmptyAdminValue(payload.gallery)
+  return !isEmptyAdminValue(payload.image) || !isEmptyAdminValue(payload.gallery)
 }
 
 function validateDateRange(payload: Record<string, unknown>, errors: string[]) {

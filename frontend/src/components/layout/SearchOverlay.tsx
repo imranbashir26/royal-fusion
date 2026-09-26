@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Search, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { productMatchesSearch } from '../../services/productSearch'
 import { useStorefront } from '../../storefront/StorefrontProvider'
 import { cn } from '../../utils/cn'
 import { formatCurrency } from '../../utils/format'
@@ -13,7 +14,7 @@ interface SearchOverlayProps {
 }
 
 export function SearchOverlay({ isOpen, onClose }: SearchOverlayProps) {
-  const { products } = useStorefront()
+  const { products, collections = [] } = useStorefront()
   const [query, setQuery] = useState('')
 
   useEffect(() => {
@@ -35,13 +36,8 @@ export function SearchOverlay({ isOpen, onClose }: SearchOverlayProps) {
   const results = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     if (!normalized) return products.slice(0, 4)
-    return products.filter((product) =>
-      [product.name, product.scentFamily, product.category, product.gender, product.collection]
-        .join(' ')
-        .toLowerCase()
-        .includes(normalized),
-    )
-  }, [products, query])
+    return products.filter((product) => productMatchesSearch(product, collections, normalized))
+  }, [products, collections, query])
 
   return (
     <AnimatePresence>

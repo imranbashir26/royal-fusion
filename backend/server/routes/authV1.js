@@ -25,7 +25,7 @@ import { createAuthRateLimiters } from '../middleware/authRateLimits.js'
 
 export function createAuthV1Router(runtime, { rateLimitOverrides } = {}) {
   const router = Router()
-  const { config, gateway, sessionService } = runtime
+  const { config, gateway, sessionService, adminAuthorization } = runtime
   const limiters = createAuthRateLimiters(rateLimitOverrides)
   const originGuard = createOriginGuard(config)
   const optionalIdentity = createOptionalIdentity({ config, sessionService })
@@ -47,8 +47,14 @@ export function createAuthV1Router(runtime, { rateLimitOverrides } = {}) {
         meta: { requestId: req.requestId },
       })
     }
+    const administrator = req.auth.record.sessionClass === 'administrator'
+      ? await resolveAdministrator(req.auth, adminAuthorization, sessionService, res, config)
+      : null
+    if (req.auth.record.sessionClass === 'administrator' && !administrator) {
+      return sendCode(res, AUTH_ERROR_CODES.PERMISSION_DENIED, req.requestId)
+    }
     return res.json({
-      data: safeSessionData(req.auth, readAuthCookies(req, config).csrfToken),
+      data: safeSessionData(req.auth, req.auth.cookies.csrfToken, administrator),
       meta: { requestId: req.requestId },
     })
   }))
@@ -101,6 +107,38 @@ export function createAuthV1Router(runtime, { rateLimitOverrides } = {}) {
     }),
   )
 
+  router.post('/admin/signin',
+    originGuard,
+    limiters.signIn,
+    preAuthCsrf,
+    validateAuthBody(authSchemas.adminSignIn),
+    asyncHandler(async (req, res) => {
+      if (config.adminProvider !== 'supabase') {
+        return sendCode(res, AUTH_ERROR_CODES.AUTH_SERVICE_UNAVAILABLE, req.requestId)
+      }
+      const authResult = await gateway.signInAdministrator({
+        ...req.body,
+        requireMfa: config.adminMfaEnabled,
+      })
+      if (!authResult.identity.emailVerified) {
+        return sendCode(res, AUTH_ERROR_CODES.EMAIL_VERIFICATION_REQUIRED, req.requestId)
+      }
+      const administrator = await adminAuthorization.resolve(authResult.identity.id)
+      if (!administrator) {
+        return sendCode(res, AUTH_ERROR_CODES.PERMISSION_DENIED, req.requestId)
+      }
+      const session = await sessionService.createSession(authResult, {
+        sessionClass: 'administrator',
+        deviceMetadata: deviceMetadata(req),
+      })
+      setSessionCookies(res, config, session)
+      res.json({
+        data: { ...safeCreatedSessionData(session), administrator },
+        meta: { requestId: req.requestId },
+      })
+    }),
+  )
+
   router.post('/refresh',
     originGuard,
     limiters.refresh,
@@ -112,10 +150,24 @@ export function createAuthV1Router(runtime, { rateLimitOverrides } = {}) {
       }
       try {
         const session = await sessionService.refresh(cookies)
+        const adminAssuranceValid = !config.adminMfaEnabled ||
+          (session.record.mfaAssurance === 'aal2' && session.identity.assuranceLevel === 'aal2')
+        const administrator = session.record.sessionClass === 'administrator' && adminAssuranceValid
+          ? await adminAuthorization.resolve(session.identity.id)
+          : null
+        if (session.record.sessionClass === 'administrator' && !administrator) {
+          await sessionService.signOut({
+            accessToken: session.accessToken,
+            sessionHandle: session.sessionHandle,
+            userId: session.identity.id,
+          })
+          clearAuthCookies(res, config)
+          return sendCode(res, AUTH_ERROR_CODES.PERMISSION_DENIED, req.requestId)
+        }
         setSessionCookies(res, config, session)
         res.set('Cache-Control', 'no-store')
         res.json({
-          data: safeCreatedSessionData(session),
+          data: { ...safeCreatedSessionData(session), administrator },
           meta: { requestId: req.requestId },
         })
       } catch (error) {
@@ -257,11 +309,26 @@ export function createAuthV1Router(runtime, { rateLimitOverrides } = {}) {
   return router
 }
 
-function safeSessionData(auth, csrfToken) {
+async function resolveAdministrator(auth, adminAuthorization, sessionService, res, config) {
+  const administrator = await adminAuthorization.resolve(auth.identity.id)
+  if (!administrator || (config.adminMfaEnabled &&
+    (auth.record.mfaAssurance !== 'aal2' || auth.identity.assuranceLevel !== 'aal2'))) {
+    await sessionService.signOut({
+      accessToken: auth.cookies.accessToken,
+      sessionHandle: auth.cookies.sessionHandle,
+      userId: auth.identity.id,
+    })
+    clearAuthCookies(res, config)
+    return null
+  }
+  return administrator
+}
+
+function safeSessionData(auth, csrfToken, administrator = null) {
   return {
     authenticated: true,
     identity: auth.identity,
-    administrator: null,
+    administrator,
     expiresAt: auth.record.absoluteExpiresAt,
     csrfToken,
   }

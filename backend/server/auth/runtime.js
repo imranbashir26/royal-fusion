@@ -1,5 +1,6 @@
 import { createAuthConfig, getAuthReadiness } from './config.js'
 import { AuthSessionService } from '../services/authSessionService.js'
+import { AdminAuthorizationService } from '../services/adminAuthorizationService.js'
 import {
   DisabledAuthGateway,
   SupabaseAuthGateway,
@@ -15,6 +16,7 @@ export function createAuthRuntime({
   config = createAuthConfig(env),
   gateway,
   repository,
+  adminAuthorization,
   clock,
 } = {}) {
   let resolvedGateway = gateway
@@ -47,11 +49,15 @@ export function createAuthRuntime({
     config,
     clock,
   })
+  const resolvedAdminAuthorization = adminAuthorization ?? new AdminAuthorizationService(
+    resolvedRepository instanceof SupabaseSessionRepository ? resolvedRepository.client : null,
+  )
   return Object.freeze({
     config,
     gateway: resolvedGateway,
     repository: resolvedRepository,
     sessionService,
+    adminAuthorization: resolvedAdminAuthorization,
     readiness: getAuthReadiness(config),
   })
 }

@@ -1,4 +1,4 @@
-import type { BlogPost, Category, Product, Review } from './index'
+import type { BlogPost, Category, Collection, FinderPreference, Product, Review } from './index'
 
 export type AdminRole =
   | 'Owner/Admin'
@@ -160,14 +160,18 @@ export interface WebsiteSettings {
   youtubeLink: string
   footerDescription: string
   copyrightText: string
-  contactReceiverEmail: string
   announcementEnabled: boolean
   announcementText: string
+  announcementCtaLabel?: string
+  announcementCtaUrl?: string
+  googleMapsUrl?: string
 }
 
 export interface StorefrontData {
   products: Product[]
   categories: Category[]
+  collections?: Collection[]
+  finderPreferences: FinderPreference[]
   blogs: BlogPost[]
   reviews: Review[]
   testimonials: Testimonial[]

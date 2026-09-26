@@ -40,6 +40,35 @@ export class SupabaseAuthGateway {
     return toAuthenticatedResult(data)
   }
 
+  async signInAdministrator({ email, password, verificationCode, requireMfa }) {
+    const client = this.clientFactory()
+    const { data, error } = await callProvider(
+      () => client.auth.signInWithPassword({ email, password }),
+    )
+    if (error) throw mapProviderError(error)
+    const result = toAuthenticatedResult(data)
+    if (!requireMfa) return result
+    const factors = await callProvider(() => client.auth.mfa.listFactors())
+    if (factors.error) throw mapProviderError(factors.error)
+    const factor = factors.data?.totp?.find((item) => item.status === 'verified')
+    if (!factor || !verificationCode) {
+      throw new AuthGatewayError(AUTH_ERROR_CODES.MFA_REQUIRED)
+    }
+    const verified = await callProvider(() => client.auth.mfa.challengeAndVerify({
+      factorId: factor.id,
+      code: verificationCode,
+    }))
+    if (verified.error) throw mapProviderError(verified.error)
+    const elevated = toAuthenticatedResult({
+      user: verified.data?.user ?? data.user,
+      session: verified.data,
+    })
+    if (elevated.identity.assuranceLevel !== 'aal2') {
+      throw new AuthGatewayError(AUTH_ERROR_CODES.MFA_REQUIRED)
+    }
+    return elevated
+  }
+
   async verifyAccessToken(accessToken) {
     const { data, error } = await callProvider(() => this.client.auth.getUser(accessToken))
     if (error || !data?.user) throw mapProviderError(error)
@@ -151,6 +180,7 @@ export function createSupabaseAuthResources(env = process.env) {
 export class DisabledAuthGateway {
   async signUp() { throw unavailable() }
   async signIn() { throw unavailable() }
+  async signInAdministrator() { throw unavailable() }
   async verifyAccessToken() { throw unavailable() }
   async refresh() { throw unavailable() }
   async signOut() { throw unavailable() }

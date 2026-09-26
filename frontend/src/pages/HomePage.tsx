@@ -1,4 +1,5 @@
 import { BestSellersSection } from '../components/home/BestSellersSection'
+import { BrandStorySection } from '../components/home/BrandStorySection'
 import { BlogsPreview } from '../components/home/BlogsPreview'
 import { CategorySection } from '../components/home/CategorySection'
 import { FragranceFinder } from '../components/home/FragranceFinder'
@@ -20,6 +21,7 @@ export function HomePage() {
       <RoyalCollectionSection />
       <GiftPackagingSection />
       <ReviewsSection />
+      <BrandStorySection />
       <BlogsPreview />
     </>
   )

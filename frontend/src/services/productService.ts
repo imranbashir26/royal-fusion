@@ -7,14 +7,14 @@ async function getProductionProducts() {
   try {
     return await supabaseStorefrontService.getProducts()
   } catch (error) {
-    console.warn('Supabase products unavailable. Falling back to local products.', error)
+    console.warn('Supabase products unavailable.', error)
     return null
   }
 }
 
 export const productService = {
   async getProducts() {
-    return await getProductionProducts() ?? apiClient.get<Product[]>(products)
+    return await getProductionProducts() ?? (import.meta.env.PROD ? [] : apiClient.get<Product[]>(products))
   },
   async getBestSellers() {
     const items = await this.getProducts()
@@ -38,7 +38,6 @@ export const productService = {
         const haystack = [
           product.name,
           product.category,
-          product.collection,
           product.scentFamily,
           product.shortDescription,
           product.gender,

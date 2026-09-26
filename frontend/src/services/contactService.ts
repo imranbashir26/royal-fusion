@@ -9,22 +9,12 @@ export interface ContactPayload {
 
 export const contactService = {
   async sendMessage(payload: ContactPayload) {
-    try {
-      return await apiClient.request<{
-        status?: string
-        message: string
-      }>('/public/contact', {
-        method: 'POST',
-        body: JSON.stringify({ subject: 'Website inquiry', ...payload }),
-      })
-    } catch {
-      return apiClient.post(
-      {
-        status: 'sent',
-        message: 'Thank you. Our fragrance concierge will contact you shortly.',
-      },
-      payload,
-      )
-    }
+    return apiClient.request<{
+      status?: string
+      message: string
+    }>('/public/contact', {
+      method: 'POST',
+      body: JSON.stringify({ subject: 'Website inquiry', ...payload }),
+    })
   },
 }

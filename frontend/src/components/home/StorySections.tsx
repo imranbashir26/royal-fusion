@@ -1,75 +1,116 @@
-import { ArrowRight, Gift } from 'lucide-react'
+import { ArrowRight } from 'lucide-react'
+import { motion, useReducedMotion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { products } from '../../data/products'
-import { buttonClasses } from '../../utils/buttonClasses'
-import { AnimatedSection } from '../common/AnimatedSection'
-import { ProductBottle } from '../products/ProductBottle'
+import collectionEditorial from '../../assets/royal-collection/royal-collection-editorial.webp'
+import giftExperience from '../../assets/gift/royal-fusion-gift-experience.webp'
 
 export function RoyalCollectionSection() {
-  const featured = products.find((product) => product.slug === 'royal-spice') ?? products[0]
+  const reduceMotion = useReducedMotion()
 
   return (
-    <AnimatedSection className="bg-burgundy text-ivory">
-      <div className="container-lux grid items-center gap-10 lg:grid-cols-[1fr_0.9fr]">
-        <div>
-          <p className="mb-3 text-xs font-bold uppercase tracking-[0.24em] text-champagne">
-            The Royal Collection
-          </p>
-          <h2 className="font-serif text-5xl font-semibold leading-none md:text-6xl">
-            Fragrance for a Grand Entrance
-          </h2>
-          <p className="mt-6 max-w-2xl text-lg leading-8 text-ivory/74">
-            Built around amber warmth, velvet spice, and polished woods, The Royal
-            Collection is a storytelling edit for weddings, evenings, and signature
-            moments that should feel remembered.
-          </p>
-          <Link className={buttonClasses({ variant: 'secondary', size: 'lg', className: 'mt-8' })} to="/collections">
-            Explore Royal Collection
-            <ArrowRight className="h-5 w-5" aria-hidden="true" />
-          </Link>
-        </div>
-        <div className="relative min-h-80">
-          <div className="absolute inset-0 rounded-full bg-champagne/14 blur-3xl" />
-          <ProductBottle floating name={featured.name} tone={featured.image} />
-        </div>
+    <section
+      aria-labelledby="royal-collection-heading"
+      className="overflow-hidden bg-deep-wine text-warm-ivory"
+    >
+      <div className="container-lux grid lg:min-h-[500px] lg:grid-cols-[45%_55%] xl:min-h-[530px] 2xl:min-h-[540px]">
+      <div className="relative order-first -mx-5 aspect-[4/3] overflow-hidden md:-mx-8 lg:order-last lg:mx-0 lg:aspect-auto">
+        <motion.img
+          alt="Royal Fusion collection featuring Bloom, Oud ul Abyaz, and Arabian Nights fragrances"
+          className="absolute inset-0 h-full w-full object-cover object-[50%_20%]"
+          style={{ objectPosition: '50% 20%' }}
+          decoding="async"
+          loading="lazy"
+          src={collectionEditorial}
+          width={1448}
+          height={1086}
+          initial={reduceMotion ? false : { opacity: 0, scale: 1.02 }}
+          whileInView={{ opacity: 1, scale: 1 }}
+          viewport={{ once: true, amount: 0.15 }}
+          transition={{ duration: reduceMotion ? 0 : 0.6, ease: 'easeOut' }}
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 bg-gradient-to-t from-deep-wine via-transparent via-20% to-transparent lg:bg-gradient-to-r lg:via-deep-wine/30 lg:via-8% lg:to-transparent lg:to-22%"
+        />
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 hidden min-[1537px]:block min-[1537px]:bg-gradient-to-l min-[1537px]:from-deep-wine min-[1537px]:to-transparent min-[1537px]:to-12%" />
       </div>
-    </AnimatedSection>
+      <div className="flex items-center py-10 sm:py-12">
+        <motion.div
+          className="max-w-[32rem]"
+          initial={reduceMotion ? false : { opacity: 0, y: 16 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, amount: 0.2 }}
+          transition={{ duration: reduceMotion ? 0 : 0.5, ease: 'easeOut' }}
+        >
+          <p className="eyebrow-label mb-4 text-xs font-semibold tracking-[0.24em] text-champagne sm:text-[13px]">
+            THE ROYAL COLLECTION
+          </p>
+          <h2 id="royal-collection-heading" className="max-w-[11em] font-serif text-[clamp(2.25rem,3.6vw,3.75rem)] font-semibold leading-[1.08] text-warm-ivory">
+            Made for Moments That Stay With You
+          </h2>
+          <p className="mt-5 max-w-[29rem] text-base leading-[1.65] text-warm-ivory/85 xl:text-[17px]">
+            A curated expression of depth, warmth, and character—created for celebrations, evenings, and moments worth remembering.
+          </p>
+          <Link
+            className="group mt-7 inline-flex min-h-12 items-center justify-center gap-3 rounded-[10px] border border-soft-border bg-warm-ivory px-5 py-3.5 text-sm font-semibold text-deep-wine transition-colors duration-300 hover:bg-soft-cream focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-champagne motion-reduce:transition-none sm:px-6"
+            to="/collections"
+          >
+            Explore Royal Collection
+            <ArrowRight className="h-4 w-4 transition-transform duration-300 ease-out motion-safe:group-hover:translate-x-1 motion-safe:group-focus-visible:translate-x-1 motion-reduce:transition-none" aria-hidden="true" />
+          </Link>
+        </motion.div>
+      </div>
+      </div>
+    </section>
   )
 }
 
 export function GiftPackagingSection() {
+  const reduceMotion = useReducedMotion()
+
   return (
-    <AnimatedSection>
-      <div className="container-lux grid items-center gap-10 lg:grid-cols-[0.9fr_1fr]">
-        <div className="relative grid min-h-80 place-items-center rounded-lg border border-champagne/30 bg-gradient-to-br from-cream via-ivory to-[#ead0ab] p-8 shadow-xl shadow-brownroyal/10">
-          <div className="absolute left-8 top-8 grid h-16 w-16 place-items-center rounded-lg bg-burgundy text-champagne shadow-lg">
-            <Gift className="h-8 w-8" aria-hidden="true" />
-          </div>
-          <div className="h-48 w-64 rounded-lg border border-champagne/55 bg-burgundy p-4 shadow-2xl shadow-brownroyal/24">
-            <div className="h-full rounded-lg border border-champagne/65 bg-gradient-to-br from-[#7c1b39] to-[#4c0d22] p-5 text-center text-champagne">
-              <p className="font-serif text-4xl font-bold">Royal</p>
-              <p className="mt-1 text-xs font-bold uppercase tracking-[0.22em]">Gift Box</p>
-              <div className="mx-auto mt-6 h-1 w-28 bg-champagne" />
-            </div>
-          </div>
+    <section aria-labelledby="gift-experience-heading" className="bg-warm-ivory py-12 md:py-16">
+      <div className="container-lux grid items-center gap-8 md:gap-10 min-[960px]:grid-cols-[minmax(0,1.12fr)_minmax(0,1fr)] min-[960px]:gap-10 xl:gap-14">
+        <div className="relative aspect-[4/3] max-h-[520px] overflow-hidden rounded-[18px] border border-soft-border/50 shadow-[0_8px_30px_rgba(48,35,30,0.06)] min-[960px]:aspect-auto min-[960px]:h-[clamp(400px,39vw,500px)]">
+          <motion.img
+            alt="Royal Fusion fragrances presented in a burgundy luxury gift box with ribbon"
+            className="h-full w-full object-cover object-center"
+            decoding="async"
+            loading="lazy"
+            src={giftExperience}
+            width={1448}
+            height={1086}
+            initial={reduceMotion ? false : { opacity: 0, scale: 1.02 }}
+            whileInView={{ opacity: 1, scale: 1 }}
+            viewport={{ once: true, amount: 0.15 }}
+            transition={{ duration: reduceMotion ? 0 : 0.55, ease: 'easeOut' }}
+          />
         </div>
-        <div>
-          <p className="mb-3 text-xs font-bold uppercase tracking-[0.24em] text-oldgold">
-            Gift Packaging
+        <motion.div
+          className="max-w-[30rem] xl:justify-self-center"
+          initial={reduceMotion ? false : { opacity: 0, y: 16 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, amount: 0.2 }}
+          transition={{ duration: reduceMotion ? 0 : 0.5, ease: 'easeOut' }}
+        >
+          <p className="eyebrow-label mb-4 text-xs font-semibold tracking-[0.22em] text-champagne sm:text-[13px]">
+            GIFT EXPERIENCE
           </p>
-          <h2 className="font-serif text-5xl font-semibold leading-none text-burgundy md:text-6xl">
-            Gift Royalty in Every Bottle
+          <h2 id="gift-experience-heading" className="font-serif text-[clamp(2.5rem,4vw,3.75rem)] font-semibold leading-[1.08] text-royal-burgundy">
+            A Gift Worth Remembering
           </h2>
-          <p className="mt-6 text-lg leading-8 text-brownroyal/74">
-            Create a premium gifting moment with elegant boxes, curated perfume sets,
-            and a presentation that feels considered before the fragrance is even worn.
+          <p className="mt-5 max-w-[29rem] text-base leading-[1.65] text-muted-taupe lg:text-[17px]">
+            Thoughtfully presented fragrances, finished with the details that make every Royal Fusion gift feel considered from the first impression.
           </p>
-          <Link className={buttonClasses({ size: 'lg', className: 'mt-8' })} to="/shop?category=Gift Sets">
-            Shop Gift Sets
-            <ArrowRight className="h-5 w-5" aria-hidden="true" />
+          <Link
+            className="group mt-7 inline-flex min-h-12 items-center justify-center gap-3 rounded-[10px] border border-champagne/40 bg-royal-burgundy px-6 py-3 text-sm font-semibold text-warm-ivory transition-colors duration-300 hover:bg-deep-wine focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-royal-burgundy motion-reduce:transition-none"
+            to="/shop?category=Gift%20Sets"
+          >
+            Explore Gift Sets
+            <ArrowRight aria-hidden="true" className="h-4 w-4 transition-transform duration-300 ease-out motion-safe:group-hover:translate-x-1 motion-safe:group-focus-visible:translate-x-1 motion-reduce:transition-none" />
           </Link>
-        </div>
+        </motion.div>
       </div>
-    </AnimatedSection>
+    </section>
   )
 }

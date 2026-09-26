@@ -7,6 +7,14 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test": "node --test tests/adminProductContract.test.mjs tests/adminMediaContract.test.mjs tests/adminCategoryContract.test.mjs tests/adminCollectionContract.test.mjs tests/collectionConsistency.test.mjs tests/catalogNormalization.test.mjs tests/fragranceFinder.test.mjs tests/reviewsIntegration.test.mjs tests/newsletterIntegration.test.mjs tests/settingsIntegration.test.mjs",
+    "test:settings": "node --test tests/settingsIntegration.test.mjs",
+    "test:newsletter": "node --test tests/newsletterIntegration.test.mjs",
+    "test:reviews": "node --test tests/reviewsIntegration.test.mjs",
+    "test:admin-categories": "node --test tests/adminCategoryContract.test.mjs",
+    "test:admin-collections": "node --test tests/adminCollectionContract.test.mjs",
+    "test:admin-media": "node --test tests/adminMediaContract.test.mjs",
+    "test:admin-products": "node --test tests/adminProductContract.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

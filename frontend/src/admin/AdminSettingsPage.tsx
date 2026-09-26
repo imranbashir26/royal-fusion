@@ -2,7 +2,8 @@ import { Save } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import { Button } from '../components/common/Button'
-import { adminApi } from '../services/adminApi'
+import { adminSettingsApi, type SettingsSection } from '../services/adminSettingsApi'
+import { useAdminAuth } from './AdminAuthProvider'
 
 type SettingsRecord = Record<string, unknown>
 
@@ -15,6 +16,7 @@ const websiteFields = [
   'phoneNumber',
   'emailAddress',
   'businessAddress',
+  'googleMapsUrl',
   'instagramLink',
   'facebookLink',
   'tiktokLink',
@@ -22,13 +24,14 @@ const websiteFields = [
   'footerDescription',
   'copyrightText',
   'contactReceiverEmail',
-  'announcementText',
 ]
 
 const homepageFields = [
+  'heroEyebrow',
   'heroHeading',
   'heroSubtitle',
   'heroImage',
+  'heroImageAlt',
   'primaryCtaText',
   'primaryCtaLink',
   'secondaryCtaText',
@@ -40,53 +43,72 @@ const homepageFields = [
 ]
 
 export function AdminSettingsPage() {
+  const { can } = useAdminAuth()
+  const allowed = can('settings.manage')
   const [settings, setSettings] = useState<SettingsRecord>({})
   const [homepage, setHomepage] = useState<SettingsRecord>({})
   const [shipping, setShipping] = useState<SettingsRecord>({})
   const [paymentsJson, setPaymentsJson] = useState('[]')
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [dirty, setDirty] = useState<Record<'settings' | 'homepage' | 'shipping', SettingsRecord>>({ settings: {}, homepage: {}, shipping: {} })
+  const [paymentsDirty, setPaymentsDirty] = useState(false)
 
   useEffect(() => {
-    void load()
-  }, [])
+    if (!allowed) return
+    let active = true
+    adminSettingsApi.get().then((data) => {
+      if (!active) return
+      setSettings(data.settings)
+      setHomepage(data.homepage)
+      setShipping(data.shipping)
+      setPaymentsJson(JSON.stringify(data.payments, null, 2))
+    }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : 'Settings could not be loaded.') })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [allowed])
 
-  const load = async () => {
-    const [nextSettings, nextHomepage, nextShipping, nextPayments] = await Promise.all([
-      adminApi.getSettings<SettingsRecord>('settings'),
-      adminApi.getSettings<SettingsRecord>('homepage'),
-      adminApi.getSettings<SettingsRecord>('shipping'),
-      adminApi.list<Record<string, unknown>>('payments'),
-    ])
-    setSettings(nextSettings)
-    setHomepage(nextHomepage)
-    setShipping(nextShipping)
-    setPaymentsJson(JSON.stringify(nextPayments, null, 2))
+  const change = (section: Exclude<SettingsSection, 'payments'>, field: string, value: unknown) => {
+    const update = (current: SettingsRecord) => ({ ...current, [field]: value })
+    if (section === 'settings') setSettings(update)
+    if (section === 'homepage') setHomepage(update)
+    if (section === 'shipping') setShipping(update)
+    setDirty((current) => ({ ...current, [section]: { ...current[section], [field]: value } }))
   }
 
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setError('')
     setStatus('')
+    setSaving(true)
     try {
-      await adminApi.updateSettings('settings', settings)
-      await adminApi.updateSettings('homepage', homepage)
-      await adminApi.updateSettings('shipping', normalizeShipping(shipping))
-      const payments = JSON.parse(paymentsJson)
-      const existing = await adminApi.list<Record<string, unknown>>('payments')
-      await Promise.all(
-        payments.map((payment: Record<string, unknown>, index: number) => {
-          const id = String(payment.id || existing[index]?.id || `pay-${Date.now()}-${index}`)
-          return existing.some((item) => item.id === id)
-            ? adminApi.update('payments', id, { ...payment, id })
-            : adminApi.create('payments', { ...payment, id })
-        }),
-      )
+      const payments = paymentsDirty ? JSON.parse(paymentsJson) as unknown : null
+      if (paymentsDirty && !Array.isArray(payments)) throw new Error('Payment methods must be a JSON array.')
+      let changed = false
+      for (const section of ['settings', 'homepage', 'shipping'] as const) {
+        if (!Object.keys(dirty[section]).length) continue
+        await adminSettingsApi.update(section, dirty[section])
+        changed = true
+        setDirty((current) => ({ ...current, [section]: {} }))
+      }
+      if (paymentsDirty) {
+        await adminSettingsApi.update('payments', payments as Array<{ name: 'Cash on Delivery' | 'Bank Transfer'; active: boolean }>)
+        setPaymentsDirty(false)
+        changed = true
+      }
+      if (!changed) { setStatus('No changes to save.'); return }
       setStatus('Settings saved successfully.')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save settings.')
+      setError(`${err instanceof Error ? err.message : 'Unable to save settings.'} Any unsaved values remain in the form.`)
+    } finally {
+      setSaving(false)
     }
   }
+
+  if (!allowed) return <p role="alert">You do not have permission to manage settings.</p>
+  if (loading) return <p role="status">Loading settings…</p>
 
   return (
     <form className="space-y-6" onSubmit={save}>
@@ -103,20 +125,47 @@ export function AdminSettingsPage() {
             <TextField
               key={field}
               label={labelize(field)}
-              onChange={(value) => setSettings((current) => ({ ...current, [field]: value }))}
+              onChange={(value) => change('settings', field, value)}
               textarea={field.toLowerCase().includes('description') || field.toLowerCase().includes('text')}
               value={String(settings[field] ?? '')}
             />
           ))}
+        </div>
+      </SettingsPanel>
+
+      <SettingsPanel title="Announcement Bar Settings">
+        <div className="space-y-4">
           <label className="flex items-center justify-between rounded-lg border border-champagne/25 bg-marble p-4">
-            <span className="font-bold">Announcement enabled</span>
+            <div>
+              <span className="block font-bold text-burgundy">Announcement Enabled</span>
+              <span className="text-xs text-brownroyal/65">Toggle visibility of the top announcement bar</span>
+            </div>
             <input
               checked={Boolean(settings.announcementEnabled)}
-              className="h-5 w-5 accent-burgundy"
-              onChange={(event) => setSettings((current) => ({ ...current, announcementEnabled: event.target.checked }))}
+              className="h-5 w-5 accent-burgundy cursor-pointer"
+              onChange={(event) => change('settings', 'announcementEnabled', event.target.checked)}
               type="checkbox"
             />
           </label>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="md:col-span-2">
+              <TextField
+                label="Announcement Text"
+                onChange={(value) => change('settings', 'announcementText', value)}
+                value={String(settings.announcementText ?? '')}
+              />
+            </div>
+            <TextField
+              label="Announcement CTA Label (Optional)"
+              onChange={(value) => change('settings', 'announcementCtaLabel', value)}
+              value={String(settings.announcementCtaLabel ?? '')}
+            />
+            <TextField
+              label="Announcement CTA URL (Optional)"
+              onChange={(value) => change('settings', 'announcementCtaUrl', value)}
+              value={String(settings.announcementCtaUrl ?? '')}
+            />
+          </div>
         </div>
       </SettingsPanel>
 
@@ -126,7 +175,7 @@ export function AdminSettingsPage() {
             <TextField
               key={field}
               label={labelize(field)}
-              onChange={(value) => setHomepage((current) => ({ ...current, [field]: value }))}
+              onChange={(value) => change('homepage', field, value)}
               textarea={field.toLowerCase().includes('subtitle') || field.toLowerCase().includes('text')}
               value={String(homepage[field] ?? '')}
             />
@@ -135,7 +184,7 @@ export function AdminSettingsPage() {
             <TextField
               key={field}
               label={`${labelize(field)} (comma separated IDs)`}
-              onChange={(value) => setHomepage((current) => ({ ...current, [field]: split(value) }))}
+              onChange={(value) => change('homepage', field, split(value))}
               value={Array.isArray(homepage[field]) ? (homepage[field] as string[]).join(', ') : String(homepage[field] ?? '')}
             />
           ))}
@@ -148,24 +197,12 @@ export function AdminSettingsPage() {
             <TextField
               key={field}
               label={labelize(field)}
-              onChange={(value) => setShipping((current) => ({ ...current, [field]: field.includes('Fee') || field.includes('Above') ? Number(value) : value }))}
+              onChange={(value) => change('shipping', field, field.includes('Fee') || field.includes('Above') ? Number(value) : value)}
               textarea={field.toLowerCase().includes('policy') || field.toLowerCase().includes('information')}
               type={field.includes('Fee') || field.includes('Above') ? 'number' : 'text'}
               value={String(shipping[field] ?? '')}
             />
           ))}
-          <TextField
-            label="City-wise shipping JSON"
-            onChange={(value) => setShipping((current) => ({ ...current, cityWise: parseJson(value, []) }))}
-            textarea
-            value={JSON.stringify(shipping.cityWise ?? [], null, 2)}
-          />
-          <TextField
-            label="Province-wise shipping JSON"
-            onChange={(value) => setShipping((current) => ({ ...current, provinceWise: parseJson(value, []) }))}
-            textarea
-            value={JSON.stringify(shipping.provinceWise ?? [], null, 2)}
-          />
         </div>
       </SettingsPanel>
 
@@ -174,15 +211,15 @@ export function AdminSettingsPage() {
           <span className="mb-2 block text-sm font-bold">Payment methods JSON</span>
           <textarea
             className="min-h-72 w-full rounded-lg border border-champagne/35 bg-marble px-4 py-3 font-mono text-sm outline-none focus:border-burgundy"
-            onChange={(event) => setPaymentsJson(event.target.value)}
+            onChange={(event) => { setPaymentsJson(event.target.value); setPaymentsDirty(true) }}
             value={paymentsJson}
           />
         </label>
       </SettingsPanel>
 
-      <Button size="lg" type="submit">
+      <Button disabled={saving} size="lg" type="submit">
         <Save className="h-5 w-5" />
-        Save Settings
+        {saving ? 'Saving…' : 'Save Settings'}
       </Button>
     </form>
   )
@@ -245,20 +282,4 @@ function labelize(value: string) {
 
 function split(value: string) {
   return value.split(',').map((item) => item.trim()).filter(Boolean)
-}
-
-function parseJson(value: string, fallback: unknown) {
-  try {
-    return JSON.parse(value)
-  } catch {
-    return fallback
-  }
-}
-
-function normalizeShipping(shipping: SettingsRecord) {
-  return {
-    ...shipping,
-    defaultShippingFee: Number(shipping.defaultShippingFee || 0),
-    freeShippingAbove: Number(shipping.freeShippingAbove || 0),
-  }
 }

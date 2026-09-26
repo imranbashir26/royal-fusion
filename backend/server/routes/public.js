@@ -3,12 +3,14 @@ import { nanoid } from 'nanoid'
 import { validate } from '../middleware/validate.js'
 import { readDb, updateDb, nowIso } from '../utils/database.js'
 import { calculateDiscount, calculateShipping, validateCoupon } from '../utils/calculations.js'
-import { contactSchema, couponValidationSchema, newsletterSchema, orderSchema } from '../utils/schemas.js'
+import { contactSchema, couponValidationSchema, orderSchema } from '../utils/schemas.js'
+import { publicPrototypeSettings } from '../utils/publicStorefrontSettings.js'
 
 export const publicRouter = Router()
 
 publicRouter.get('/storefront', async (_req, res) => {
   const db = await readDb()
+  const publicSettings = publicPrototypeSettings(db)
   res.json({
     products: db.products.filter((product) => product.status === 'Published'),
     categories: db.categories
@@ -18,10 +20,10 @@ publicRouter.get('/storefront', async (_req, res) => {
     reviews: db.reviews.filter((review) => review.status === 'Approved'),
     testimonials: db.testimonials.filter((testimonial) => testimonial.status === 'Approved'),
     banners: db.banners.filter((banner) => banner.enabled),
-    settings: db.settings,
+    settings: publicSettings.settings,
     homepage: db.homepage,
-    shipping: db.shipping,
-    payments: db.payments.filter((payment) => payment.active).sort((a, b) => a.displayOrder - b.displayOrder),
+    shipping: publicSettings.shipping,
+    payments: publicSettings.payments,
     seo: db.seo,
     editablePages: db.editablePages.filter((page) => page.status === 'Published')
   })
@@ -49,25 +51,6 @@ publicRouter.get('/blogs/:slug', async (req, res) => {
   const blog = db.blogs.find((item) => item.slug === req.params.slug && item.status === 'Published')
   if (!blog) return res.status(404).json({ message: 'Blog not found.' })
   res.json(blog)
-})
-
-publicRouter.post('/newsletter', validate(newsletterSchema), async (req, res) => {
-  const subscriber = await updateDb((db) => {
-    const exists = db.newsletterSubscribers.some(
-      (item) => item.email.toLowerCase() === req.body.email.toLowerCase()
-    )
-    if (exists) {
-      throw Object.assign(new Error('This email is already subscribed.'), { status: 409 })
-    }
-    const next = {
-      id: `sub-${nanoid(8)}`,
-      email: req.body.email,
-      subscribedAt: nowIso()
-    }
-    db.newsletterSubscribers.push(next)
-    return next
-  })
-  res.status(201).json({ message: 'You are now on the Royal Fusion list.', subscriber })
 })
 
 publicRouter.post('/contact', validate(contactSchema), async (req, res) => {

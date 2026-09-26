@@ -9,6 +9,8 @@ import { RatingStars } from '../components/common/RatingStars'
 import { SectionHeading } from '../components/common/SectionHeading'
 import { ProductBottle } from '../components/products/ProductBottle'
 import { ProductGrid } from '../components/products/ProductGrid'
+import { ProductReviewForm } from '../components/products/ProductReviewForm'
+import { collectionNamesForProduct } from '../services/productionMappers'
 import { useCartStore } from '../store/cartStore'
 import { useWishlistStore } from '../store/wishlistStore'
 import { useStorefront } from '../storefront/StorefrontProvider'
@@ -17,7 +19,7 @@ import { cn } from '../utils/cn'
 import { formatCurrency } from '../utils/format'
 
 export function ProductDetailsPage() {
-  const { products, reviews } = useStorefront()
+  const { products, reviews, collections = [] } = useStorefront()
   const { slug } = useParams()
   const navigate = useNavigate()
   const product = products.find((item) => item.slug === slug)
@@ -31,6 +33,8 @@ export function ProductDetailsPage() {
 
   const selectedSizeOption = product?.sizeOptions.find((option) => option.value === selectedSize)
   const price = selectedSizeOption?.price ?? product?.price ?? 0
+  const collectionNames = product ? collectionNamesForProduct(collections, product.id) : []
+  const productReviews = product ? reviews.filter((review) => review.productId === product.id) : []
 
   const relatedProducts = useMemo(() => {
     if (!product) return []
@@ -43,7 +47,7 @@ export function ProductDetailsPage() {
     return (
       <section className="container-lux py-16">
         <EmptyState
-          description="The perfume you are looking for is not available in this prototype catalog."
+          description="The fragrance you are looking for is not currently available."
           title="Fragrance not found"
         />
       </section>
@@ -84,7 +88,9 @@ export function ProductDetailsPage() {
         </div>
 
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.24em] text-oldgold">{product.collection}</p>
+          {collectionNames.length > 0 && (
+            <p className="text-xs font-bold uppercase tracking-[0.24em] text-oldgold">{collectionNames.join(' · ')}</p>
+          )}
           <h1 className="mt-3 font-serif text-5xl font-bold leading-none text-burgundy md:text-7xl">
             {product.name}
           </h1>
@@ -153,7 +159,7 @@ export function ProductDetailsPage() {
           <div className="mt-10 grid gap-4 md:grid-cols-3">
             <InfoCard icon={<Truck />} title="Shipping" text="Bulk orders qualify for free shipping." />
             <InfoCard icon={<RotateCcw />} title="Returns" text="7-day return policy on eligible items." />
-            <InfoCard icon={<ShieldCheck />} title="Payments" text="COD, bank transfer, and card placeholder." />
+            <InfoCard icon={<ShieldCheck />} title="Payments" text="Cash on Delivery and bank transfer." />
           </div>
 
           <div className="mt-10 grid gap-4 md:grid-cols-3">
@@ -176,12 +182,13 @@ export function ProductDetailsPage() {
       <section className="bg-marble/75 py-14">
         <div className="container-lux">
           <SectionHeading
-            description="Boutique feedback that matches the selected product family."
+            description="Customer feedback for this fragrance."
             eyebrow="Reviews"
             title="Customer Impressions"
           />
+          {productReviews.length === 0 ? <p className="mt-6 text-brownroyal/65">No reviews yet for this fragrance.</p> : (
           <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
-            {reviews.map((review) => (
+            {productReviews.map((review) => (
               <article className="rounded-lg border border-champagne/25 bg-ivory p-5 shadow-sm" key={review.id}>
                 <RatingStars rating={review.rating} />
                 <p className="mt-4 text-sm leading-7 text-brownroyal/72">"{review.text}"</p>
@@ -190,6 +197,8 @@ export function ProductDetailsPage() {
               </article>
             ))}
           </div>
+          )}
+          <ProductReviewForm key={product.id} productId={product.id} />
         </div>
       </section>
 
