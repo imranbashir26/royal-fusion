@@ -1,8 +1,12 @@
 {
   "rewrites": [
     {
+      "source": "/api/:path*",
+      "destination": "https://royal-fusion-3fd8.onbelmo.uk/api/:path*"
+    },
+    {
       "source": "/(.*)",
-      "destination": "/index.html"
+      "destination": "/"
     }
   ]
 }
