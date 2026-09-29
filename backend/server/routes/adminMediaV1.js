@@ -30,7 +30,7 @@ export function createAdminMediaV1Router(
   } = {}
 ) {
   const router = Router({ mergeParams: true })
-  const service = new ProductMediaAdminService(client, cloudinaryService, logger)
+  const service = new ProductMediaAdminService(client, cloudinaryService, logger, runtime.config.csrfSecret)
   const originGuard = createOriginGuard(runtime.config)
   const csrf = requireAuthenticatedCsrf(runtime.config)
 
@@ -117,6 +117,35 @@ export function createAdminMediaV1Router(
         data: result,
         meta: { requestId: req.requestId },
       })
+    })
+  )
+
+  router.post(
+    '/staged/claim',
+    permit(['products.manage', 'media.commerce.manage']),
+    originGuard,
+    csrf,
+    route(async (req, res) => {
+      const result = await service.claimStagedMedia({
+        productId: req.body?.productId,
+        uploadToken: req.body?.uploadToken,
+        actor: { userId: req.administrator.userId, requestId: req.requestId },
+      })
+      res.json({ data: result, meta: { requestId: req.requestId } })
+    })
+  )
+
+  router.delete(
+    '/staged',
+    permit(['products.manage', 'media.delete', 'media.commerce.manage']),
+    originGuard,
+    csrf,
+    route(async (req, res) => {
+      const result = await service.deleteStagedMedia({
+        uploadToken: req.body?.uploadToken,
+        actor: { userId: req.administrator.userId, requestId: req.requestId },
+      })
+      res.json({ data: result, meta: { requestId: req.requestId } })
     })
   )
 

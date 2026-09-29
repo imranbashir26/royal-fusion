@@ -290,6 +290,65 @@ async function deleteRequest(api, { actor, csrf = true, productId, mediaId, secu
   return { status: response.status, body: await response.json().catch(() => null) }
 }
 
+async function stagedRequest(api, path, { actor = 'manager', csrf = true, method = 'POST', body } = {}) {
+  const headers = { 'Content-Type': 'application/json', Origin: origin }
+  if (actor) {
+    const token = getSessionCsrfToken('handle', config)
+    headers.Cookie = `${names.access}=${actor}; ${names.refresh}=refresh; ${names.session}=handle; ${names.csrf}=${token}`
+    if (csrf) headers['X-RF-CSRF'] = token
+  }
+  const response = await fetch(`${api.base}${path}`, { method, headers, body: JSON.stringify(body) })
+  return { status: response.status, body: await response.json() }
+}
+
+test('new-product uploads use the protected media API and return permanent Cloudinary URLs', async () => {
+  const api = await start()
+  for (const mediaType of ['gallery', 'card', 'cardHover']) {
+    const response = await uploadRequest(api, { actor: 'manager', mediaType, buffer: validPngBuffer })
+    assert.equal(response.status, 201)
+    assert.match(response.body.data.secureUrl, /^https:\/\/res\.cloudinary\.com\//)
+    assert.equal(response.body.data.productId, null)
+    assert.equal(typeof response.body.data.uploadToken, 'string')
+    assert.equal(api.db.product_media.length, 1)
+  }
+  assert.equal((await uploadRequest(api, { mediaType: 'gallery' })).status, 401)
+  assert.equal((await uploadRequest(api, { actor: 'reader', mediaType: 'gallery' })).status, 403)
+  assert.equal((await uploadRequest(api, { actor: 'manager', csrf: false, mediaType: 'gallery' })).body.error.code, 'CSRF_INVALID')
+})
+
+test('staged media attaches only to a product that references it and can then be deleted normally', async () => {
+  const api = await start()
+  const upload = await uploadRequest(api, { actor: 'manager', mediaType: 'gallery' })
+  const { secureUrl, publicId, uploadToken } = upload.body.data
+  const notReferenced = await stagedRequest(api, '/staged/claim', {
+    body: { productId: api.productId, uploadToken },
+  })
+  assert.equal(notReferenced.status, 400)
+  api.db.products[0].gallery = [secureUrl]
+  api.db.products[0].image_url = secureUrl
+  const claimed = await stagedRequest(api, '/staged/claim', {
+    body: { productId: api.productId, uploadToken },
+  })
+  assert.equal(claimed.status, 200)
+  assert.equal(api.db.product_media.find((row) => row.cloudinary_public_id === publicId).is_primary, true)
+  assert.equal((await stagedRequest(api, '/staged/claim', { body: { productId: api.productId, uploadToken } })).status, 200)
+  assert.equal((await stagedRequest(api, '/staged', { method: 'DELETE', body: { uploadToken } })).status, 409)
+  const removed = await deleteRequest(api, { actor: 'manager', productId: api.productId, secureUrl })
+  assert.equal(removed.status, 200)
+  assert(api.destroyedPublicIds.includes(publicId))
+})
+
+test('staged media deletion requires its original administrator token', async () => {
+  const api = await start()
+  const upload = await uploadRequest(api, { actor: 'manager', mediaType: 'card' })
+  const { publicId, uploadToken } = upload.body.data
+  assert.equal((await stagedRequest(api, '/staged', { method: 'DELETE', actor: 'owner', body: { uploadToken } })).status, 403)
+  assert.equal((await stagedRequest(api, '/staged', { method: 'DELETE', csrf: false, body: { uploadToken } })).body.error.code, 'CSRF_INVALID')
+  assert.equal((await stagedRequest(api, '/staged', { method: 'DELETE', body: { uploadToken: `${uploadToken}x` } })).status, 403)
+  assert.equal((await stagedRequest(api, '/staged', { method: 'DELETE', body: { uploadToken } })).status, 200)
+  assert(api.destroyedPublicIds.includes(publicId))
+})
+
 test('unauthenticated upload is denied (401)', async () => {
   const api = await start()
   const res = await uploadRequest(api, { productId: api.productId })
@@ -563,4 +622,3 @@ test('storefront-compatible persisted URLs are returned and stored', async () =>
   const prod = api.db.products.find((p) => p.id === api.productId)
   assert.equal(prod.card_image_url, res.body.data.secureUrl)
 })
-

@@ -106,6 +106,10 @@ test('create validates schema, uniqueness, category, image and card fields; writ
     product({ price: 0 }), product({ price: -1 }), product({ stockQuantity: -1 }),
     product({ status: 'Active' }), product({ categoryId: randomUUID() }),
     product({ cardBackgroundColor: 'url(evil)' }), product({ image: 'javascript:alert(1)' }),
+    product({ image: 'blob:https://shop.example.invalid/main' }),
+    product({ gallery: ['blob:https://shop.example.invalid/gallery'] }),
+    product({ cardImage: 'blob:https://shop.example.invalid/card' }),
+    product({ cardHoverImage: 'blob:https://shop.example.invalid/hover' }),
     product({ arbitrarySecret: 'secret' }), product({ salePrice: 4000 }),
   ]
   for (const payload of invalid) {
