@@ -8,25 +8,40 @@ import { publicPrototypeSettings } from '../utils/publicStorefrontSettings.js'
 
 export const publicRouter = Router()
 
-publicRouter.get('/storefront', async (_req, res) => {
-  const db = await readDb()
-  const publicSettings = publicPrototypeSettings(db)
-  res.json({
-    products: db.products.filter((product) => product.status === 'Published'),
-    categories: db.categories
-      .filter((category) => category.status === 'Published')
-      .sort((a, b) => Number(a.displayOrder || 0) - Number(b.displayOrder || 0)),
-    blogs: db.blogs.filter((blog) => blog.status === 'Published'),
-    reviews: db.reviews.filter((review) => review.status === 'Approved'),
-    testimonials: db.testimonials.filter((testimonial) => testimonial.status === 'Approved'),
-    banners: db.banners.filter((banner) => banner.enabled),
-    settings: publicSettings.settings,
-    homepage: db.homepage,
-    shipping: publicSettings.shipping,
-    payments: publicSettings.payments,
-    seo: db.seo,
-    editablePages: db.editablePages.filter((page) => page.status === 'Published')
-  })
+publicRouter.get('/storefront', async (req, res) => {
+  let operation = 'json.readDb'
+  try {
+    const db = await readDb()
+    operation = 'json.publicProjection'
+    const publicSettings = publicPrototypeSettings(db)
+    res.json({
+      products: db.products.filter((product) => product.status === 'Published'),
+      categories: db.categories
+        .filter((category) => category.status === 'Published')
+        .sort((a, b) => Number(a.displayOrder || 0) - Number(b.displayOrder || 0)),
+      blogs: db.blogs.filter((blog) => blog.status === 'Published'),
+      reviews: db.reviews.filter((review) => review.status === 'Approved'),
+      testimonials: db.testimonials.filter((testimonial) => testimonial.status === 'Approved'),
+      banners: db.banners.filter((banner) => banner.enabled),
+      settings: publicSettings.settings,
+      homepage: db.homepage,
+      shipping: publicSettings.shipping,
+      payments: publicSettings.payments,
+      seo: db.seo,
+      editablePages: db.editablePages.filter((page) => page.status === 'Published')
+    })
+  } catch (error) {
+    // TEMPORARY server-only diagnostic; never log local data or raw exception messages.
+    const rawCode = error?.code ?? error?.name
+    console.error({
+      event: 'storefront.legacy_json.failed',
+      operation,
+      code: typeof rawCode === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(rawCode)
+        ? rawCode : 'unknown',
+      requestId: req.requestId,
+    })
+    throw error
+  }
 })
 
 publicRouter.get('/products', async (_req, res) => {

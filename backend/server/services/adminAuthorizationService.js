@@ -13,7 +13,7 @@ export class AdminAuthorizationService {
     this.client = client
   }
 
-  async resolve(userId) {
+  async resolve(userId, { requestId } = {}) {
     if (!this.client || !userId) return null
 
     const { data: profile, error: profileError } = await this.client
@@ -22,7 +22,7 @@ export class AdminAuthorizationService {
       .eq('id', userId)
       .maybeSingle()
 
-    assertAvailable(profileError)
+    assertAvailable(profileError, 'profiles.select', requestId)
 
     if (!profile || profile.status !== 'Active') return null
 
@@ -32,7 +32,7 @@ export class AdminAuthorizationService {
       .eq('user_id', userId)
       .eq('active', true)
 
-    assertAvailable(assignmentsError)
+    assertAvailable(assignmentsError, 'user_roles.select', requestId)
 
     const roleIds = (assignments ?? []).map((row) => row.role_id)
 
@@ -44,7 +44,7 @@ export class AdminAuthorizationService {
       .in('id', roleIds)
       .eq('active', true)
 
-    assertAvailable(rolesError)
+    assertAvailable(rolesError, 'roles.select', requestId)
 
     const adminRoles = (roles ?? []).filter((role) =>
       ADMIN_ROLE_KEYS.has(role.key),
@@ -57,7 +57,7 @@ export class AdminAuthorizationService {
       .select('permission_id')
       .in('role_id', adminRoles.map((role) => role.id))
 
-    assertAvailable(linksError)
+    assertAvailable(linksError, 'role_permissions.select', requestId)
 
     const permissionIds = [
       ...new Set((links ?? []).map((row) => row.permission_id)),
@@ -71,7 +71,7 @@ export class AdminAuthorizationService {
         .select('key')
         .in('id', permissionIds)
 
-      assertAvailable(error)
+      assertAvailable(error, 'permissions.select', requestId)
 
       permissions = [...new Set((data ?? []).map((row) => row.key))].sort()
     }
@@ -89,8 +89,16 @@ export class AdminAuthorizationService {
   }
 }
 
-function assertAvailable(error) {
+function assertAvailable(error, operation, requestId) {
   if (error) {
+    // TEMPORARY server-only diagnostic; avoid logging profile, role, or permission rows.
+    console.error({
+      event: 'auth.admin_authorization.failed',
+      operation,
+      code: typeof error.code === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(error.code)
+        ? error.code : 'unknown',
+      requestId,
+    })
     const unavailable = new Error('Administrator authorization is unavailable.')
     unavailable.code = AUTH_ERROR_CODES.AUTH_SERVICE_UNAVAILABLE
     throw unavailable

@@ -97,7 +97,16 @@ export class SupabaseSessionRepository {
   async create(record) {
     const row = toDatabaseRow(record)
     const { error } = await this.client.from('application_sessions').insert(row)
-    if (error) throw new SessionRepositoryError()
+    if (error) {
+      // TEMPORARY server-only diagnostic; never log session rows or token hashes.
+      console.error({
+        event: 'auth.session_repository.failed',
+        operation: 'application_sessions.insert',
+        code: typeof error.code === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(error.code)
+          ? error.code : 'unknown',
+      })
+      throw new SessionRepositoryError()
+    }
     return record
   }
 

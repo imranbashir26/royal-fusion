@@ -114,23 +114,26 @@ export function createAuthV1Router(runtime, { rateLimitOverrides } = {}) {
     validateAuthBody(authSchemas.adminSignIn),
     asyncHandler(async (req, res) => {
       if (config.adminProvider !== 'supabase') {
+        console.error({ event: 'auth.admin_signin.failed', operation: 'adminProvider.check', requestId: req.requestId })
         return sendCode(res, AUTH_ERROR_CODES.AUTH_SERVICE_UNAVAILABLE, req.requestId)
       }
-      const authResult = await gateway.signInAdministrator({
+      const authResult = await diagnoseAdminSignIn('supabase.auth.signInWithPassword', req.requestId, () => gateway.signInAdministrator({
         ...req.body,
         requireMfa: config.adminMfaEnabled,
-      })
+        requestId: req.requestId,
+      }))
       if (!authResult.identity.emailVerified) {
         return sendCode(res, AUTH_ERROR_CODES.EMAIL_VERIFICATION_REQUIRED, req.requestId)
       }
-      const administrator = await adminAuthorization.resolve(authResult.identity.id)
+      const administrator = await diagnoseAdminSignIn('adminAuthorization.resolve', req.requestId,
+        () => adminAuthorization.resolve(authResult.identity.id, { requestId: req.requestId }))
       if (!administrator) {
         return sendCode(res, AUTH_ERROR_CODES.PERMISSION_DENIED, req.requestId)
       }
-      const session = await sessionService.createSession(authResult, {
+      const session = await diagnoseAdminSignIn('application_sessions.insert', req.requestId, () => sessionService.createSession(authResult, {
         sessionClass: 'administrator',
         deviceMetadata: deviceMetadata(req),
-      })
+      }))
       setSessionCookies(res, config, session)
       res.json({
         data: { ...safeCreatedSessionData(session), administrator },
@@ -369,4 +372,16 @@ function assertCustomerProvider(config) {
 
 function asyncHandler(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next)
+}
+
+async function diagnoseAdminSignIn(operation, requestId, action) {
+  try {
+    return await action()
+  } catch (error) {
+    if (error?.code === AUTH_ERROR_CODES.AUTH_SERVICE_UNAVAILABLE) {
+      // TEMPORARY server-only phase marker; no request body, identity, or tokens.
+      console.error({ event: 'auth.admin_signin.failed', operation, requestId })
+    }
+    throw error
+  }
 }

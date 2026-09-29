@@ -40,12 +40,32 @@ export class SupabaseAuthGateway {
     return toAuthenticatedResult(data)
   }
 
-  async signInAdministrator({ email, password, verificationCode, requireMfa }) {
+  async signInAdministrator({ email, password, verificationCode, requireMfa, requestId }) {
     const client = this.clientFactory()
     const { data, error } = await callProvider(
       () => client.auth.signInWithPassword({ email, password }),
+      (failure) => console.error({
+        event: 'auth.supabase_auth.failed',
+        operation: 'signInWithPassword',
+        failure: 'transport',
+        code: diagnosticCode(failure?.code ?? failure?.name),
+        requestId,
+      }),
     )
-    if (error) throw mapProviderError(error)
+    if (error) {
+      const mapped = mapProviderError(error)
+      if (mapped.code === AUTH_ERROR_CODES.AUTH_SERVICE_UNAVAILABLE) {
+        console.error({
+          event: 'auth.supabase_auth.failed',
+          operation: 'signInWithPassword',
+          failure: 'provider',
+          status: Number.isInteger(error.status) ? error.status : null,
+          code: diagnosticCode(error.code),
+          requestId,
+        })
+      }
+      throw mapped
+    }
     const result = toAuthenticatedResult(data)
     if (!requireMfa) return result
     const factors = await callProvider(() => client.auth.mfa.listFactors())
@@ -268,13 +288,18 @@ function addState(callbackUrl, state, type) {
   return url.toString()
 }
 
-async function callProvider(operation) {
+async function callProvider(operation, onTransportFailure) {
   try {
     return await operation()
   } catch (error) {
+    onTransportFailure?.(error)
     if (error instanceof AuthGatewayError) throw error
     throw unavailable()
   }
+}
+
+function diagnosticCode(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(value) ? value : 'unknown'
 }
 
 function createPkceStorage(initialCodeVerifier) {
