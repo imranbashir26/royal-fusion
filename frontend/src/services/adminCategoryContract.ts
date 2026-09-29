@@ -26,10 +26,17 @@ export function toCategoryPayload(form: Record<string, unknown>): Record<string,
   if (payload.active !== undefined) {
     payload.active = Boolean(payload.active)
   }
+  if (Array.isArray(payload.image)) {
+    payload.image = String(payload.image[0] ?? '')
+  }
   if (typeof payload.image === 'string' && !payload.imageUrl) {
     payload.imageUrl = payload.image
   }
   return payload
+}
+
+export function selectableCategories<T extends { active: boolean; status: string }>(categories: T[]): T[] {
+  return categories.filter((category) => category.active && category.status === 'Published')
 }
 
 export function categoryErrorMessage(error: unknown): string {

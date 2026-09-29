@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createCategorySchema, updateCategorySchema } from '../../backend/server/schemas/categoryAdmin.js'
-import { categoryErrorMessage, toCategoryPayload } from '../src/services/adminCategoryContract.ts'
+import { categoryErrorMessage, selectableCategories, toCategoryPayload } from '../src/services/adminCategoryContract.ts'
 import { isAttarCategory, mapProduct } from '../src/services/productionMappers.ts'
 
 test('category form maps to the production create contract and strips extraneous fields', () => {
@@ -52,6 +52,18 @@ test('category form maps to production update contract', () => {
   const validation = updateCategorySchema.safeParse(payload)
   assert.equal(validation.success, true)
   assert.equal(validation.data.active, false)
+})
+
+test('new category with no image passes create validation and only published active categories are selectable', () => {
+  const payload = toCategoryPayload({ name: 'For Him', slug: 'for-him', image: [], status: 'Published', active: true })
+  assert.equal(payload.imageUrl, '')
+  assert.equal(createCategorySchema.safeParse(payload).success, true)
+  const categories = [
+    { id: 'a', status: 'Published', active: true },
+    { id: 'b', status: 'Published', active: false },
+    { id: 'c', status: 'Draft', active: true },
+  ]
+  assert.deepEqual(selectableCategories(categories).map(({ id }) => id), ['a'])
 })
 
 test('category errors explain duplicate identities, referential conflicts, session and permission failures', () => {

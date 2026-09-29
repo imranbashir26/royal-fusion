@@ -150,6 +150,7 @@ export const resourceConfigs: Record<string, AdminResourceConfig> = {
       { name: 'displayOrder', label: 'Display order', type: 'number' },
       { name: 'showOnHomepage', label: 'Homepage visibility', type: 'checkbox' },
       { name: 'status', label: 'Status', type: 'select', options: statusOptions },
+      { name: 'active', label: 'Active', type: 'checkbox' },
       { name: 'seoTitle', label: 'SEO title' },
       { name: 'seoDescription', label: 'SEO description', type: 'textarea' },
     ],

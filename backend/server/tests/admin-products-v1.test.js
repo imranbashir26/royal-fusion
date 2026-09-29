@@ -33,8 +33,8 @@ function product(overrides = {}) {
 
 async function start() {
   const db = { products: [], audits: [], categories: [
-    { id: categoryId, name: 'Attars', active: true },
-    { id: secondCategoryId, name: 'Gift Sets', active: true },
+    { id: categoryId, name: 'Attars', status: 'Published', active: true },
+    { id: secondCategoryId, name: 'Gift Sets', status: 'Published', active: true },
   ] }
   const client = mockClient(db)
   const runtime = {
@@ -162,6 +162,31 @@ test('partial update preserves omitted fields, validates category and price, and
   assert.equal(api.db.products.length, 1)
   assert.equal(api.db.audits.at(-1).action, 'product.archive')
   assert.equal((await request(api, `/${randomUUID()}`, { method: 'DELETE', actor: 'owner' })).status, 404)
+})
+
+test('product saves category ID and restores an existing inactive category without allowing new assignments', async () => {
+  const api = await start()
+  const created = await request(api, '', { method: 'POST', actor: 'owner', body: product({ categoryId: secondCategoryId }) })
+  assert.equal(created.status, 201)
+  assert.equal(api.db.products[0].category_id, secondCategoryId)
+  assert.equal(api.db.products[0].category_name, 'Gift Sets')
+  const id = created.body.data.id
+  assert.equal((await request(api, `/${id}`, { actor: 'owner' })).body.data.categoryId, secondCategoryId)
+
+  api.db.categories[1].active = false
+  const retained = await request(api, `/${id}`, {
+    method: 'PUT', actor: 'owner', body: { name: 'Updated Gift Box', categoryId: secondCategoryId },
+  })
+  assert.equal(retained.status, 200)
+  assert.equal(retained.body.data.categoryId, secondCategoryId)
+  assert.equal((await request(api, '', {
+    method: 'POST', actor: 'owner', body: product({ slug: 'another', sku: 'RF-ANOTHER', categoryId: secondCategoryId }),
+  })).status, 400)
+
+  api.db.categories[0].status = 'Draft'
+  assert.equal((await request(api, `/${id}`, {
+    method: 'PUT', actor: 'owner', body: { categoryId },
+  })).status, 400)
 })
 
 test('list provides server pagination, search, status filter, and deterministic order', async () => {

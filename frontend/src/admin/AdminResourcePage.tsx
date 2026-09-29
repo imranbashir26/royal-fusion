@@ -7,6 +7,7 @@ import { adminApi } from '../services/adminApi'
 import { AdminAuthError } from '../services/adminAuthClient'
 import { adminProductsApi, productErrorMessage } from '../services/adminProductsApi'
 import { adminCategoriesApi, categoryErrorMessage } from '../services/adminCategoriesApi'
+import { selectableCategories } from '../services/adminCategoryContract'
 import { adminCollectionsApi, collectionErrorMessage } from '../services/adminCollectionsApi'
 import { adminMediaApi } from '../services/adminMediaApi'
 import { cn } from '../utils/cn'
@@ -295,7 +296,7 @@ function ConfiguredResourcePage({ config }: { config: AdminResourceConfig }) {
       <div className="overflow-hidden rounded-lg border border-champagne/25 bg-ivory shadow-sm">
         {isLoading ? (
           <div className="p-8 text-center text-brownroyal/65">Loading {config.label.toLowerCase()}...</div>
-        ) : filteredItems.length === 0 ? (
+        ) : !error && filteredItems.length === 0 ? (
           <div className="p-8 text-center">
             <p className="font-serif text-3xl font-semibold text-burgundy">No records found</p>
             <p className="mt-2 text-brownroyal/65">Use search/filter or add a new record.</p>
@@ -388,23 +389,26 @@ function AdminRecordForm({
   const { refreshSession } = useAdminAuth()
   const [form, setForm] = useState<AdminRecord>(() => ({
     ...(initialValue ?? createDefaultRecord(config.fields)),
+    ...(!initialValue && config.endpoint === 'categories' ? { active: true } : {}),
   } as AdminRecord))
   const [error, setError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([])
   const [categoryError, setCategoryError] = useState('')
+  const [categoryLoading, setCategoryLoading] = useState(config.endpoint === 'products')
 
   useEffect(() => {
     if (config.endpoint !== 'products') return
     let active = true
-    adminCategoriesApi.list({ active: 'true' })
+    adminCategoriesApi.list({ active: 'true', status: 'Published' })
       .then((result) => {
         if (!active) return
-        setCategories(result.map(({ id, name }) => ({ id, name })))
+        setCategories(selectableCategories(result).map(({ id, name }) => ({ id, name })))
       })
-      .catch(() => {
-        if (active) setCategoryError('Production categories are unavailable. You can leave category unassigned.')
+      .catch((err) => {
+        if (active) setCategoryError(categoryErrorMessage(err))
       })
+      .finally(() => { if (active) setCategoryLoading(false) })
     return () => { active = false }
   }, [config.endpoint])
 
@@ -580,6 +584,7 @@ function AdminRecordForm({
             <div className="grid gap-4 md:grid-cols-2">
               {config.fields.map((field) => (
                 <AdminFormField
+                  allowUpload={config.endpoint !== 'categories'}
                   field={field}
                   key={field.name}
                   onChange={(value) => setValue(field, value)}
@@ -596,6 +601,9 @@ function AdminRecordForm({
             </div>
           )}
           {categoryError && config.endpoint === 'products' && <Alert tone="error">{categoryError}</Alert>}
+          {config.endpoint === 'products' && !categoryLoading && !categoryError && categories.length === 0 && (
+            <p className="text-sm text-brownroyal/65">No published, active categories are available. Create one in <a className="font-bold text-burgundy underline" href="/admin/categories">Categories</a>, then reopen this form.</p>
+          )}
           {error && <Alert className="mt-5" tone="error">{error}</Alert>}
           <div className="mt-6 flex justify-end gap-3 border-t border-champagne/25 pt-4">
             <Button onClick={onClose} variant="outline">Cancel</Button>

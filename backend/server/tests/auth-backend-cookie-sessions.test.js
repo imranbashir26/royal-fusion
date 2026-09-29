@@ -47,8 +47,13 @@ test('production authentication configuration fails closed and USE_SUPABASE stay
     CUSTOMER_AUTH_PROVIDER: 'prototype',
   })), /Production authentication configuration is not ready/)
   assert.throws(() => createAuthConfig(productionEnv({
-    ENABLE_ADMIN_MFA: 'false',
+    ADMIN_AUTH_PROVIDER: 'prototype',
   })), /Production authentication configuration is not ready/)
+  assert.equal(createAuthConfig(productionEnv({ ENABLE_ADMIN_MFA: 'true' })).adminMfaEnabled, true)
+  assert.equal(createAuthConfig(productionEnv({ ENABLE_ADMIN_MFA: 'false' })).adminMfaEnabled, false)
+  assert.throws(() => createAuthConfig(productionEnv({
+    ENABLE_ADMIN_MFA: 'maybe',
+  })), /Authentication feature flag configuration is invalid/)
   assert.throws(() => createAuthConfig(productionEnv({
     AUTH_SECURE_COOKIES: 'false',
   })), /must be secure/)
@@ -829,13 +834,13 @@ test('canonical database assignments determine administrator roles and effective
   const rows = {
     profiles: [{ id: userId, full_name: 'Canonical Owner', status: 'Active' }],
     user_roles: [{ user_id: userId, role_id: 'owner-role', active: true, revoked_at: null, expires_at: null }],
-    roles: [{ id: 'owner-role', key: 'owner', name: 'Owner', active: true }],
+    roles: [{ id: 'owner-role', key: 'owner_admin', name: 'Owner', active: true }],
     role_permissions: [{ role_id: 'owner-role', permission_id: 'wildcard' }],
     permissions: [{ id: 'wildcard', key: '*' }],
   }
   const service = new AdminAuthorizationService(fakeAdminTables(rows))
   assert.deepEqual(await service.resolve(userId), {
-    userId, name: 'Canonical Owner', role: 'Owner', roleKey: 'owner', permissions: ['*'],
+    userId, name: 'Canonical Owner', role: 'Owner', roleKey: 'owner_admin', permissions: ['*'],
   })
   rows.user_roles[0].active = false
   assert.equal(await service.resolve(userId), null)
@@ -843,7 +848,7 @@ test('canonical database assignments determine administrator roles and effective
   rows.profiles[0].status = 'Inactive'
   assert.equal(await service.resolve(userId), null)
   rows.profiles[0].status = 'Active'
-  rows.roles[0].key = 'shop_manager'
+  rows.roles[0].key = 'owner'
   assert.equal(await service.resolve(userId), null)
 })
 

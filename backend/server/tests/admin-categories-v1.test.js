@@ -218,6 +218,12 @@ test('category CRUD, slug validation, duplicate conflicts, and list filters', as
   const listSearch = await request(api, '?search=Extrait', { actor: 'reader' })
   assert.equal(listSearch.body.data.items.length, 1)
   assert.equal(listSearch.body.data.items[0].slug, 'extrait-de-parfum')
+
+  const selectable = await request(api, '?status=Published&active=true', { actor: 'reader' })
+  assert.deepEqual(selectable.body.data.items.map(({ slug }) => slug), ['extrait-de-parfum'])
+  await request(api, `/${createdId}`, { method: 'PUT', actor: 'manager', body: { active: false } })
+  const noSelectable = await request(api, '?status=Published&active=true', { actor: 'reader' })
+  assert.equal(noSelectable.body.data.items.length, 0)
 })
 
 test('category update synchronizes denormalized products.category_name and is_attar flag, and records audit log', async () => {

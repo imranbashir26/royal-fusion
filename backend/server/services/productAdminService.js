@@ -62,7 +62,7 @@ export class ProductAdminService {
     const existing = await this.get(id)
     const columns = toProductColumns(input)
     if (Object.hasOwn(input, 'categoryId')) {
-      await this.assignCategory(columns, input.categoryId)
+      await this.assignCategory(columns, input.categoryId, existing.categoryId)
     } else if (Object.hasOwn(input, 'isAttar')) {
       columns.is_attar = existing.category ? isAttarCategory(existing.category) : Boolean(input.isAttar)
     }
@@ -98,7 +98,7 @@ export class ProductAdminService {
     return toProductDto(data)
   }
 
-  async assignCategory(columns, categoryId) {
+  async assignCategory(columns, categoryId, currentCategoryId = null) {
     if (categoryId == null) {
       columns.category_id = null
       columns.category_name = ''
@@ -106,9 +106,11 @@ export class ProductAdminService {
       return
     }
     const { data, error } = await this.requireClient().from('categories')
-      .select('id,name').eq('id', categoryId).eq('active', true).maybeSingle()
+      .select('id,name,status,active').eq('id', categoryId).maybeSingle()
     if (error) throw databaseError(error)
-    if (!data) throw new ProductApiError(400, 'INVALID_CATEGORY', 'Category does not exist or is inactive.')
+    if (!data || (categoryId !== currentCategoryId && (!data.active || data.status !== 'Published'))) {
+      throw new ProductApiError(400, 'INVALID_CATEGORY', 'Category does not exist or is unavailable.')
+    }
     columns.category_id = data.id
     columns.category_name = data.name
     columns.is_attar = isAttarCategory(data.name)
