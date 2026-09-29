@@ -9,7 +9,7 @@ import { adminProductsApi, productErrorMessage } from '../services/adminProducts
 import { adminCategoriesApi, categoryErrorMessage } from '../services/adminCategoriesApi'
 import { selectableCategories } from '../services/adminCategoryContract'
 import { adminCollectionsApi, collectionErrorMessage } from '../services/adminCollectionsApi'
-import { adminMediaApi } from '../services/adminMediaApi'
+import { adminMediaApi, mediaErrorMessage, secureMediaUrl } from '../services/adminMediaApi'
 import { cn } from '../utils/cn'
 import { AdminMediaUploader } from './AdminMediaUploader'
 import { useAdminAuth } from './AdminAuthProvider'
@@ -393,6 +393,7 @@ function AdminRecordForm({
   } as AdminRecord))
   const [error, setError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false)
   const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([])
   const [categoryError, setCategoryError] = useState('')
   const [categoryLoading, setCategoryLoading] = useState(config.endpoint === 'products')
@@ -416,7 +417,8 @@ function AdminRecordForm({
     setForm((current) => setPath(current, field.name, value))
   }
 
-  const stagedMediaRef = useRef<Array<{ fieldName: string; file: File; previewUrl: string }>>([])
+  const stagedMediaRef = useRef(new Map<string, string>())
+  const activeUploadsRef = useRef(0)
 
   const onUploadMedia = async (fieldName: string, file: File): Promise<string> => {
     const mediaType =
@@ -429,35 +431,85 @@ function AdminRecordForm({
             : 'gallery'
 
     const productId = initialValue?.id ? String(initialValue.id) : (form.id ? String(form.id) : undefined)
-
-    if (productId) {
+    activeUploadsRef.current += 1
+    setIsUploadingMedia(true)
+    try {
       const res = await adminMediaApi.upload(file, {
         productId,
         mediaType,
         altText: `${String(getPath(form, 'name') || 'Product')} ${fieldName}`,
       })
-      return res.secureUrl
-    } else {
-      const previewUrl = URL.createObjectURL(file)
-      stagedMediaRef.current.push({ fieldName, file, previewUrl })
-      return previewUrl
+      const uploadedUrl = secureMediaUrl(res)
+      if (!productId && !res.uploadToken) throw new Error('Upload could not be attached to a new product.')
+      if (fieldName !== 'gallery') {
+        const previousUrl = String(getPath(form, fieldName) || '')
+        const previousToken = stagedMediaRef.current.get(previousUrl)
+        if (previousToken && previousUrl !== uploadedUrl) {
+          await adminMediaApi.deleteStaged(previousToken)
+          stagedMediaRef.current.delete(previousUrl)
+        }
+      }
+      if (res.uploadToken) stagedMediaRef.current.set(res.secureUrl, res.uploadToken)
+      if (fieldName === 'image') {
+        setForm((current) => ({
+          ...current,
+          gallery: [...new Set([
+            ...(Array.isArray(current.gallery) ? current.gallery.filter((url) => url !== current.image) : []),
+            uploadedUrl,
+          ])],
+        }))
+      } else if (fieldName === 'gallery') {
+        setForm((current) => current.image ? current : { ...current, image: uploadedUrl })
+      }
+      return uploadedUrl
+    } catch (err) {
+      throw new Error(mediaErrorMessage(err))
+    } finally {
+      activeUploadsRef.current -= 1
+      setIsUploadingMedia(activeUploadsRef.current > 0)
     }
   }
 
   const onDeleteMedia = async (_fieldName: string, imageUrl: string): Promise<void> => {
-    const productId = initialValue?.id ? String(initialValue.id) : (form.id ? String(form.id) : undefined)
-    if (productId && (imageUrl.startsWith('https://res.cloudinary.com') || imageUrl.includes('royal-fusion'))) {
-      await adminMediaApi.delete({
-        productId,
-        secureUrl: imageUrl,
-      })
+    const stagedToken = stagedMediaRef.current.get(imageUrl)
+    if (stagedToken) {
+      await adminMediaApi.deleteStaged(stagedToken)
+      stagedMediaRef.current.delete(imageUrl)
+    } else {
+      const productId = initialValue?.id ? String(initialValue.id) : (form.id ? String(form.id) : undefined)
+      if (productId && (imageUrl.startsWith('https://res.cloudinary.com') || imageUrl.includes('royal-fusion'))) {
+        await adminMediaApi.delete({ productId, secureUrl: imageUrl })
+      }
     }
-    stagedMediaRef.current = stagedMediaRef.current.filter((item) => item.previewUrl !== imageUrl)
+    setForm((current) => {
+      const gallery = Array.isArray(current.gallery) ? current.gallery.filter((url) => url !== imageUrl) : []
+      return {
+        ...current,
+        gallery,
+        ...(current.image === imageUrl ? { image: gallery[0] || '' } : {}),
+        ...(current.cardImage === imageUrl ? { cardImage: '' } : {}),
+        ...(current.cardHoverImage === imageUrl ? { cardHoverImage: '' } : {}),
+      }
+    })
+  }
+
+  const handleClose = () => {
+    if (activeUploadsRef.current > 0) return
+    if (!form.id && stagedMediaRef.current.size) {
+      const tokens = [...stagedMediaRef.current.values()]
+      stagedMediaRef.current.clear()
+      void Promise.allSettled(tokens.map((token) => adminMediaApi.deleteStaged(token)))
+    }
+    onClose()
   }
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setError('')
+    if (activeUploadsRef.current > 0) {
+      setError('Wait for image uploads to finish before saving.')
+      return
+    }
     try {
       const payload = normalizePayload(config.fields, form)
       const validationErrors = validateAdminRecord(config, payload)
@@ -467,63 +519,36 @@ function AdminRecordForm({
       }
 
       setIsSaving(true)
-      if (initialValue) {
-        if (config.endpoint === 'products') await adminProductsApi.update(String(initialValue.id), payload)
-        else if (config.endpoint === 'categories') await adminCategoriesApi.update(String(initialValue.id), payload)
-        else if (config.endpoint === 'collections') await adminCollectionsApi.update(String(initialValue.id), payload)
-        else await adminApi.update(config.endpoint, String(initialValue.id), payload)
+      if (initialValue || (config.endpoint === 'products' && form.id)) {
+        if (config.endpoint === 'products') {
+          const productId = String(initialValue?.id || form.id)
+          await adminProductsApi.update(productId, payload)
+          try {
+            for (const [secureUrl, uploadToken] of stagedMediaRef.current) {
+              await adminMediaApi.claim(productId, uploadToken)
+              stagedMediaRef.current.delete(secureUrl)
+            }
+          } catch (err) {
+            setError(`Product saved, but media attachment failed: ${mediaErrorMessage(err)} Save again to retry.`)
+            return
+          }
+        }
+        else if (config.endpoint === 'categories') await adminCategoriesApi.update(String(initialValue?.id), payload)
+        else if (config.endpoint === 'collections') await adminCollectionsApi.update(String(initialValue?.id), payload)
+        else await adminApi.update(config.endpoint, String(initialValue?.id), payload)
         onSaved(`${config.singular} updated.`)
       } else {
         if (config.endpoint === 'products') {
-          // Clean out temporary blob preview URLs from initial product payload
-          const createPayload = { ...payload }
-          if (typeof createPayload.image === 'string' && createPayload.image.startsWith('blob:')) createPayload.image = ''
-          if (typeof createPayload.cardImage === 'string' && createPayload.cardImage.startsWith('blob:')) createPayload.cardImage = ''
-          if (typeof createPayload.cardHoverImage === 'string' && createPayload.cardHoverImage.startsWith('blob:')) createPayload.cardHoverImage = ''
-          if (Array.isArray(createPayload.gallery)) {
-            createPayload.gallery = createPayload.gallery.filter((u) => typeof u === 'string' && !u.startsWith('blob:'))
-          }
-
-          const created = await adminProductsApi.create(createPayload)
-
-          if (stagedMediaRef.current.length > 0) {
-            const uploadedPatch: Record<string, unknown> = {}
-            const failedFields: string[] = []
-
-            for (const { fieldName, file } of stagedMediaRef.current) {
-              const mediaType =
-                fieldName === 'image'
-                  ? 'main'
-                  : fieldName === 'cardImage'
-                    ? 'card'
-                    : fieldName === 'cardHoverImage'
-                      ? 'cardHover'
-                      : 'gallery'
-
-              try {
-                const uploadRes = await adminMediaApi.upload(file, {
-                  productId: created.id,
-                  mediaType,
-                  altText: `${created.name || 'Product'} ${fieldName}`,
-                })
-                if (fieldName === 'gallery') {
-                  const curr = (uploadedPatch.gallery as string[]) || (created.gallery as string[]) || []
-                  uploadedPatch.gallery = [...curr, uploadRes.secureUrl]
-                } else {
-                  uploadedPatch[fieldName] = uploadRes.secureUrl
-                }
-              } catch {
-                failedFields.push(fieldName)
+          const created = await adminProductsApi.create(payload)
+          if (stagedMediaRef.current.size > 0) {
+            setForm((current) => ({ ...current, id: created.id }))
+            try {
+              for (const [secureUrl, uploadToken] of stagedMediaRef.current) {
+                await adminMediaApi.claim(created.id, uploadToken)
+                stagedMediaRef.current.delete(secureUrl)
               }
-            }
-
-            if (Object.keys(uploadedPatch).length > 0) {
-              await adminProductsApi.update(created.id, uploadedPatch)
-            }
-
-            if (failedFields.length > 0) {
-              setForm((current) => ({ ...current, ...created, ...uploadedPatch, id: created.id }))
-              setError(`Product created (ID: ${created.id}), but image upload failed for: ${failedFields.join(', ')}. You can retry uploading directly now.`)
+            } catch (err) {
+              setError(`Product created (ID: ${created.id}), but media attachment failed: ${mediaErrorMessage(err)} Save again to retry.`)
               return
             }
           }
@@ -562,9 +587,9 @@ function AdminRecordForm({
       <div className="mx-auto my-6 max-w-5xl rounded-lg border border-champagne/30 bg-ivory shadow-2xl">
         <div className="flex items-center justify-between border-b border-champagne/25 px-5 py-4">
           <h2 className="font-serif text-3xl font-semibold text-burgundy">
-            {initialValue ? `Edit ${config.singular}` : `Add ${config.singular}`}
+            {initialValue || (config.endpoint === 'products' && form.id) ? `Edit ${config.singular}` : `Add ${config.singular}`}
           </h2>
-          <button className="text-sm font-bold text-burgundy" onClick={onClose} type="button">
+          <button className="text-sm font-bold text-burgundy" disabled={isUploadingMedia} onClick={handleClose} type="button">
             Close
           </button>
         </div>
@@ -606,8 +631,8 @@ function AdminRecordForm({
           )}
           {error && <Alert className="mt-5" tone="error">{error}</Alert>}
           <div className="mt-6 flex justify-end gap-3 border-t border-champagne/25 pt-4">
-            <Button onClick={onClose} variant="outline">Cancel</Button>
-            <Button disabled={isSaving} type="submit">
+            <Button disabled={isUploadingMedia} onClick={handleClose} variant="outline">Cancel</Button>
+            <Button disabled={isSaving || isUploadingMedia} type="submit">
               {isSaving ? 'Saving...' : 'Save Record'}
             </Button>
           </div>

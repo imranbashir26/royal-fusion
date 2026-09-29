@@ -32,13 +32,13 @@ export function AdminMediaUploader({
     setIsUploading(true)
     try {
       if (onUpload) {
-        const added: string[] = []
+        let nextValue = value
         for (const file of Array.from(files)) {
           const uploadedUrl = await onUpload(file)
-          if (uploadedUrl) added.push(uploadedUrl)
-        }
-        if (added.length) {
-          onChange(multiple ? [...value, ...added] : [added[added.length - 1]])
+          if (uploadedUrl) {
+            nextValue = multiple ? [...nextValue, uploadedUrl] : [uploadedUrl]
+            onChange(nextValue)
+          }
         }
       } else {
         // Fallback for prototype non-product resources if any
@@ -91,7 +91,9 @@ export function AdminMediaUploader({
               className="sr-only"
               disabled={isUploading}
               multiple={multiple}
-              onChange={(event) => void upload(event.target.files)}
+              onChange={(event) => {
+                void upload(event.target.files).finally(() => { event.target.value = '' })
+              }}
               type="file"
             />
           </label>

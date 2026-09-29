@@ -6,11 +6,12 @@ export interface UploadMediaResult {
   width?: number
   height?: number
   format?: string
-  productId: string
+  productId: string | null
+  uploadToken?: string
 }
 
 export interface UploadMediaOptions {
-  productId: string
+  productId?: string
   mediaType: 'main' | 'gallery' | 'card' | 'cardHover'
   altText?: string
   displayOrder?: number
@@ -20,6 +21,13 @@ export interface DeleteMediaOptions {
   productId: string
   mediaId?: string
   secureUrl?: string
+}
+
+export function secureMediaUrl(result: UploadMediaResult): string {
+  if (!/^https:\/\/res\.cloudinary\.com\//.test(result.secureUrl || '')) {
+    throw new Error('Upload did not return a secure Cloudinary URL.')
+  }
+  return result.secureUrl
 }
 
 export function mediaErrorMessage(error: unknown): string {
