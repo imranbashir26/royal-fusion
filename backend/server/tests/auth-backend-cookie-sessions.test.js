@@ -229,12 +229,11 @@ test('authentication errors are generic and provider failures remain unavailable
 
 test('unexpected provider transport failures map to safe unavailability', async () => {
   const gateway = new SupabaseAuthGateway({
-    client: {
+    authClientFactory: () => ({
       auth: {
         signInWithPassword: async () => { throw new Error('test transport failure') },
       },
-    },
-    clientFactory: () => null,
+    }),
     flowClientFactory: () => null,
   })
   await assert.rejects(
@@ -252,15 +251,14 @@ test('provider refresh errors and PKCE callback assurance map to stable contract
   }
   const callbackAccessToken = jwtWithExpiry(Math.floor(Date.now() / 1000) + 3600, 'aal2')
   const gateway = new SupabaseAuthGateway({
-    client: {
+    authClientFactory: () => ({
       auth: {
         refreshSession: async () => ({
           data: null,
           error: { code: 'refresh_token_not_found', status: 400 },
         }),
       },
-    },
-    clientFactory: () => null,
+    }),
     flowClientFactory: () => ({
       client: {
         auth: {
@@ -291,6 +289,89 @@ test('provider refresh errors and PKCE callback assurance map to stable contract
     codeVerifier: `${opaque('callback-verifier')}/recovery`,
   })
   assert.equal(verified.identity.assuranceLevel, 'aal2')
+})
+
+test('customer auth during admin authorization cannot change the session repository credential', async () => {
+  const env = productionEnv({ ENABLE_ADMIN_MFA: 'false' })
+  const serviceKey = env.SUPABASE_SECRET_KEY
+  const userId = '00000000-0000-4000-8000-000000000301'
+  const originalFetch = globalThis.fetch
+  const databaseAuthorizations = []
+  let runtime
+  let customerAuth
+  let customerSignedInDuringAuthorization = false
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = new URL(typeof input === 'string' ? input : input.url)
+    const headers = new Headers(init.headers)
+    if (url.pathname === '/auth/v1/token') {
+      const refresh = url.searchParams.get('grant_type') === 'refresh_token'
+      const email = refresh ? 'customer@example.invalid' : JSON.parse(init.body).email
+      return Response.json({
+        access_token: jwtWithExpiry(Math.floor(Date.now() / 1000) + 3600),
+        refresh_token: opaque(`refresh-${email}-${refresh}`),
+        token_type: 'bearer',
+        expires_in: 3600,
+        user: { id: userId, email, email_confirmed_at: '2030-01-01T00:00:00.000Z' },
+      })
+    }
+
+    if (url.pathname.startsWith('/rest/v1/')) {
+      const table = url.pathname.split('/').at(-1)
+      const authorization = headers.get('Authorization')
+      databaseAuthorizations.push({ table, authorization })
+      if (authorization !== `Bearer ${serviceKey}`) {
+        return Response.json({ code: '42501', message: 'permission denied' }, { status: 403 })
+      }
+      if (table === 'permissions' && !customerSignedInDuringAuthorization) {
+        customerSignedInDuringAuthorization = true
+        customerAuth = await runtime.gateway.signIn({
+          email: 'customer@example.invalid', password: 'fictional-password',
+        })
+      }
+      const rows = {
+        profiles: { id: userId, full_name: 'Owner', status: 'Active' },
+        user_roles: [{ role_id: 'owner-role', active: true }],
+        roles: [{ id: 'owner-role', key: 'owner_admin', name: 'Owner', active: true }],
+        role_permissions: [{ permission_id: 'wildcard' }],
+        permissions: [{ key: '*' }],
+      }
+      if (table === 'application_sessions') return new Response(null, { status: 201 })
+      return Response.json(rows[table])
+    }
+    throw new Error(`Unexpected test request: ${url.pathname}`)
+  }
+
+  try {
+    runtime = createAuthRuntime({ env, config: createAuthConfig(env) })
+    const privilegedDbClient = runtime.repository.client
+    assert.equal(runtime.adminAuthorization.client, privilegedDbClient)
+    const usedAuthClients = []
+    const createAuthClient = runtime.gateway.authClientFactory
+    runtime.gateway.authClientFactory = () => {
+      const authClient = createAuthClient()
+      usedAuthClients.push(authClient)
+      return authClient
+    }
+
+    const administratorAuth = await runtime.gateway.signInAdministrator({
+      email: 'admin@example.invalid', password: 'fictional-password', requireMfa: false,
+    })
+    assert.equal((await runtime.adminAuthorization.resolve(userId)).roleKey, 'owner_admin')
+    assert.equal(customerSignedInDuringAuthorization, true)
+    await runtime.sessionService.createSession(administratorAuth, { sessionClass: 'administrator' })
+    await runtime.gateway.refresh(customerAuth.refreshToken)
+    await runtime.sessionService.createSession(administratorAuth, { sessionClass: 'administrator' })
+
+    assert.equal(usedAuthClients.length, 3)
+    assert.equal(new Set(usedAuthClients).size, 3)
+    assert.ok(usedAuthClients.every((authClient) => authClient !== privilegedDbClient))
+    assert.equal((await privilegedDbClient.auth.getSession()).data.session, null)
+    assert.equal(databaseAuthorizations.filter(({ table }) => table === 'application_sessions').length, 2)
+    assert.ok(databaseAuthorizations.every(({ authorization }) => authorization === `Bearer ${serviceKey}`))
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
 
 test('CSRF and exact Origin checks reject missing, mismatched, and deceptive requests', async () => {

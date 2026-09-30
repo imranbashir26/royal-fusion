@@ -27,12 +27,11 @@ export function createAuthRuntime({
       if (config.supabaseConfigured) {
         const resources = createSupabaseAuthResources(env)
         resolvedGateway ??= new SupabaseAuthGateway({
-          client: resources.client,
-          clientFactory: resources.clientFactory,
+          authClientFactory: resources.authClientFactory,
           flowClientFactory: resources.flowClientFactory,
           callbackUrl: config.authCallbackUrl,
         })
-        resolvedRepository ??= new SupabaseSessionRepository(resources.client)
+        resolvedRepository ??= new SupabaseSessionRepository(resources.privilegedDbClient)
       } else {
         resolvedGateway ??= new DisabledAuthGateway()
         resolvedRepository ??= new InMemorySessionRepository()

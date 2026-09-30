@@ -10,9 +10,8 @@ export class AuthGatewayError extends Error {
 }
 
 export class SupabaseAuthGateway {
-  constructor({ client, clientFactory, flowClientFactory, callbackUrl = '' }) {
-    this.client = client
-    this.clientFactory = clientFactory
+  constructor({ authClientFactory, flowClientFactory, callbackUrl = '' }) {
+    this.authClientFactory = authClientFactory
     this.flowClientFactory = flowClientFactory
     this.callbackUrl = callbackUrl
   }
@@ -33,17 +32,18 @@ export class SupabaseAuthGateway {
   }
 
   async signIn({ email, password }) {
+    const authClient = this.authClientFactory()
     const { data, error } = await callProvider(
-      () => this.client.auth.signInWithPassword({ email, password }),
+      () => authClient.auth.signInWithPassword({ email, password }),
     )
     if (error) throw mapProviderError(error)
     return toAuthenticatedResult(data)
   }
 
   async signInAdministrator({ email, password, verificationCode, requireMfa, requestId }) {
-    const client = this.clientFactory()
+    const authClient = this.authClientFactory()
     const { data, error } = await callProvider(
-      () => client.auth.signInWithPassword({ email, password }),
+      () => authClient.auth.signInWithPassword({ email, password }),
       (failure) => console.error({
         event: 'auth.supabase_auth.failed',
         operation: 'signInWithPassword',
@@ -68,13 +68,13 @@ export class SupabaseAuthGateway {
     }
     const result = toAuthenticatedResult(data)
     if (!requireMfa) return result
-    const factors = await callProvider(() => client.auth.mfa.listFactors())
+    const factors = await callProvider(() => authClient.auth.mfa.listFactors())
     if (factors.error) throw mapProviderError(factors.error)
     const factor = factors.data?.totp?.find((item) => item.status === 'verified')
     if (!factor || !verificationCode) {
       throw new AuthGatewayError(AUTH_ERROR_CODES.MFA_REQUIRED)
     }
-    const verified = await callProvider(() => client.auth.mfa.challengeAndVerify({
+    const verified = await callProvider(() => authClient.auth.mfa.challengeAndVerify({
       factorId: factor.id,
       code: verificationCode,
     }))
@@ -90,22 +90,25 @@ export class SupabaseAuthGateway {
   }
 
   async verifyAccessToken(accessToken) {
-    const { data, error } = await callProvider(() => this.client.auth.getUser(accessToken))
+    const authClient = this.authClientFactory()
+    const { data, error } = await callProvider(() => authClient.auth.getUser(accessToken))
     if (error || !data?.user) throw mapProviderError(error)
     return Object.freeze({ identity: toSafeIdentity(data.user, accessToken) })
   }
 
   async refresh(refreshToken) {
+    const authClient = this.authClientFactory()
     const { data, error } = await callProvider(
-      () => this.client.auth.refreshSession({ refresh_token: refreshToken }),
+      () => authClient.auth.refreshSession({ refresh_token: refreshToken }),
     )
     if (error) throw mapProviderError(error)
     return toAuthenticatedResult(data)
   }
 
   async signOut({ accessToken, scope = 'local' }) {
+    const authClient = this.authClientFactory()
     const { error } = await callProvider(
-      () => this.client.auth.admin.signOut(accessToken, scope),
+      () => authClient.auth.admin.signOut(accessToken, scope),
     )
     if (error && !isMissingSessionError(error)) throw mapProviderError(error)
   }
@@ -146,22 +149,21 @@ export class SupabaseAuthGateway {
   }
 
   async updatePassword({ accessToken, refreshToken, newPassword }) {
-    const client = this.clientFactory()
-    const { error: sessionError } = await callProvider(() => client.auth.setSession({
+    const authClient = this.authClientFactory()
+    const { error: sessionError } = await callProvider(() => authClient.auth.setSession({
       access_token: accessToken,
       refresh_token: refreshToken,
     }))
     if (sessionError) throw mapProviderError(sessionError)
-    const { error } = await callProvider(() => client.auth.updateUser({ password: newPassword }))
+    const { error } = await callProvider(() => authClient.auth.updateUser({ password: newPassword }))
     if (error) throw mapProviderError(error)
   }
 }
 
 export function createSupabaseAuthGateway(env = process.env) {
-  const { client, clientFactory, flowClientFactory } = createSupabaseAuthResources(env)
+  const { authClientFactory, flowClientFactory } = createSupabaseAuthResources(env)
   return new SupabaseAuthGateway({
-    client,
-    clientFactory,
+    authClientFactory,
     flowClientFactory,
     callbackUrl: env.AUTH_CALLBACK_URL ?? '',
   })
@@ -171,7 +173,7 @@ export function createSupabaseAuthResources(env = process.env) {
   const url = env.SUPABASE_URL?.trim()
   const secret = env.SUPABASE_SECRET_KEY?.trim()
   if (!url || !secret) throw new AuthGatewayError(AUTH_ERROR_CODES.AUTH_SERVICE_UNAVAILABLE)
-  const clientFactory = () => createClient(url, secret, {
+  const authClientFactory = () => createClient(url, secret, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
@@ -194,7 +196,10 @@ export function createSupabaseAuthResources(env = process.env) {
       readCodeVerifier: () => storage.readCodeVerifier(),
     })
   }
-  return Object.freeze({ client: clientFactory(), clientFactory, flowClientFactory })
+  // This instance is reserved for server-side database access. Auth flows use
+  // fresh clients so a user session can never replace its service context.
+  const privilegedDbClient = authClientFactory()
+  return Object.freeze({ privilegedDbClient, authClientFactory, flowClientFactory })
 }
 
 export class DisabledAuthGateway {
