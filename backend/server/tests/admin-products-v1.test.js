@@ -10,6 +10,7 @@ import { createAuthConfig } from '../auth/config.js'
 import { getAuthCookieNames, getSessionCsrfToken } from '../auth/cookies.js'
 import { authErrorHandler, requestContext } from '../middleware/authSecurity.js'
 import { createAdminProductsV1Router } from '../routes/adminProductsV1.js'
+import { ProductAdminService, ProductApiError } from '../services/productAdminService.js'
 
 const categoryId = randomUUID()
 const secondCategoryId = randomUUID()
@@ -136,6 +137,46 @@ test('create validates schema, uniqueness, category, image and card fields; writ
   assert.equal((await request(api, '', { method: 'POST', actor: 'owner', body: product({ slug: 'other', sku: 'RF-001' }) })).status, 409)
 })
 
+test('create failures identify the database stage without logging product data or provider messages', async () => {
+  const actor = { userId: 'owner', requestId: 'req_product_diagnostic' }
+  const cases = [
+    { stage: 'category.resolve', resource: 'categories', code: '42501', constraint: 'unsafe;constraint' },
+    { stage: 'products.insert', resource: 'products', code: '42703', constraint: 'products_example_check' },
+  ]
+  for (const { stage, resource, code, constraint } of cases) {
+    const logs = []
+    const providerError = {
+      code,
+      constraint,
+      message: 'private product value',
+      details: 'private database details',
+    }
+    const service = new ProductAdminService(failingCreateClient(stage, providerError), {
+      error: (entry) => logs.push(entry),
+    })
+    await assert.rejects(service.create(product(), actor), (error) =>
+      error instanceof ProductApiError && error.status === 500 && error.code === 'PRODUCT_SERVICE_ERROR')
+    assert.deepEqual(logs, [{
+      event: 'product.database.failed', operation: stage, resource, code,
+      ...(constraint === 'products_example_check' ? { constraint } : {}),
+      requestId: actor.requestId,
+    }])
+    assert.doesNotMatch(JSON.stringify(logs), /private|unsafe|RF-001|Royal Oud/)
+  }
+
+  const logs = []
+  const transportError = Object.assign(new Error('private transport details'), { code: 'ECONNRESET' })
+  const service = new ProductAdminService(failingCreateClient('products.insert', transportError, true), {
+    error: (entry) => logs.push(entry),
+  })
+  await assert.rejects(service.create(product(), actor), (error) => error === transportError)
+  assert.deepEqual(logs, [{
+    event: 'product.create.failed', operation: 'products.insert', code: 'ECONNRESET',
+    requestId: actor.requestId,
+  }])
+  assert.doesNotMatch(JSON.stringify(logs), /private/)
+})
+
 test('partial update preserves omitted fields, validates category and price, and archives without deleting', async () => {
   const api = await start()
   const created = await request(api, '', { method: 'POST', actor: 'owner', body: product() })
@@ -227,6 +268,33 @@ test('card migration follows prior migrations and browser write restrictions rem
 
 function mockClient(db) {
   return { from(table) { return new Query(db, table) } }
+}
+
+function failingCreateClient(stage, failure, throws = false) {
+  return {
+    from(table) {
+      if (table === 'categories') {
+        return {
+          select() { return this },
+          eq() { return this },
+          async maybeSingle() {
+            return stage === 'category.resolve'
+              ? { data: null, error: failure }
+              : { data: { id: categoryId, name: 'Attars', status: 'Published', active: true }, error: null }
+          },
+        }
+      }
+      assert.equal(table, 'products')
+      return {
+        insert() { return this },
+        select() { return this },
+        async single() {
+          if (throws) throw failure
+          return { data: null, error: failure }
+        },
+      }
+    },
+  }
 }
 
 class Query {

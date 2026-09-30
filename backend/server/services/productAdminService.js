@@ -47,14 +47,35 @@ export class ProductAdminService {
 
   async create(input, actor) {
     const client = this.requireClient()
-    const columns = toProductColumns(input)
-    await this.assignCategory(columns, input.categoryId)
-    if (input.stockQuantity !== undefined) columns.stock_status = stockStatus(input.stockQuantity)
-    if (input.status === 'Published') columns.published_at = new Date().toISOString()
-    const { data, error } = await client.from('products').insert(columns).select('*').single()
-    if (error) throw databaseError(error)
-    await this.audit('product.create', data.id, actor)
-    return toProductDto(data)
+    let operation = 'product.map'
+    try {
+      const columns = toProductColumns(input)
+      operation = 'category.resolve'
+      await this.assignCategory(columns, input.categoryId, null, actor)
+      if (input.stockQuantity !== undefined) columns.stock_status = stockStatus(input.stockQuantity)
+      if (input.status === 'Published') columns.published_at = new Date().toISOString()
+      operation = 'products.insert'
+      const { data, error } = await client.from('products').insert(columns).select('*').single()
+      if (error) {
+        const mapped = databaseError(error)
+        if (mapped.status >= 500) this.logCreateDatabaseFailure(operation, error, actor)
+        throw mapped
+      }
+      operation = 'product.audit'
+      await this.audit('product.create', data.id, actor)
+      operation = 'product.response'
+      return toProductDto(data)
+    } catch (error) {
+      if (!(error instanceof ProductApiError)) {
+        this.logger.error?.({
+          event: 'product.create.failed',
+          operation,
+          code: diagnosticCode(error?.code ?? error?.name),
+          requestId: actor?.requestId,
+        })
+      }
+      throw error
+    }
   }
 
   async update(id, input, actor) {
@@ -98,7 +119,7 @@ export class ProductAdminService {
     return toProductDto(data)
   }
 
-  async assignCategory(columns, categoryId, currentCategoryId = null) {
+  async assignCategory(columns, categoryId, currentCategoryId = null, createActor = null) {
     if (categoryId == null) {
       columns.category_id = null
       columns.category_name = ''
@@ -107,13 +128,28 @@ export class ProductAdminService {
     }
     const { data, error } = await this.requireClient().from('categories')
       .select('id,name,status,active').eq('id', categoryId).maybeSingle()
-    if (error) throw databaseError(error)
+    if (error) {
+      const mapped = databaseError(error)
+      if (createActor && mapped.status >= 500) this.logCreateDatabaseFailure('category.resolve', error, createActor)
+      throw mapped
+    }
     if (!data || (categoryId !== currentCategoryId && (!data.active || data.status !== 'Published'))) {
       throw new ProductApiError(400, 'INVALID_CATEGORY', 'Category does not exist or is unavailable.')
     }
     columns.category_id = data.id
     columns.category_name = data.name
     columns.is_attar = isAttarCategory(data.name)
+  }
+
+  logCreateDatabaseFailure(operation, error, actor) {
+    this.logger.error?.({
+      event: 'product.database.failed',
+      operation,
+      resource: operation === 'category.resolve' ? 'categories' : 'products',
+      code: diagnosticCode(error?.code),
+      ...(safeIdentifier(error?.constraint) ? { constraint: error.constraint } : {}),
+      requestId: actor?.requestId,
+    })
   }
 
   async audit(action, id, actor) {
@@ -153,4 +189,12 @@ function databaseError(error) {
 
 function isAttarCategory(name) {
   return /^\s*attars?\s*$/i.test(name ?? '')
+}
+
+function diagnosticCode(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(value) ? value : 'unknown'
+}
+
+function safeIdentifier(value) {
+  return typeof value === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(value)
 }
