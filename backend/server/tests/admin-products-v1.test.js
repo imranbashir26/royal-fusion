@@ -118,6 +118,7 @@ test('create validates schema, uniqueness, category, image and card fields; writ
   }
   const created = await request(api, '', { method: 'POST', actor: 'owner', body: product({
     slug: '  Royal Oud  ', stockQuantity: 3, status: 'Published',
+    gallery: ['https://cdn.example.com/gallery.webp'],
     cardImage: '/cards/oud.webp', cardHoverImage: 'https://cdn.example.com/hover.webp',
     cardBackgroundColor: '#ABC123', isPremium: true, isNewArrival: true,
   }) })
@@ -131,6 +132,7 @@ test('create validates schema, uniqueness, category, image and card fields; writ
   assert.equal(created.body.data.isNewArrival, true)
   assert.equal(created.body.data.isPremium, true)
   assert.equal(api.db.products[0].main_image_url, 'https://cdn.example.com/royal.webp')
+  assert.deepEqual(api.db.products[0].gallery_urls, ['https://cdn.example.com/gallery.webp'])
   assert.equal(api.db.audits[0].action, 'product.create')
   assert.equal(api.db.audits[0].admin_id, 'owner')
   assert.equal((await request(api, '', { method: 'POST', actor: 'owner', body: product({ sku: 'RF-002' }) })).status, 409)

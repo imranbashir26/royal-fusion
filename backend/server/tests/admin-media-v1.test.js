@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import cookieParser from 'cookie-parser'
 import express from 'express'
 import test, { after } from 'node:test'
@@ -19,6 +20,7 @@ const config = createAuthConfig({
   ENABLE_ADMIN_MFA: 'false',
 })
 const names = getAuthCookieNames(config)
+const productColumns = new Set(['id', 'name', 'main_image_url', 'gallery_urls', 'card_image_url', 'card_hover_image_url', 'updated_at'])
 const servers = []
 after(async () => {
   await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))))
@@ -53,7 +55,14 @@ class Query {
     this.filters = []
     this.mode = 'read'
   }
-  select() { return this }
+  select(columns = '*') {
+    if (this.table === 'products' && columns !== '*') {
+      for (const column of columns.split(',').map((value) => value.trim())) {
+        if (!productColumns.has(column)) this.invalidProductColumn = column
+      }
+    }
+    return this
+  }
   eq(key, value) {
     this.filters.push((row) => row[key] === value)
     return this
@@ -77,6 +86,13 @@ class Query {
   then(resolve, reject) { return this.execute(false).then(resolve, reject) }
 
   async execute(one) {
+    if (this.invalidProductColumn) {
+      return { data: null, error: { code: 'PGRST204', message: `Unknown products column ${this.invalidProductColumn}` } }
+    }
+    if (this.table === 'products' && this.mode === 'update') {
+      const invalid = Object.keys(this.value).find((column) => !productColumns.has(column))
+      if (invalid) return { data: null, error: { code: 'PGRST204', message: `Unknown products column ${invalid}` } }
+    }
     if (this.table === 'admin_audit_logs') {
       this.db.audits.push(this.value)
       return { data: null, error: null }
@@ -85,6 +101,17 @@ class Query {
     if (!rows) throw new Error(`Unexpected table: ${this.table}`)
 
     if (this.mode === 'insert') {
+      if (this.table === 'product_media' && this.db.simulateClaimConflict) {
+        this.db.simulateClaimConflict = false
+        rows.push({ id: randomUUID(), ...this.value })
+        return { data: null, error: { code: '23505', message: 'Duplicate Cloudinary public ID' } }
+      }
+      if (this.table === 'product_media' && rows.some((row) => row.cloudinary_public_id === this.value.cloudinary_public_id)) {
+        return { data: null, error: { code: '23505', message: 'Duplicate Cloudinary public ID' } }
+      }
+      if (this.table === 'product_media' && this.value.is_primary && rows.some((row) => row.product_id === this.value.product_id && row.is_primary)) {
+        return { data: null, error: { code: '23505', message: 'Duplicate product primary media' } }
+      }
       const row = {
         id: randomUUID(),
         created_at: new Date().toISOString(),
@@ -132,10 +159,10 @@ async function start({ cloudinaryFails = false } = {}) {
         name: 'Royal Mirage',
         slug: 'royal-mirage',
         sku: 'RF-RM-01',
-        image_url: 'https://res.cloudinary.com/demo/image/upload/v1/royal-fusion/products/' + productId + '/main-old.webp',
+        main_image_url: 'https://res.cloudinary.com/demo/image/upload/v1/royal-fusion/products/' + productId + '/main-old.webp',
         card_image_url: '',
         card_hover_image_url: '',
-        gallery: [],
+        gallery_urls: [],
         active: true,
       },
     ],
@@ -156,6 +183,7 @@ async function start({ cloudinaryFails = false } = {}) {
 
   const client = mockClient(db)
   const destroyedPublicIds = []
+  const uploadedPublicIds = []
 
   const mockCloudinaryClient = {
     upload: async ({ folder, publicId, mediaType }) => {
@@ -165,6 +193,7 @@ async function start({ cloudinaryFails = false } = {}) {
         throw err
       }
       const secureUrl = `https://res.cloudinary.com/demo/image/upload/v1/${publicId}.webp`
+      uploadedPublicIds.push(publicId)
       return {
         url: secureUrl,
         secureUrl,
@@ -236,6 +265,7 @@ async function start({ cloudinaryFails = false } = {}) {
     productId,
     db,
     destroyedPublicIds,
+    uploadedPublicIds,
   }
 }
 
@@ -324,18 +354,115 @@ test('staged media attaches only to a product that references it and can then be
     body: { productId: api.productId, uploadToken },
   })
   assert.equal(notReferenced.status, 400)
-  api.db.products[0].gallery = [secureUrl]
-  api.db.products[0].image_url = secureUrl
+  api.db.products[0].gallery_urls = [secureUrl]
+  const mainBefore = api.db.products[0].main_image_url
+  const uploadsBeforeClaim = api.uploadedPublicIds.length
   const claimed = await stagedRequest(api, '/staged/claim', {
     body: { productId: api.productId, uploadToken },
   })
   assert.equal(claimed.status, 200)
-  assert.equal(api.db.product_media.find((row) => row.cloudinary_public_id === publicId).is_primary, true)
+  const media = api.db.product_media.find((row) => row.cloudinary_public_id === publicId)
+  assert.equal(media.is_primary, false)
+  assert.equal(media.display_order, 0)
   assert.equal((await stagedRequest(api, '/staged/claim', { body: { productId: api.productId, uploadToken } })).status, 200)
+  assert.equal(api.db.product_media.filter((row) => row.cloudinary_public_id === publicId).length, 1)
+  assert.deepEqual(api.db.products[0].gallery_urls, [secureUrl])
+  assert.equal(api.db.products[0].main_image_url, mainBefore)
+  assert.equal(api.uploadedPublicIds.length, uploadsBeforeClaim)
   assert.equal((await stagedRequest(api, '/staged', { method: 'DELETE', body: { uploadToken } })).status, 409)
   const removed = await deleteRequest(api, { actor: 'manager', productId: api.productId, secureUrl })
   assert.equal(removed.status, 200)
   assert(api.destroyedPublicIds.includes(publicId))
+})
+
+test('media service has no products.image_url or products.gallery column references', () => {
+  const source = readFileSync(new URL('../services/productMediaAdminService.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /\bproduct\.(?:image_url|gallery)\b/)
+  assert.doesNotMatch(source, /\.select\([^)]*\b(?:image_url|gallery)\b/)
+  assert.doesNotMatch(source, /\.update\(\{\s*(?:image_url|gallery)\s*:/)
+})
+
+for (const [mediaType, column] of [
+  ['main', 'main_image_url'],
+  ['card', 'card_image_url'],
+  ['cardHover', 'card_hover_image_url'],
+]) {
+  test(`existing product claims staged ${mediaType} using ${column} and retries without duplication`, async () => {
+    const api = await start()
+    if (mediaType === 'main') api.db.product_media.length = 0
+    const upload = await uploadRequest(api, { actor: 'manager', mediaType })
+    assert.equal(upload.status, 201)
+    const { secureUrl, publicId, uploadToken } = upload.body.data
+    api.db.products[0][column] = secureUrl
+    const productBefore = structuredClone(api.db.products[0])
+    const uploadsBeforeClaim = api.uploadedPublicIds.length
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await stagedRequest(api, '/staged/claim', {
+        body: { productId: api.productId, uploadToken },
+      })
+      assert.equal(response.status, 200)
+      assert.equal(response.body.data.productId, api.productId)
+    }
+
+    const claimed = api.db.product_media.filter((row) => row.cloudinary_public_id === publicId)
+    assert.equal(claimed.length, 1)
+    assert.equal(claimed[0].product_id, api.productId)
+    assert.equal(claimed[0].is_primary, mediaType === 'main')
+    assert.deepEqual(api.db.products[0], productBefore)
+    assert.equal(api.uploadedPublicIds.length, uploadsBeforeClaim)
+  })
+}
+
+test('claim preserves gallery order and does not create duplicate product_media rows on retry', async () => {
+  const api = await start()
+  const first = await uploadRequest(api, { actor: 'manager', mediaType: 'gallery' })
+  const second = await uploadRequest(api, { actor: 'manager', mediaType: 'gallery' })
+  const staged = [first.body.data, second.body.data]
+  api.db.products[0].gallery_urls = staged.map(({ secureUrl }) => secureUrl)
+  const productBefore = structuredClone(api.db.products[0])
+
+  for (const { uploadToken } of [staged[1], staged[0], staged[1]]) {
+    const response = await stagedRequest(api, '/staged/claim', {
+      body: { productId: api.productId, uploadToken },
+    })
+    assert.equal(response.status, 200)
+  }
+
+  assert.deepEqual(api.db.products[0], productBefore)
+  assert.deepEqual(staged.map(({ publicId }) => api.db.product_media.find((row) => row.cloudinary_public_id === publicId).display_order), [0, 1])
+  assert.equal(api.db.product_media.length, 3)
+  assert.equal(api.uploadedPublicIds.length, 2)
+})
+
+test('gallery upload selected as the product main image claims one primary media row', async () => {
+  const api = await start()
+  api.db.product_media.length = 0
+  const upload = await uploadRequest(api, { actor: 'manager', mediaType: 'gallery' })
+  const { secureUrl, publicId, uploadToken } = upload.body.data
+  api.db.products[0].main_image_url = secureUrl
+  api.db.products[0].gallery_urls = [secureUrl]
+
+  const response = await stagedRequest(api, '/staged/claim', {
+    body: { productId: api.productId, uploadToken },
+  })
+  assert.equal(response.status, 200)
+  assert.equal(api.db.product_media.find((row) => row.cloudinary_public_id === publicId).is_primary, true)
+  assert.equal(api.db.product_media.length, 1)
+})
+
+test('claim succeeds when another request inserted the same media before the claim insert completed', async () => {
+  const api = await start()
+  const upload = await uploadRequest(api, { actor: 'manager', mediaType: 'gallery' })
+  const { secureUrl, publicId, uploadToken } = upload.body.data
+  api.db.products[0].gallery_urls = [secureUrl]
+  api.db.simulateClaimConflict = true
+
+  const response = await stagedRequest(api, '/staged/claim', {
+    body: { productId: api.productId, uploadToken },
+  })
+  assert.equal(response.status, 200)
+  assert.equal(api.db.product_media.filter((row) => row.cloudinary_public_id === publicId).length, 1)
 })
 
 test('staged media deletion requires its original administrator token', async () => {
@@ -475,7 +602,7 @@ test('successful main image upload updates product and records replacement of su
   assert.equal(res.status, 201)
 
   const prod = api.db.products.find((p) => p.id === api.productId)
-  assert.equal(prod.image_url, res.body.data.secureUrl)
+  assert.equal(prod.main_image_url, res.body.data.secureUrl)
 
   // Superseded old asset was safely deleted from Cloudinary
   assert(api.destroyedPublicIds.includes(oldPublicId))
@@ -484,6 +611,19 @@ test('successful main image upload updates product and records replacement of su
   const audit = api.db.audits.find((a) => a.action === 'product_media.replace')
   assert(audit)
   assert.equal(audit.resource_id, api.productId)
+})
+
+test('deleting the current main image is rejected before removing its media relationship', async () => {
+  const api = await start()
+  const mainBefore = api.db.products[0].main_image_url
+  const mediaBefore = structuredClone(api.db.product_media)
+  const result = await deleteRequest(api, { actor: 'manager', productId: api.productId, secureUrl: mainBefore })
+
+  assert.equal(result.status, 409)
+  assert.equal(result.body.error.code, 'MAIN_IMAGE_REQUIRED')
+  assert.equal(api.db.products[0].main_image_url, mainBefore)
+  assert.deepEqual(api.db.product_media, mediaBefore)
+  assert.equal(api.destroyedPublicIds.length, 0)
 })
 
 test('cardImage and cardHoverImage upload and persist to products table and product_media', async () => {
@@ -544,9 +684,9 @@ test('gallery add and remove maintains deterministic list and cleans up Cloudina
   assert.equal(g2.status, 201)
 
   let prod = api.db.products.find((p) => p.id === api.productId)
-  assert.equal(prod.gallery.length, 2)
-  assert.equal(prod.gallery[0], g1.body.data.secureUrl)
-  assert.equal(prod.gallery[1], g2.body.data.secureUrl)
+  assert.equal(prod.gallery_urls.length, 2)
+  assert.equal(prod.gallery_urls[0], g1.body.data.secureUrl)
+  assert.equal(prod.gallery_urls[1], g2.body.data.secureUrl)
 
   // Remove g1
   const delRes = await deleteRequest(api, {
@@ -557,8 +697,8 @@ test('gallery add and remove maintains deterministic list and cleans up Cloudina
   assert.equal(delRes.status, 200)
 
   prod = api.db.products.find((p) => p.id === api.productId)
-  assert.equal(prod.gallery.length, 1)
-  assert.equal(prod.gallery[0], g2.body.data.secureUrl)
+  assert.equal(prod.gallery_urls.length, 1)
+  assert.equal(prod.gallery_urls[0], g2.body.data.secureUrl)
 
   // g1 publicId destroyed in Cloudinary
   assert(api.destroyedPublicIds.includes(g1.body.data.publicId))

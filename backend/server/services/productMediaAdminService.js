@@ -91,7 +91,7 @@ export class ProductMediaAdminService {
     // 1. Verify product exists
     const { data: product, error: productError } = await client
       .from('products')
-      .select('id, name, image_url, gallery, card_image_url, card_hover_image_url')
+      .select('id, name, main_image_url, gallery_urls, card_image_url, card_hover_image_url')
       .eq('id', productId)
       .maybeSingle()
 
@@ -103,7 +103,7 @@ export class ProductMediaAdminService {
     if (mediaType === 'main' || mediaType === 'card' || mediaType === 'cardHover') {
       const priorUrl =
         mediaType === 'main'
-          ? product.image_url
+          ? product.main_image_url
           : mediaType === 'card'
             ? product.card_image_url
             : product.card_hover_image_url
@@ -149,10 +149,10 @@ export class ProductMediaAdminService {
         })
         if (insertError) throw insertError
 
-        // Update product's image_url
+        // Update product's main_image_url
         const { error: prodUpdateError } = await client
           .from('products')
-          .update({ image_url: secureUrl, updated_at: new Date().toISOString() })
+          .update({ main_image_url: secureUrl, updated_at: new Date().toISOString() })
           .eq('id', productId)
         if (prodUpdateError) throw prodUpdateError
       } else if (mediaType === 'card') {
@@ -210,7 +210,7 @@ export class ProductMediaAdminService {
           .eq('id', productId)
         if (prodUpdateError) throw prodUpdateError
       } else if (mediaType === 'gallery') {
-        const currentGallery = Array.isArray(product.gallery) ? product.gallery : []
+        const currentGallery = Array.isArray(product.gallery_urls) ? product.gallery_urls : []
         const nextOrder = typeof displayOrder === 'number' ? displayOrder : currentGallery.length
 
         // Insert gallery media record
@@ -229,7 +229,7 @@ export class ProductMediaAdminService {
         const updatedGallery = [...currentGallery, secureUrl]
         const { error: prodUpdateError } = await client
           .from('products')
-          .update({ gallery: updatedGallery, updated_at: new Date().toISOString() })
+          .update({ gallery_urls: updatedGallery, updated_at: new Date().toISOString() })
           .eq('id', productId)
         if (prodUpdateError) throw prodUpdateError
       }
@@ -337,17 +337,17 @@ export class ProductMediaAdminService {
     const staged = this.verifyStagedMedia(uploadToken, actor)
     const client = this.requireClient()
     const { data: product, error } = await client.from('products')
-      .select('id, image_url, gallery, card_image_url, card_hover_image_url')
+      .select('id, main_image_url, gallery_urls, card_image_url, card_hover_image_url')
       .eq('id', productId).maybeSingle()
     if (error) throw databaseError(error)
     if (!product) throw new MediaApiError(404, 'PRODUCT_NOT_FOUND', 'Product not found.')
     const referenced = staged.mediaType === 'main'
-      ? product.image_url === staged.secureUrl
+      ? product.main_image_url === staged.secureUrl
       : staged.mediaType === 'card'
         ? product.card_image_url === staged.secureUrl
         : staged.mediaType === 'cardHover'
           ? product.card_hover_image_url === staged.secureUrl
-          : Array.isArray(product.gallery) && product.gallery.includes(staged.secureUrl)
+          : Array.isArray(product.gallery_urls) && product.gallery_urls.includes(staged.secureUrl)
     if (!referenced) throw new MediaApiError(400, 'MEDIA_NOT_REFERENCED', 'Product does not reference this upload.')
     const { data: existing, error: lookupError } = await client.from('product_media')
       .select('id, product_id').eq('cloudinary_public_id', staged.publicId).maybeSingle()
@@ -362,9 +362,16 @@ export class ProductMediaAdminService {
       secure_url: staged.secureUrl,
       alt_text: '',
       media_type: 'image',
-      display_order: Array.isArray(product.gallery) ? Math.max(product.gallery.indexOf(staged.secureUrl), 0) : 0,
-      is_primary: product.image_url === staged.secureUrl,
+      display_order: Array.isArray(product.gallery_urls) ? Math.max(product.gallery_urls.indexOf(staged.secureUrl), 0) : 0,
+      is_primary: product.main_image_url === staged.secureUrl,
     })
+    if (insertError?.code === '23505') {
+      const { data: claimed, error: retryLookupError } = await client.from('product_media')
+        .select('product_id').eq('cloudinary_public_id', staged.publicId).maybeSingle()
+      if (retryLookupError) throw databaseError(retryLookupError)
+      if (claimed?.product_id === productId) return { success: true, productId, secureUrl: staged.secureUrl }
+      if (claimed) throw new MediaApiError(409, 'MEDIA_ALREADY_CLAIMED', 'Media is already attached.')
+    }
     if (insertError) throw databaseError(insertError)
     await this.audit('product_media.claim', { productId, publicId: staged.publicId, secureUrl: staged.secureUrl }, actor)
     return { success: true, productId, secureUrl: staged.secureUrl }
@@ -394,7 +401,7 @@ export class ProductMediaAdminService {
     // 1. Verify product exists
     const { data: product, error: productError } = await client
       .from('products')
-      .select('id, image_url, gallery, card_image_url, card_hover_image_url')
+      .select('id, main_image_url, gallery_urls, card_image_url, card_hover_image_url')
       .eq('id', productId)
       .maybeSingle()
 
@@ -416,6 +423,10 @@ export class ProductMediaAdminService {
     const targetUrl = secureUrl || targetRow?.secure_url
     const targetPublicId = targetRow?.cloudinary_public_id
 
+    if (product.main_image_url === targetUrl) {
+      throw new MediaApiError(409, 'MAIN_IMAGE_REQUIRED', 'Replace the main image before deleting it.')
+    }
+
     // 3. Delete from product_media if row exists
     if (targetRow) {
       const { error: delError } = await client
@@ -428,11 +439,10 @@ export class ProductMediaAdminService {
     // 4. Synchronize products table
     const updates = {}
     if (targetUrl) {
-      if (product.image_url === targetUrl) updates.image_url = ''
       if (product.card_image_url === targetUrl) updates.card_image_url = ''
       if (product.card_hover_image_url === targetUrl) updates.card_hover_image_url = ''
-      if (Array.isArray(product.gallery) && product.gallery.includes(targetUrl)) {
-        updates.gallery = product.gallery.filter((url) => url !== targetUrl)
+      if (Array.isArray(product.gallery_urls) && product.gallery_urls.includes(targetUrl)) {
+        updates.gallery_urls = product.gallery_urls.filter((url) => url !== targetUrl)
       }
     }
 
