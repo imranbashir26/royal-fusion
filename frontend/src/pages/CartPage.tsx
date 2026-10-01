@@ -1,3 +1,4 @@
+import { resolveCartItem } from '../services/productVariants'
 import { ShoppingBag, Trash2 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { EmptyState } from '../components/common/EmptyState'
@@ -22,22 +23,18 @@ export function CartPage() {
   } = useCartStore()
   const selectedLineIdSet = new Set(selectedLineIds)
   const enrichedItems = items
-    .map((item) => {
-      const product = products.find((candidate) => candidate.id === item.productId)
-      const size = product?.sizeOptions.find((option) => option.value === item.size)
-      return product ? { ...item, product, unitPrice: size?.price ?? product.price } : null
-    })
-    .filter(Boolean)
+    .map((item) => resolveCartItem(item, products))
 
-  const selectedItems = enrichedItems.filter((item) => selectedLineIdSet.has(item!.lineId))
+  const selectedItems = enrichedItems.filter((item) => selectedLineIdSet.has(item.lineId) && item.eligible)
+  const invalidSelection = enrichedItems.some((item) => selectedLineIdSet.has(item.lineId) && !item.eligible)
   const subtotal = selectedItems.reduce(
-    (total, item) => total + item!.unitPrice * item!.quantity,
+    (total, item) => total + item.unitPrice * item.quantity,
     0,
   )
-  const selectedQuantity = selectedItems.reduce((total, item) => total + item!.quantity, 0)
+  const selectedQuantity = selectedItems.reduce((total, item) => total + item.quantity, 0)
   const allSelected =
-    enrichedItems.length > 0 && enrichedItems.every((item) => selectedLineIdSet.has(item!.lineId))
-  const selectionMessage = selectedItems.length === 0
+    enrichedItems.length > 0 && enrichedItems.every((item) => selectedLineIdSet.has(item.lineId))
+  const selectionMessage = invalidSelection ? 'Adjust or deselect unavailable items to continue.' : selectedItems.length === 0
     ? (location.state as { cartMessage?: string } | null)?.cartMessage ??
       'Select at least one product to continue.'
     : ''
@@ -86,37 +83,42 @@ export function CartPage() {
           {enrichedItems.map((item) => (
             <article
               className="rounded-lg border border-champagne/25 bg-ivory/88 p-4 shadow-sm"
-              key={`${item!.productId}-${item!.size}`}
+              key={item.lineId}
             >
               <div className="flex gap-4">
                 <label className="flex shrink-0 cursor-pointer items-start pt-2">
                   <input
-                    checked={selectedLineIdSet.has(item!.lineId)}
+                    checked={selectedLineIdSet.has(item.lineId)}
                     className="h-5 w-5 accent-burgundy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-oldgold focus-visible:ring-offset-2"
-                    onChange={() => toggleItemSelection(item!.lineId)}
+                    onChange={() => toggleItemSelection(item.lineId)}
                     type="checkbox"
                   />
-                  <span className="sr-only">Select {item!.product.name}, {item!.size}</span>
+                  <span className="sr-only">Select {item.product.name}, {item.size}</span>
                 </label>
                 <div className="grid min-w-0 flex-1 gap-5 md:grid-cols-[130px_1fr_auto] md:items-center">
                   <div className="rounded-lg bg-cream">
-                    <ProductBottle compact className="h-32 w-full" name={item!.product.name} tone={item!.product.image} />
+                    <ProductBottle compact className="h-32 w-full" name={item.product.name} tone={item.product.image} />
                   </div>
                   <div>
-                    <Link to={`/product/${item!.product.slug}`}>
-                      <h2 className="font-serif text-3xl font-semibold text-burgundy">{item!.product.name}</h2>
+                    <Link to={item.product.slug ? `/product/${item.product.slug}` : '/shop'}>
+                      <h2 className="font-serif text-3xl font-semibold text-burgundy">{item.product.name}</h2>
                     </Link>
-                    <p className="mt-1 text-sm text-brownroyal/60">{item!.size}</p>
-                    <p className="mt-3 font-bold text-brownroyal">{formatCurrency(item!.unitPrice)}</p>
+                    <p className="mt-1 text-sm text-brownroyal/60">{item.size}</p>
+                    {item.variant && <p className="mt-1 text-xs text-brownroyal/60">{item.variant.stockQuantity} in stock</p>}
+                    {item.message && <p className="mt-2 text-sm text-burgundy" role="status">{item.message}</p>}
+                    <p className="mt-3 font-bold text-brownroyal">{item.lineAmount === null ? 'Unavailable' : formatCurrency(item.unitPrice)}</p>
                   </div>
                   <div className="flex items-center justify-between gap-4 md:flex-col md:items-end">
                     <QuantityStepper
-                      onChange={(value) => updateQuantity(item!.productId, item!.size, value)}
-                      value={item!.quantity}
+                      disabled={!item.variant || !item.variant.active || !item.variant.available || item.variant.stockQuantity < 1}
+                      max={Math.min(99, item.variant?.stockQuantity ?? 0)}
+                      onChange={(value) => updateQuantity(item.lineId, value, products)}
+                      value={item.quantity}
                     />
                     <button
+                      aria-label={`Remove ${item.product.name}`}
                       className="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-bold text-burgundy transition hover:bg-burgundy/8"
-                      onClick={() => removeItem(item!.productId, item!.size)}
+                      onClick={() => removeItem(item.lineId)}
                       type="button"
                     >
                       <Trash2 className="h-4 w-4" aria-hidden="true" />
@@ -158,7 +160,7 @@ export function CartPage() {
               {selectionMessage}
             </p>
           )}
-          {selectedItems.length > 0 ? (
+          {selectedItems.length > 0 && !invalidSelection ? (
             <Link className={buttonClasses({ className: 'mt-6 w-full' })} to="/checkout">
               Proceed to Checkout
             </Link>

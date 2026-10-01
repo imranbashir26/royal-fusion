@@ -1,3 +1,4 @@
+import { resolveCartItem } from '../../services/productVariants'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ShoppingBag, Trash2, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
@@ -23,20 +24,16 @@ export function CartDrawer() {
   const selectedLineIdSet = new Set(selectedLineIds)
 
   const enrichedItems = items
-    .map((item) => {
-      const product = products.find((candidate) => candidate.id === item.productId)
-      const size = product?.sizeOptions.find((option) => option.value === item.size)
-      return product ? { ...item, product, unitPrice: size?.price ?? product.price } : null
-    })
-    .filter(Boolean)
+    .map((item) => resolveCartItem(item, products))
 
-  const selectedItems = enrichedItems.filter((item) => selectedLineIdSet.has(item!.lineId))
+  const selectedItems = enrichedItems.filter((item) => selectedLineIdSet.has(item.lineId) && item.eligible)
+  const invalidSelection = enrichedItems.some((item) => selectedLineIdSet.has(item.lineId) && !item.eligible)
   const subtotal = selectedItems.reduce(
-    (total, item) => total + item!.unitPrice * item!.quantity,
+    (total, item) => total + item.unitPrice * item.quantity,
     0,
   )
   const allSelected =
-    enrichedItems.length > 0 && enrichedItems.every((item) => selectedLineIdSet.has(item!.lineId))
+    enrichedItems.length > 0 && enrichedItems.every((item) => selectedLineIdSet.has(item.lineId))
 
   return (
     <AnimatePresence>
@@ -102,38 +99,40 @@ export function CartDrawer() {
                   {enrichedItems.map((item) => (
                     <div
                       className="rounded-lg border border-champagne/25 bg-marble/70 p-4"
-                      key={`${item!.productId}-${item!.size}`}
+                      key={item.lineId}
                     >
                       <div className="flex gap-3">
                         <label className="flex shrink-0 cursor-pointer items-start pt-2">
                           <input
-                            checked={selectedLineIdSet.has(item!.lineId)}
+                            checked={selectedLineIdSet.has(item.lineId)}
                             className="h-5 w-5 accent-burgundy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-oldgold focus-visible:ring-offset-2"
-                            onChange={() => toggleItemSelection(item!.lineId)}
+                            onChange={() => toggleItemSelection(item.lineId)}
                             type="checkbox"
                           />
-                          <span className="sr-only">Select {item!.product.name}, {item!.size}</span>
+                          <span className="sr-only">Select {item.product.name}, {item.size}</span>
                         </label>
                         <div className="w-24 shrink-0 rounded-lg bg-cream">
                           <ProductBottle
                             compact
                             className="h-28 w-24"
-                            name={item!.product.name}
-                            tone={item!.product.image}
+                            name={item.product.name}
+                            tone={item.product.image}
                           />
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex justify-between gap-3">
                             <div>
                               <p className="font-serif text-xl font-semibold text-burgundy">
-                                {item!.product.name}
+                                {item.product.name}
                               </p>
-                              <p className="text-sm text-brownroyal/60">{item!.size}</p>
+                              <p className="text-sm text-brownroyal/60">{item.size}</p>
+                              {item.variant && <p className="mt-1 text-xs text-brownroyal/60">{item.variant.stockQuantity} in stock</p>}
+                              {item.message && <p className="mt-2 text-sm text-burgundy" role="status">{item.message}</p>}
                             </div>
                             <button
-                              aria-label={`Remove ${item!.product.name}`}
+                              aria-label={`Remove ${item.product.name}`}
                               className="grid h-9 w-9 place-items-center rounded-full text-brownroyal/60 transition hover:bg-burgundy/8 hover:text-burgundy"
-                              onClick={() => removeItem(item!.productId, item!.size)}
+                              onClick={() => removeItem(item.lineId)}
                               type="button"
                             >
                               <Trash2 className="h-4 w-4" aria-hidden="true" />
@@ -141,11 +140,13 @@ export function CartDrawer() {
                           </div>
                           <div className="mt-4 flex items-center justify-between gap-3">
                             <QuantityStepper
-                              onChange={(value) => updateQuantity(item!.productId, item!.size, value)}
-                              value={item!.quantity}
+                              disabled={!item.variant || !item.variant.active || !item.variant.available || item.variant.stockQuantity < 1}
+                              max={Math.min(99, item.variant?.stockQuantity ?? 0)}
+                              onChange={(value) => updateQuantity(item.lineId, value, products)}
+                              value={item.quantity}
                             />
                             <p className="font-extrabold text-brownroyal">
-                              {formatCurrency(item!.unitPrice * item!.quantity)}
+                              {item.lineAmount === null ? 'Unavailable' : formatCurrency(item.lineAmount)}
                             </p>
                           </div>
                         </div>
@@ -162,9 +163,9 @@ export function CartDrawer() {
                   <span className="text-brownroyal/70">Selected subtotal</span>
                   <span className="text-xl font-extrabold text-burgundy">{formatCurrency(subtotal)}</span>
                 </div>
-                {selectedItems.length === 0 && (
+                {(selectedItems.length === 0 || invalidSelection) && (
                   <p className="mb-4 text-sm font-semibold text-burgundy" role="status">
-                    Select at least one product to continue.
+                    {invalidSelection ? 'Adjust or deselect unavailable items to continue.' : 'Select at least one product to continue.'}
                   </p>
                 )}
                 <div className="grid grid-cols-2 gap-3">
@@ -175,7 +176,7 @@ export function CartDrawer() {
                   >
                     View Cart
                   </Link>
-                  {selectedItems.length > 0 ? (
+                  {selectedItems.length > 0 && !invalidSelection ? (
                     <Link className={buttonClasses({})} onClick={closeCart} to="/checkout">
                       Checkout
                     </Link>

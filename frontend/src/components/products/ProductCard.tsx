@@ -7,6 +7,7 @@ import { useWishlistStore } from '../../store/wishlistStore'
 import type { Product } from '../../types'
 import { cn } from '../../utils/cn'
 import { formatCurrency } from '../../utils/format'
+import { defaultVariant, variantPrice } from '../../services/productVariants'
 
 interface ProductCardProps {
   product: Product
@@ -16,6 +17,11 @@ interface ProductCardProps {
 
 export function ProductCard({ product, className }: ProductCardProps) {
   const addItem = useCartStore((state) => state.addItem)
+  const variant = defaultVariant(product)
+  const inCart = useCartStore((state) => state.items.filter((item) => item.variantId === variant?.id)
+    .reduce((total, item) => total + item.quantity, 0))
+  const canAdd = Boolean(variant && inCart < Math.min(99, variant.stockQuantity))
+  const price = variant ? variantPrice(variant) : product.price
   const toggleWishlist = useWishlistStore((state) => state.toggle)
   const isWishlisted = useWishlistStore((state) => state.productIds.includes(product.id))
 
@@ -28,15 +34,14 @@ export function ProductCard({ product, className }: ProductCardProps) {
   const handleAddToCart = (e: MouseEvent<HTMLButtonElement>) => {
     e.preventDefault()
     e.stopPropagation()
-    const defaultSize = product.sizeOptions?.[0]?.value || '50ml'
-    addItem(product, defaultSize)
+    if (variant && canAdd) addItem(product, variant.id)
   }
 
   const defaultImage = product.cardImage || product.image
   const hoverImage = product.cardHoverImage
   const hasHoverImage = Boolean(hoverImage && hoverImage.trim() !== '' && hoverImage !== defaultImage)
   const backgroundColor = product.cardBackgroundColor || '#E7C78F'
-  const hasDiscount = Boolean(product.oldPrice && product.oldPrice > product.price)
+  const hasDiscount = Boolean(product.oldPrice && product.oldPrice > price)
 
   return (
     <article
@@ -123,7 +128,7 @@ export function ProductCard({ product, className }: ProductCardProps) {
           <div className="flex flex-wrap items-baseline justify-between gap-1.5 pt-1">
             <div className="flex items-baseline gap-1.5 sm:gap-2">
               <span className="font-sans text-sm font-bold text-espresso sm:text-base lg:text-[19px]">
-                {formatCurrency(product.price)}
+                {formatCurrency(price)}
               </span>
               {hasDiscount && (
                 <span className="font-sans text-[11px] text-muted-taupe line-through sm:text-xs">
@@ -145,6 +150,7 @@ export function ProductCard({ product, className }: ProductCardProps) {
             aria-label={`Add ${product.name} to cart`}
             className="flex h-10 w-full items-center justify-center gap-1.5 rounded-[10px] bg-royal-burgundy font-sans text-xs font-semibold text-white shadow-xs transition hover:bg-deep-wine active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-royal-burgundy focus-visible:ring-offset-2 sm:h-11 sm:gap-2 sm:text-sm lg:h-12"
             onClick={handleAddToCart}
+            disabled={!canAdd}
             type="button"
           >
             <ShoppingBag className="h-3.5 w-3.5 sm:h-4 sm:w-4" aria-hidden="true" />

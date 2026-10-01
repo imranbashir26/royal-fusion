@@ -57,5 +57,5 @@ test('Checkout does not re-enable disabled COD or Bank Transfer methods', () => 
   const checkout = readFileSync(path.join(root, 'src/pages/CheckoutPage.tsx'), 'utf8')
   assert.match(checkout, /const activePaymentMethods = configuredPaymentMethods/)
   assert.doesNotMatch(checkout, /configuredPaymentMethods\.length \? configuredPaymentMethods : paymentMethods/)
-  assert.match(checkout, /disabled=\{isSubmitting \|\| activePaymentMethods\.length === 0\}/)
+  assert.match(checkout, /disabled=\{checkoutBlocked \|\| isSubmitting \|\| activePaymentMethods\.length === 0\}/)
 })

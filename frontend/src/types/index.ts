@@ -22,6 +22,20 @@ export interface SizeOption {
   price: number
 }
 
+export interface ProductVariant {
+  id: string
+  productId: string
+  optionName: string
+  optionValue: string
+  sku: string
+  regularPrice: number
+  salePrice: number | null
+  stockQuantity: number
+  active: boolean
+  available: boolean
+  displayOrder: number
+}
+
 export interface Product {
   id: string
   slug: string
@@ -44,6 +58,10 @@ export interface Product {
   sillage: string
   occasion: string[]
   sizeOptions: SizeOption[]
+  /** Undefined for legacy display-only catalogs. Never synthesize variant UUIDs. */
+  variants?: ProductVariant[]
+  /** Only a complete identity snapshot can prove uniqueness of a legacy label. */
+  variantIdentityScope?: 'complete' | 'public'
   stock: number
   isBestSeller: boolean
   isFeatured: boolean
@@ -127,13 +145,21 @@ export interface Faq {
 }
 
 export interface CartItem {
+  identity?: 'legacy' | 'canonical' | 'corrupt'
   lineId: string
   productId: string
+  /** Null for unresolved legacy or corrupted canonical identities. */
+  variantId: string | null
   size: string
   quantity: number
 }
 
-export type OrderItem = Omit<CartItem, 'lineId'>
+/** Legacy HTTP contract, independent of canonical cart identity. */
+export interface OrderItem {
+  productId: string
+  size: string
+  quantity: number
+}
 
 export interface OrderPayload {
   items: OrderItem[]

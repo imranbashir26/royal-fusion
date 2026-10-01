@@ -1,4 +1,4 @@
-import type { BlogPost, Category, Collection, Product, Review } from '../types'
+import type { BlogPost, Category, Collection, Product, ProductVariant, Review } from '../types'
 import type { Banner, StorefrontData, Testimonial } from '../types/admin'
 
 export interface SupabaseProductRow {
@@ -35,6 +35,30 @@ export interface SupabaseProductRow {
   card_image_url?: string
   card_hover_image_url?: string
   card_background_color?: string
+}
+
+export interface SupabaseVariantRow {
+  id: string
+  product_id: string
+  option_name: string
+  option_value: string
+  sku: string
+  regular_price: number | string
+  sale_price: number | string | null
+  stock_quantity: number
+  active: boolean
+  available: boolean
+  display_order: number
+}
+
+export function mapProductVariant(row: SupabaseVariantRow): ProductVariant {
+  return {
+    id: row.id, productId: row.product_id, optionName: row.option_name,
+    optionValue: row.option_value, sku: row.sku, regularPrice: Number(row.regular_price),
+    salePrice: row.sale_price === null ? null : Number(row.sale_price),
+    stockQuantity: Number(row.stock_quantity), active: row.active, available: row.available,
+    displayOrder: Number(row.display_order),
+  }
 }
 
 export interface SupabaseCategoryRow {
@@ -184,9 +208,7 @@ export function mapProduct(row: SupabaseProductRow): Product {
     longevity: row.longevity || '',
     sillage: row.sillage || '',
     occasion: row.occasion ?? [],
-    sizeOptions: row.size_options?.length
-      ? row.size_options
-      : [{ label: '50ml', value: '50ml', price: Number(row.price) }],
+    sizeOptions: row.size_options ?? [],
     stock: Number(row.stock_quantity ?? 0),
     isBestSeller: Boolean(row.is_best_seller),
     isFeatured: Boolean(row.is_featured),

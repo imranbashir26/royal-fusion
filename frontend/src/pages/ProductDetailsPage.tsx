@@ -1,6 +1,6 @@
 import { Heart, RotateCcw, ShieldCheck, ShoppingBag, Truck, Zap } from 'lucide-react'
 import type { ReactElement } from 'react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Button } from '../components/common/Button'
 import { EmptyState } from '../components/common/EmptyState'
@@ -11,6 +11,7 @@ import { ProductBottle } from '../components/products/ProductBottle'
 import { ProductGrid } from '../components/products/ProductGrid'
 import { ProductReviewForm } from '../components/products/ProductReviewForm'
 import { collectionNamesForProduct } from '../services/productionMappers'
+import { defaultVariant, isVariantEligible, selectedProductVariant, variantPrice } from '../services/productVariants'
 import { useCartStore } from '../store/cartStore'
 import { useWishlistStore } from '../store/wishlistStore'
 import { useStorefront } from '../storefront/StorefrontProvider'
@@ -19,7 +20,7 @@ import { cn } from '../utils/cn'
 import { formatCurrency } from '../utils/format'
 
 export function ProductDetailsPage() {
-  const { products, reviews, collections = [] } = useStorefront()
+  const { products, reviews, collections = [], isLoading, catalogError } = useStorefront()
   const { slug } = useParams()
   const navigate = useNavigate()
   const product = products.find((item) => item.slug === slug)
@@ -28,11 +29,37 @@ export function ProductDetailsPage() {
   const isWishlisted = useWishlistStore((state) => (product ? state.has(product.id) : false))
 
   const [selectedTone, setSelectedTone] = useState(product?.gallery[0] ?? product?.image ?? '')
-  const [selectedSize, setSelectedSize] = useState(product?.sizeOptions[0]?.value ?? '')
+  const [selectedVariantId, setSelectedVariantId] = useState('')
   const [quantity, setQuantity] = useState(1)
+  const [cartMessage, setCartMessage] = useState('')
+  const previousIdentity = useRef('')
+  const cartItems = useCartStore((state) => state.items)
 
-  const selectedSizeOption = product?.sizeOptions.find((option) => option.value === selectedSize)
-  const price = selectedSizeOption?.price ?? product?.price ?? 0
+  const selectedVariant = selectedProductVariant(product, selectedVariantId)
+  const price = selectedVariant ? variantPrice(selectedVariant) : product?.price ?? 0
+  const alreadyInCart = cartItems.filter((item) => item.variantId === selectedVariant?.id)
+    .reduce((total, item) => total + item.quantity, 0)
+  const maxQuantity = Math.max(0, Math.min(99, (selectedVariant?.stockQuantity ?? 0) - alreadyInCart))
+  const canAdd = isVariantEligible(selectedVariant, quantity) && quantity <= maxQuantity
+
+  useEffect(() => {
+    const identity = JSON.stringify([slug, product?.id])
+    const changed = previousIdentity.current !== identity
+    previousIdentity.current = identity
+    setSelectedVariantId((current) => changed
+      ? product ? defaultVariant(product)?.id ?? '' : ''
+      : selectedProductVariant(product, current)?.id ?? '')
+    setSelectedTone((current) => !changed && product && [product.image, ...product.gallery].includes(current)
+      ? current : product?.gallery[0] ?? product?.image ?? '')
+    if (changed) {
+      setQuantity(1)
+      setCartMessage('')
+    }
+  }, [product, slug])
+
+  useEffect(() => {
+    setQuantity((current) => Math.max(1, Math.min(current, maxQuantity)))
+  }, [selectedVariant?.id, maxQuantity])
   const collectionNames = product ? collectionNamesForProduct(collections, product.id) : []
   const productReviews = product ? reviews.filter((review) => review.productId === product.id) : []
 
@@ -43,21 +70,31 @@ export function ProductDetailsPage() {
       .slice(0, 4)
   }, [product, products])
 
+  if (isLoading && !product) {
+    return <section className="container-lux py-16" role="status">Loading fragrance...</section>
+  }
+
   if (!product) {
     return (
       <section className="container-lux py-16">
         <EmptyState
-          description="The fragrance you are looking for is not currently available."
+          description={catalogError ?? 'The fragrance you are looking for is not currently available.'}
           title="Fragrance not found"
         />
       </section>
     )
   }
 
-  const handleAddToCart = () => addItem(product, selectedSize, quantity)
+  const handleAddToCart = () => {
+    if (!selectedVariant || !canAdd || !addItem(product, selectedVariant.id, quantity)) {
+      setCartMessage('This size or quantity is unavailable. Please check your cart.')
+      return false
+    }
+    setCartMessage('')
+    return true
+  }
   const handleBuyNow = () => {
-    addItem(product, selectedSize, quantity)
-    navigate('/checkout')
+    if (handleAddToCart()) navigate('/checkout')
   }
 
   return (
@@ -102,15 +139,15 @@ export function ProductDetailsPage() {
               {product.badge}
             </span>
             <span className="rounded-full bg-burgundy/8 px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] text-burgundy">
-              {product.stock} in stock
+              {selectedVariant?.stockQuantity ?? 0} in stock
             </span>
           </div>
 
           <div className="mt-7 flex items-end gap-3">
             <p className="text-3xl font-extrabold text-brownroyal">{formatCurrency(price)}</p>
-            {product.oldPrice && (
+            {selectedVariant && selectedVariant.regularPrice > price && (
               <p className="pb-1 text-base text-brownroyal/45 line-through">
-                {formatCurrency(product.oldPrice)}
+                {formatCurrency(selectedVariant.regularPrice)}
               </p>
             )}
           </div>
@@ -118,31 +155,33 @@ export function ProductDetailsPage() {
           <div className="mt-8">
             <h2 className="mb-3 text-sm font-bold uppercase tracking-[0.2em] text-oldgold">Select Size</h2>
             <div className="flex flex-wrap gap-3">
-              {product.sizeOptions.map((option) => (
+              {(product.variants ?? []).map((option) => (
                 <button
                   className={cn(
                     'rounded-full border px-5 py-3 text-sm font-bold transition',
-                    selectedSize === option.value
+                    selectedVariant?.id === option.id
                       ? 'border-burgundy bg-burgundy text-ivory'
                       : 'border-champagne/35 bg-ivory text-brownroyal hover:border-oldgold',
                   )}
-                  key={option.value}
-                  onClick={() => setSelectedSize(option.value)}
+                  key={option.id}
+                  disabled={!isVariantEligible(option)}
+                  onClick={() => { setSelectedVariantId(option.id); setQuantity(1); setCartMessage('') }}
                   type="button"
                 >
-                  {option.label}
+                  {option.optionValue}
                 </button>
               ))}
             </div>
+            {!selectedVariant && <p className="mt-3 text-sm text-burgundy" role="status">This fragrance is currently unavailable.</p>}
           </div>
 
           <div className="mt-8 flex flex-wrap items-center gap-4">
-            <QuantityStepper onChange={setQuantity} value={quantity} />
-            <Button onClick={handleAddToCart} size="lg">
+            <QuantityStepper onChange={setQuantity} value={quantity} max={maxQuantity} disabled={maxQuantity < 1} />
+            <Button disabled={!canAdd} onClick={handleAddToCart} size="lg">
               <ShoppingBag className="h-5 w-5" aria-hidden="true" />
               Add to Cart
             </Button>
-            <Button onClick={handleBuyNow} size="lg" variant="secondary">
+            <Button disabled={!canAdd} onClick={handleBuyNow} size="lg" variant="secondary">
               <Zap className="h-5 w-5" aria-hidden="true" />
               Buy Now
             </Button>
@@ -155,6 +194,8 @@ export function ProductDetailsPage() {
               Wishlist
             </button>
           </div>
+
+          {cartMessage && <p className="mt-3 text-sm text-burgundy" role="alert">{cartMessage}</p>}
 
           <div className="mt-10 grid gap-4 md:grid-cols-3">
             <InfoCard icon={<Truck />} title="Shipping" text="Bulk orders qualify for free shipping." />

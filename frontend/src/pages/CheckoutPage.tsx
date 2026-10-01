@@ -1,3 +1,4 @@
+import { resolveCartItem, canSubmitLegacyCart, CHECKOUT_UNAVAILABLE } from '../services/productVariants'
 import { CheckCircle2, Landmark, PackageCheck, Wallet } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
@@ -13,7 +14,7 @@ import { cn } from '../utils/cn'
 import { formatCurrency } from '../utils/format'
 
 export function CheckoutPage() {
-  const { products, payments, shipping } = useStorefront()
+  const { products, payments, shipping, isLoading } = useStorefront()
   const { items, selectedLineIds, removeItems } = useCartStore()
   const selectedLineIdSet = new Set(selectedLineIds)
   const [paymentMethod, setPaymentMethod] = useState<OrderPayload['paymentMethod']>('Cash on Delivery')
@@ -36,18 +37,15 @@ export function CheckoutPage() {
 
   const selectedCartItems = items.filter((item) => selectedLineIdSet.has(item.lineId))
   const enrichedItems = selectedCartItems
-    .map((item) => {
-      const product = products.find((candidate) => candidate.id === item.productId)
-      const size = product?.sizeOptions.find((option) => option.value === item.size)
-      return product ? { ...item, product, unitPrice: size?.price ?? product.price } : null
-    })
-    .filter(Boolean)
+    .map((item) => resolveCartItem(item, products))
+
+  const checkoutBlocked = !canSubmitLegacyCart(selectedCartItems)
 
   const subtotal = enrichedItems.reduce(
-    (total, item) => total + item!.unitPrice * item!.quantity,
+    (total, item) => total + (item.eligible ? item.unitPrice * item.quantity : 0),
     0,
   )
-  const selectedQuantity = enrichedItems.reduce((total, item) => total + item!.quantity, 0)
+  const selectedQuantity = enrichedItems.reduce((total, item) => total + item.quantity, 0)
   const selectedItemsSignature = selectedCartItems
     .map((item) => `${item.lineId}:${item.quantity}`)
     .join('|')
@@ -80,13 +78,13 @@ export function CheckoutPage() {
   }, [selectedItemsSignature, shipping.defaultShippingFee])
 
   const validateCoupon = async () => {
-    if (!couponCode.trim()) return
+    if (checkoutBlocked || !couponCode.trim()) return
     try {
       const response = await orderService.validateCoupon({
         code: couponCode,
         subtotal,
-        productIds: enrichedItems.map((item) => item!.product.id),
-        categories: enrichedItems.map((item) => item!.product.category),
+        productIds: enrichedItems.map((item) => item.product.id),
+        categories: enrichedItems.map((item) => item.product.category),
         city: form.city,
         province: form.province,
       })
@@ -101,6 +99,10 @@ export function CheckoutPage() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (checkoutBlocked) {
+      setOrderError(CHECKOUT_UNAVAILABLE)
+      return
+    }
     if (isSubmitting || enrichedItems.length === 0) return
     if (!activePaymentMethods.some((method) => method.label === paymentMethod)) {
       setOrderError('No payment method is currently available. Please try again later.')
@@ -109,14 +111,14 @@ export function CheckoutPage() {
 
     setOrderError('')
     setIsSubmitting(true)
-    const orderedLineIds = enrichedItems.map((item) => item!.lineId)
+    const orderedLineIds = enrichedItems.map((item) => item.lineId)
 
     try {
       const response = await orderService.createOrder({
         items: enrichedItems.map((item) => ({
-          productId: item!.productId,
-          size: item!.size,
-          quantity: item!.quantity,
+          productId: item.productId,
+          size: item.size,
+          quantity: item.quantity,
         })),
         contact: {
           name: form.name,
@@ -164,6 +166,8 @@ export function CheckoutPage() {
       </>
     )
   }
+
+  if (isLoading) return <section className="container-lux py-16" role="status">Loading checkout...</section>
 
   if (enrichedItems.length === 0) {
     return (
@@ -231,12 +235,14 @@ export function CheckoutPage() {
                 placeholder="Enter coupon code"
                 value={couponCode}
               />
-              <Button onClick={() => void validateCoupon()} variant="outline">
+              <Button disabled={checkoutBlocked} onClick={() => void validateCoupon()} variant="outline">
                 Apply Coupon
               </Button>
             </div>
             {couponMessage && <p className="text-sm font-semibold text-oldgold">{couponMessage}</p>}
           </CheckoutPanel>
+
+          {checkoutBlocked && <p className="rounded-lg border border-champagne/30 bg-marble px-4 py-3 text-sm font-semibold text-burgundy" role="status">{CHECKOUT_UNAVAILABLE}</p>}
 
           {orderError && (
             <p
@@ -247,7 +253,7 @@ export function CheckoutPage() {
             </p>
           )}
 
-          <Button disabled={isSubmitting || activePaymentMethods.length === 0} size="lg" type="submit">
+          <Button disabled={checkoutBlocked || isSubmitting || activePaymentMethods.length === 0} size="lg" type="submit">
             <PackageCheck className="h-5 w-5" aria-hidden="true" />
             {isSubmitting ? 'Placing Order...' : 'Place Order'}
           </Button>
@@ -260,15 +266,18 @@ export function CheckoutPage() {
           </p>
           <div className="mt-5 space-y-4">
             {enrichedItems.map((item) => (
-              <div className="flex justify-between gap-4 border-b border-champagne/20 pb-3" key={`${item!.productId}-${item!.size}`}>
+              <div className="flex justify-between gap-4 border-b border-champagne/20 pb-3" key={item.lineId}>
                 <div>
-                  <p className="font-semibold text-brownroyal">{item!.product.name}</p>
+                  <p className="font-semibold text-brownroyal">{item.product.name}</p>
                   <p className="text-sm text-brownroyal/55">
-                    {item!.size} x {item!.quantity}
+                    {item.size} x {item.quantity}
+                    {item.message && <span className="block text-burgundy">{item.message}</span>}
                   </p>
+                  <button type="button" className="mt-2 text-sm text-burgundy underline"
+                    aria-label={`Remove ${item.product.name}`} onClick={() => removeItems([item.lineId])}>Remove</button>
                 </div>
                 <p className="font-bold text-brownroyal">
-                  {formatCurrency(item!.unitPrice * item!.quantity)}
+                  {item.lineAmount === null ? 'Unavailable' : formatCurrency(item.lineAmount)}
                 </p>
               </div>
             ))}

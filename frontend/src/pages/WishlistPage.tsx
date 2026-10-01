@@ -8,6 +8,7 @@ import { ProductBottle } from '../components/products/ProductBottle'
 import { useCartStore } from '../store/cartStore'
 import { useWishlistStore } from '../store/wishlistStore'
 import { useStorefront } from '../storefront/StorefrontProvider'
+import { defaultVariant, variantPrice } from '../services/productVariants'
 import { buttonClasses } from '../utils/buttonClasses'
 import { formatCurrency } from '../utils/format'
 
@@ -16,6 +17,7 @@ export function WishlistPage() {
   const productIds = useWishlistStore((state) => state.productIds)
   const remove = useWishlistStore((state) => state.remove)
   const addItem = useCartStore((state) => state.addItem)
+  const cartItems = useCartStore((state) => state.items)
   const wishlistProducts = products.filter((product) => productIds.includes(product.id))
 
   if (wishlistProducts.length === 0) {
@@ -46,7 +48,11 @@ export function WishlistPage() {
         title="Saved Fragrances"
       />
       <section className="container-lux grid gap-5 py-12 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {wishlistProducts.map((product) => (
+        {wishlistProducts.map((product) => {
+          const variant = defaultVariant(product)
+          const inCart = cartItems.filter((item) => item.variantId === variant?.id).reduce((total, item) => total + item.quantity, 0)
+          const canAdd = Boolean(variant && inCart < Math.min(99, variant.stockQuantity))
+          return (
           <article className="rounded-lg border border-champagne/25 bg-ivory/88 shadow-sm" key={product.id}>
             <Link className="block bg-gradient-to-br from-cream to-marble p-5" to={`/product/${product.slug}`}>
               <ProductBottle compact name={product.name} tone={product.image} />
@@ -59,9 +65,11 @@ export function WishlistPage() {
               <div className="mt-3">
                 <RatingStars count={product.reviewCount} rating={product.rating} />
               </div>
-              <p className="mt-3 text-lg font-extrabold text-brownroyal">{formatCurrency(product.price)}</p>
+              <p className="mt-3 text-lg font-extrabold text-brownroyal">{formatCurrency(variant ? variantPrice(variant) : product.price)}</p>
               <div className="mt-5 grid grid-cols-2 gap-2">
-                <Button onClick={() => addItem(product, product.sizeOptions[0]?.value)} variant="outline">
+                <Button disabled={!canAdd} onClick={() => {
+                  if (variant && canAdd) addItem(product, variant.id)
+                }} variant="outline">
                   <ShoppingBag className="h-4 w-4" aria-hidden="true" />
                   Move
                 </Button>
@@ -76,7 +84,8 @@ export function WishlistPage() {
               </div>
             </div>
           </article>
-        ))}
+          )
+        })}
       </section>
       <div className="sr-only">
         <Heart aria-hidden="true" />

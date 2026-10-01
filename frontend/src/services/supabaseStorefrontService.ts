@@ -11,6 +11,7 @@ import {
 } from './productionMappers'
 import { mapPublicSettingsRows, type PublicSettingsRow } from './publicSettingsMapper'
 import { getSupabaseClient } from './supabaseClient'
+import { loadPublicVariants } from './storefrontVariants'
 
 export const supabaseStorefrontService = {
   async getProducts(): Promise<Product[] | null> {
@@ -25,7 +26,16 @@ export const supabaseStorefrontService = {
       .order('created_at', { ascending: false })
 
     if (error) throw error
-    return (data as SupabaseProductRow[]).map(mapProduct)
+    const products = (data as SupabaseProductRow[]).map(mapProduct)
+    const variants = await loadPublicVariants(client, products.map((product) => product.id))
+    const byProduct = new Map<string, typeof variants>()
+    for (const variant of variants) {
+      const list = byProduct.get(variant.productId) ?? []
+      list.push(variant)
+      byProduct.set(variant.productId, list)
+    }
+    return products.map((product) => ({ ...product, variants: byProduct.get(product.id) ?? [],
+      variantIdentityScope: 'public' as const }))
   },
 
   async getCategories(): Promise<Category[] | null> {

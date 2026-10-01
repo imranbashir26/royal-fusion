@@ -13,6 +13,7 @@ import { withApprovedReviewRatings } from './reviewAggregation'
 import { sanityContentService } from './sanityContentService'
 import { supabaseStorefrontService } from './supabaseStorefrontService'
 import { isSupabaseConfigured } from './supabaseClient'
+import type { CatalogLoad, StorefrontLoad } from './catalogRefresh'
 
 export const fallbackStorefrontData: StorefrontData = {
   products: withApprovedReviewRatings(catalogFallback(import.meta.env.PROD, products), []),
@@ -70,8 +71,16 @@ export const fallbackStorefrontData: StorefrontData = {
 }
 
 export const storefrontService = {
-  async getStorefrontData() {
+  async getStorefrontData(): Promise<StorefrontLoad> {
     const productionConfigured = isSupabaseConfigured()
+    let catalogLoad: CatalogLoad = { status: 'failed', error: 'Canonical catalog is not configured.' }
+    const canonicalPromise = supabaseStorefrontService.getStorefrontData().then((data) => {
+      if (data) catalogLoad = { status: 'success' }
+      return data
+    }).catch(() => {
+      catalogLoad = { status: 'failed', error: 'Unable to load the product catalog. Please try again.' }
+      return null
+    })
     const productionSettings = productionConfigured
       ? await supabaseStorefrontService.getSettings().catch(() => {
           console.warn('Public Supabase settings unavailable; using safe public defaults.')
@@ -87,10 +96,10 @@ export const storefrontService = {
 
     try {
       const [supabaseData, sanityHomepage, sanityBlogs, sanityBanners, finderPreferences, publicReviews] = await Promise.all([
-        supabaseStorefrontService.getStorefrontData(),
-        sanityContentService.getHomepage(),
+        canonicalPromise,
+        sanityContentService.getHomepage().catch(() => null),
         sanityBlogsPromise,
-        sanityContentService.getBanners(),
+        sanityContentService.getBanners().catch(() => null),
         finderPreferencesPromise,
         reviewsPromise,
       ])
@@ -106,7 +115,7 @@ export const storefrontService = {
           blogs: sanityBlogs ?? [],
           ...(sanityBanners ? { banners: sanityBanners } : {}),
         })
-        return { ...merged, products: withApprovedReviewRatings(merged.products, publicReviews) }
+        return { ...merged, catalogLoad, products: withApprovedReviewRatings(merged.products, publicReviews) }
       }
     } catch (error) {
       console.warn('Production storefront services unavailable. Falling back to local API.', error)
@@ -134,7 +143,7 @@ export const storefrontService = {
         homepage: { ...prototype.homepage, ...(productionSettings?.homepage ?? {}) },
         blogs: sanityBlogs ?? [],
       })
-      return { ...merged, products: withApprovedReviewRatings(merged.products, publicReviews) }
+      return { ...merged, catalogLoad, products: withApprovedReviewRatings(merged.products, publicReviews) }
     } catch {
       console.warn('Prototype storefront unavailable; using bundled storefront data.')
       const merged = mergeStorefrontData(fallbackStorefrontData, {
@@ -145,7 +154,7 @@ export const storefrontService = {
         testimonials: [],
         blogs: sanityBlogs ?? [],
       })
-      return { ...merged, products: withApprovedReviewRatings(merged.products, publicReviews) }
+      return { ...merged, catalogLoad, products: withApprovedReviewRatings(merged.products, publicReviews) }
     }
   },
 }
