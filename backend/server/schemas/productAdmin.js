@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { catalogVariantsSchema } from './catalogVariants.js'
 
 const text = (max = 500) => z.string().trim().max(max)
 const requiredText = (max = 180) => text(max).min(1)
@@ -58,6 +59,7 @@ const fields = z.object({
   tags: notes,
   sizeOptions: optionList,
   variations: variationList,
+  variants: catalogVariantsSchema,
   isFeatured: z.boolean(),
   isBestSeller: z.boolean(),
   isNewArrival: z.boolean(),
@@ -79,7 +81,7 @@ export const createProductSchema = fields.required({
   notes: true, bottleSize: true, concentration: true, longevity: true,
   sillage: true, occasion: true, inspiredBy: true, gallery: true,
   imageAlt: true, badge: true, tags: true, sizeOptions: true,
-  variations: true, isFeatured: true, isBestSeller: true, isNewArrival: true,
+  variations: true, variants: true, isFeatured: true, isBestSeller: true, isNewArrival: true,
   isPremium: true, isAttar: true, status: true, seoTitle: true,
   seoDescription: true, cardImage: true, cardHoverImage: true,
   cardBackgroundColor: true,

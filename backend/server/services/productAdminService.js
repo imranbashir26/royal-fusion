@@ -1,4 +1,5 @@
 import { toProductColumns, toProductDto } from '../mappers/productAdminMapper.js'
+import { toCatalogVariants } from '../schemas/catalogVariants.js'
 
 export class ProductApiError extends Error {
   constructor(status, code, message) {
@@ -42,7 +43,10 @@ export class ProductAdminService {
     const { data, error } = await this.requireClient().from('products').select('*').eq('id', id).maybeSingle()
     if (error) throw databaseError(error)
     if (!data) throw notFound()
-    return toProductDto(data)
+    const { data: variants, error: variantError } = await this.requireClient().from('product_variants')
+      .select('*').eq('product_id', id).order('display_order', { ascending: true }).order('id', { ascending: true })
+    if (variantError) throw databaseError(variantError)
+    return catalogDto({ product: data, variants: variants ?? [] })
   }
 
   async create(input, actor) {
@@ -52,19 +56,20 @@ export class ProductAdminService {
       const columns = toProductColumns(input)
       operation = 'category.resolve'
       await this.assignCategory(columns, input.categoryId, null, actor)
-      if (input.stockQuantity !== undefined) columns.stock_status = stockStatus(input.stockQuantity)
       if (input.status === 'Published') columns.published_at = new Date().toISOString()
-      operation = 'products.insert'
-      const { data, error } = await client.from('products').insert(columns).select('*').single()
+      operation = 'catalog.save'
+      const { data, error } = await client.rpc('save_catalog_product', {
+        p_product_id: null, p_patch: columns, p_variants: normalizedVariants(input),
+      })
       if (error) {
         const mapped = databaseError(error)
         if (mapped.status >= 500) this.logCreateDatabaseFailure(operation, error, actor)
         throw mapped
       }
       operation = 'product.audit'
-      await this.audit('product.create', data.id, actor)
+      await this.audit('product.create', data.product.id, actor)
       operation = 'product.response'
-      return toProductDto(data)
+      return catalogDto(data)
     } catch (error) {
       if (!(error instanceof ProductApiError)) {
         this.logger.error?.({
@@ -87,7 +92,6 @@ export class ProductAdminService {
     } else if (Object.hasOwn(input, 'isAttar')) {
       columns.is_attar = existing.category ? isAttarCategory(existing.category) : Boolean(input.isAttar)
     }
-    if (input.stockQuantity !== undefined) columns.stock_status = stockStatus(input.stockQuantity)
     if (input.salePrice != null && input.salePrice !== 0 && input.salePrice >= (input.price ?? existing.price)) {
       throw new ProductApiError(400, 'INVALID_REQUEST', 'Sale price must be below price.')
     }
@@ -101,11 +105,13 @@ export class ProductAdminService {
     } else if (input.status === 'Archived') {
       columns.active = false
     }
-    const { data, error } = await client.from('products').update(columns).eq('id', id).select('*').maybeSingle()
+    const { data, error } = await client.rpc('save_catalog_product', {
+      p_product_id: id, p_patch: columns, p_variants: normalizedVariants(input),
+    })
     if (error) throw databaseError(error)
     if (!data) throw notFound()
     await this.audit(input.status === 'Archived' ? 'product.archive' : 'product.update', id, actor)
-    return toProductDto(data)
+    return catalogDto(data)
   }
 
   async archive(id, actor) {
@@ -174,12 +180,35 @@ function notFound() {
   return new ProductApiError(404, 'PRODUCT_NOT_FOUND', 'Product not found.')
 }
 
-function stockStatus(quantity) {
-  return quantity === 0 ? 'Out of Stock' : quantity <= 5 ? 'Low Stock' : 'In Stock'
+function normalizedVariants(input) {
+  try { return toCatalogVariants(input) } catch {
+    throw new ProductApiError(400, 'INVALID_REQUEST', 'Variant configuration is invalid.')
+  }
+}
+
+function catalogDto(data) {
+  return { ...toProductDto(data.product), variants: data.variants.map((row) => ({
+    id: row.id, optionName: row.option_name, optionValue: row.option_value,
+    sku: row.sku, regularPrice: Number(row.regular_price),
+    salePrice: row.sale_price == null ? null : Number(row.sale_price),
+    stockQuantity: row.stock_quantity, active: row.active, available: row.available,
+    displayOrder: row.display_order,
+  })) }
 }
 
 function databaseError(error) {
-  if (error.code === '23505') return new ProductApiError(409, 'PRODUCT_CONFLICT', 'Product slug or SKU already exists.')
+  if (error.code === 'P0002') return notFound()
+  if (error.code === '22023') {
+    const safeMessages = [
+      'Published products require a size or explicit variants.',
+      'Published products require an active variant.',
+      'Stock requires a size or explicit variants.',
+      'Multi-variant inventory requires explicit variants.',
+    ]
+    return new ProductApiError(400, 'INVALID_REQUEST', safeMessages.includes(error.message)
+      ? error.message : 'Catalog variant configuration is invalid.')
+  }
+  if (error.code === '23505') return new ProductApiError(409, 'PRODUCT_CONFLICT', 'A product slug, SKU, or variant option already exists.')
   if (error.code === '23503') return new ProductApiError(400, 'INVALID_CATEGORY', 'Category reference is invalid.')
   if (error.code === '23514' || error.code === '22P02') {
     return new ProductApiError(400, 'INVALID_REQUEST', 'Product data violates a database constraint.')

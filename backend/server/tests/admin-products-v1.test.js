@@ -11,6 +11,7 @@ import { getAuthCookieNames, getSessionCsrfToken } from '../auth/cookies.js'
 import { authErrorHandler, requestContext } from '../middleware/authSecurity.js'
 import { createAdminProductsV1Router } from '../routes/adminProductsV1.js'
 import { ProductAdminService, ProductApiError } from '../services/productAdminService.js'
+import { createCatalogDatabase, saveCatalog } from './support/catalogDatabase.js'
 
 const categoryId = randomUUID()
 const secondCategoryId = randomUUID()
@@ -22,21 +23,31 @@ const config = createAuthConfig({
 })
 const names = getAuthCookieNames(config)
 const servers = []
-after(async () => { await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve)))) })
+let catalogDatabase
+after(async () => {
+  await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))))
+  if (catalogDatabase) await catalogDatabase.close()
+})
 
 function product(overrides = {}) {
   return {
     name: 'Royal Oud', slug: 'royal-oud', sku: 'RF-001', price: 3500,
-    scentFamily: 'Oud', image: 'https://cdn.example.com/royal.webp',
+    scentFamily: 'Oud', image: 'https://cdn.example.com/royal.webp', bottleSize: '50 ml',
     categoryId, ...overrides,
   }
 }
 
 async function start() {
-  const db = { products: [], audits: [], categories: [
+  const db = { products: [], product_variants: [], audits: [], categories: [
     { id: categoryId, name: 'Attars', status: 'Published', active: true },
     { id: secondCategoryId, name: 'Gift Sets', status: 'Published', active: true },
   ] }
+  catalogDatabase ??= await createCatalogDatabase()
+  await catalogDatabase.exec('truncate public.categories cascade')
+  for (const category of db.categories) {
+    await catalogDatabase.query('insert into public.categories(id,name,slug,status,active) values($1,$2,$3,$4,$5)',
+      [category.id, category.name, category.id, category.status, category.active])
+  }
   const client = mockClient(db)
   const runtime = {
     config,
@@ -139,11 +150,41 @@ test('create validates schema, uniqueness, category, image and card fields; writ
   assert.equal((await request(api, '', { method: 'POST', actor: 'owner', body: product({ slug: 'other', sku: 'RF-001' }) })).status, 409)
 })
 
+test('protected API persists explicit variants and accepts variants-only edits with stable UUIDs', async () => {
+  const api = await start()
+  const created = await request(api, '', { method: 'POST', actor: 'owner', body: product({
+    status: 'Published', variants: [
+      { optionValue: '30ML', sku: 'RF-001-30', regularPrice: 2000, salePrice: 0, stockQuantity: 3 },
+      { optionValue: '50ml', sku: 'RF-001-50', regularPrice: 3500, stockQuantity: 4, displayOrder: 1 },
+    ],
+  }) })
+  assert.equal(created.status, 201)
+  assert.equal(created.body.data.stockQuantity, 7)
+  assert.equal(created.body.data.variants[0].optionValue, '30 ml')
+  assert.equal(created.body.data.variants[0].salePrice, null)
+  const id = created.body.data.id
+  const first = created.body.data.variants[0]
+  const updated = await request(api, `/${id}`, { method: 'PUT', actor: 'owner', body: {
+    variants: [{ ...first, regularPrice: 2100, stockQuantity: 1 }],
+  } })
+  assert.equal(updated.status, 200)
+  assert.equal(updated.body.data.stockQuantity, 5)
+  assert.equal(updated.body.data.variants.length, 2)
+  assert.equal(updated.body.data.variants[0].id, first.id)
+  assert.equal(updated.body.data.variants[0].regularPrice, 2100)
+  const fetched = await request(api, `/${id}`, { actor: 'owner' })
+  assert.deepEqual(fetched.body.data.variants, updated.body.data.variants)
+  const rejected = await request(api, `/${id}`, { method: 'PUT', actor: 'owner', body: { stockQuantity: 99 } })
+  assert.equal(rejected.status, 400)
+  assert.equal(api.db.products[0].stock_quantity, 5)
+  assert.equal(api.db.audits.at(-1).action, 'product.update')
+})
+
 test('create failures identify the database stage without logging product data or provider messages', async () => {
   const actor = { userId: 'owner', requestId: 'req_product_diagnostic' }
   const cases = [
     { stage: 'category.resolve', resource: 'categories', code: '42501', constraint: 'unsafe;constraint' },
-    { stage: 'products.insert', resource: 'products', code: '42703', constraint: 'products_example_check' },
+    { stage: 'catalog.save', resource: 'products', code: '42703', constraint: 'products_example_check' },
   ]
   for (const { stage, resource, code, constraint } of cases) {
     const logs = []
@@ -168,12 +209,12 @@ test('create failures identify the database stage without logging product data o
 
   const logs = []
   const transportError = Object.assign(new Error('private transport details'), { code: 'ECONNRESET' })
-  const service = new ProductAdminService(failingCreateClient('products.insert', transportError, true), {
+  const service = new ProductAdminService(failingCreateClient('catalog.save', transportError, true), {
     error: (entry) => logs.push(entry),
   })
   await assert.rejects(service.create(product(), actor), (error) => error === transportError)
   assert.deepEqual(logs, [{
-    event: 'product.create.failed', operation: 'products.insert', code: 'ECONNRESET',
+    event: 'product.create.failed', operation: 'catalog.save', code: 'ECONNRESET',
     requestId: actor.requestId,
   }])
   assert.doesNotMatch(JSON.stringify(logs), /private/)
@@ -269,11 +310,26 @@ test('card migration follows prior migrations and browser write restrictions rem
 })
 
 function mockClient(db) {
-  return { from(table) { return new Query(db, table) } }
+  return {
+    from(table) { return new Query(db, table) },
+    async rpc(name, args) {
+      assert.equal(name, 'save_catalog_product')
+      try {
+        const data = await saveCatalog(catalogDatabase, args.p_product_id, args.p_patch, args.p_variants)
+        db.products = (await catalogDatabase.query('select * from public.products')).rows
+        db.product_variants = (await catalogDatabase.query('select * from public.product_variants')).rows
+        return { data, error: null }
+      } catch (error) { return { data: null, error } }
+    },
+  }
 }
 
 function failingCreateClient(stage, failure, throws = false) {
   return {
+    async rpc() {
+      if (throws) throw failure
+      return { data: null, error: failure }
+    },
     from(table) {
       if (table === 'categories') {
         return {
