@@ -8,6 +8,14 @@ import { publicPrototypeSettings } from '../utils/publicStorefrontSettings.js'
 
 export const publicRouter = Router()
 
+// Historical JSON checkout is isolated to non-production development/tests.
+publicRouter.use(['/orders', '/coupons/validate'], (req, res, next) => {
+  if (process.env.NODE_ENV === 'production' && req.method === 'POST') {
+    return res.status(503).json({ error: { code: 'CHECKOUT_UNAVAILABLE', message: 'Ordering is temporarily unavailable. Your cart has been saved.', requestId: req.requestId } })
+  }
+  next()
+})
+
 publicRouter.get('/storefront', async (req, res) => {
   let operation = 'json.readDb'
   try {

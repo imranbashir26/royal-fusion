@@ -55,7 +55,7 @@ test('Admin Settings uses cookie/CSRF API and saves only dirty sections without 
 
 test('Checkout does not re-enable disabled COD or Bank Transfer methods', () => {
   const checkout = readFileSync(path.join(root, 'src/pages/CheckoutPage.tsx'), 'utf8')
-  assert.match(checkout, /const activePaymentMethods = configuredPaymentMethods/)
+  assert.match(checkout, /const activePaymentMethods = configuredPaymentMethods\.filter/)
   assert.doesNotMatch(checkout, /configuredPaymentMethods\.length \? configuredPaymentMethods : paymentMethods/)
   assert.match(checkout, /disabled=\{checkoutBlocked \|\| isSubmitting \|\| activePaymentMethods\.length === 0\}/)
 })

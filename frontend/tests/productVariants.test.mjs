@@ -11,8 +11,9 @@ import { applyCatalogRefresh } from '../src/services/catalogRefresh.ts'
 const variant = mapProductVariant(variantRow)
 const product = { ...mapProduct(productRow), variants: [variant], variantIdentityScope: 'complete' }
 function memoryStorage(initial) {
-  let value = initial ? JSON.stringify(initial) : null
-  return { getItem: () => value, setItem: (_key, next) => { value = next }, removeItem: () => { value = null } }
+  const values = new Map(initial ? [['royal-fusion-cart', JSON.stringify(initial)]] : [])
+  return { getItem: (key = 'royal-fusion-cart') => values.get(key) ?? null,
+    setItem: (key, next) => { values.set(key, next) }, removeItem: (key = 'royal-fusion-cart') => { values.delete(key) } }
 }
 
 test('Baraan exposes its exact canonical UUID, option, PKR 2900 and stock 12 without a synthetic size', () => {

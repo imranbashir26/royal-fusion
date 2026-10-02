@@ -100,8 +100,9 @@ test('current checkout submits selected lines only and has no false-success fall
 
   assert.match(checkout, /items\.filter\(\(item\) => selectedLineIdSet\.has\(item\.lineId\)\)/)
   assert.match(checkout, /items: enrichedItems\.map/)
-  assert.match(checkout, /removeItems\(orderedLineIds\)/)
-  assert.match(service, /throw new Error\('The order API returned an invalid confirmation\.'/)
+  assert.match(checkout, /await complete\(result\)/)
+  assert.match(checkout, /capturePurchase\(enrichedItems\.map/)
+  assert.match(service, /checkoutClient/)
   assert.doesNotMatch(service, /mock|fallback/i)
   assert.doesNotMatch(orderRoute, /supabase|requireAdmin|authorization|customer_id/i)
 })

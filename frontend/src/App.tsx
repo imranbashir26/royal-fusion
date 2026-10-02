@@ -17,6 +17,7 @@ const BlogDetailsPage = lazy(() => import('./pages/BlogDetailsPage').then((modul
 const BlogsPage = lazy(() => import('./pages/BlogsPage').then((module) => ({ default: module.BlogsPage })))
 const CartPage = lazy(() => import('./pages/CartPage').then((module) => ({ default: module.CartPage })))
 const CheckoutPage = lazy(() => import('./pages/CheckoutPage').then((module) => ({ default: module.CheckoutPage })))
+const CheckoutSuccessPage = lazy(() => import('./pages/CheckoutSuccessPage').then((module) => ({ default: module.CheckoutSuccessPage })))
 const CollectionsPage = lazy(() => import('./pages/CollectionsPage').then((module) => ({ default: module.CollectionsPage })))
 const ContactPage = lazy(() => import('./pages/ContactPage').then((module) => ({ default: module.ContactPage })))
 const HomePage = lazy(() => import('./pages/HomePage').then((module) => ({ default: module.HomePage })))
@@ -125,6 +126,7 @@ function AnimatedRoutes() {
         <Route path="/contact" element={publicPage(ContactPage)} />
         <Route path="/cart" element={publicPage(CartPage)} />
         <Route path="/checkout" element={publicPage(CheckoutPage)} />
+        <Route path="/checkout/success" element={publicPage(CheckoutSuccessPage)} />
         <Route path="/wishlist" element={publicPage(WishlistPage)} />
         <Route path="*" element={publicPage(NotFoundPage)} />
       </Routes>

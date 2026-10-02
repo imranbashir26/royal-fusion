@@ -23,6 +23,57 @@ For the concurrency test, session B must wait for session A's variant lock. With
 
 Never run these tests against production. All identities and contact values are fictional `.invalid` fixtures.
 
+## Phase 3 checkout
+
+`npm run test:checkout --workspace backend` executes the actual migration 010 and checkout
+RPC in disposable, in-memory PGlite. It checks snapshots, stock, payment, inventory,
+rollback, permissions and quote parity. **It does not prove concurrency.**
+
+For real multi-connection verification, create a new empty local PostgreSQL database
+whose name ends in `_phase3_disposable`, then run from the repository root:
+
+```sh
+node backend/server/scripts/check-checkout-concurrency.mjs --database royal_fusion_phase3_disposable --port 5432 --user postgres
+```
+
+The runner requires an installed `psql`, forces `127.0.0.1`, ignores dotenv/PG environment
+configuration, refuses a nonempty database, applies fixture schema/migrations, and
+asserts competing sessions wait. It covers same-variant overselling, distinct sibling
+aggregate stock, checkout/catalog locking compatibility, and rollback. It leaves only
+fictional data in the disposable database for inspection. Remove that database afterward.
+Never point this runner or these fixtures at production. Production purchasing remains
+blocked in the HTTP route until relational fulfillment and release verification exist.
+
+### Phase 3 acceptance policies
+
+Coupon dates use the UTC calendar date explicitly: quotes use the server's UTC instant,
+and the RPC uses `(statement_timestamp() at time zone 'UTC')::date`. Session/environment
+timezones do not change the rule. A later request can legitimately cross a UTC boundary.
+
+Shipping rejects **all** ties at the winning scope priority and highest qualifying
+minimum subtotal, including equal-fee duplicates. Quote and RPC both fail closed before
+order writes. Default-rate ties are schema-valid; the city-tie defensive SQL fixtures
+remove the uniqueness index only inside a disposable transaction and roll back afterward.
+
+Success pages display historical receipts and never consume a cart. A live validated
+receipt includes its idempotency UUID; completion checks that UUID against the frozen
+request and exact purchased-line snapshot. Cart entries have durable instance UUIDs,
+so removing/re-adding the same variant cannot revive an old snapshot. Per-attempt cart
+claims/completions are separate immutable storage records without eviction. Web Locks
+serialize completion across tabs. Completion writes durable quantities against entry
+UUIDs, never a full cart snapshot; hydration projects unapplied quantities onto only
+those original entries. The cart snapshot records the quantities already projected.
+Ordinary cart operations read the latest shared state,
+and storage events synchronize other tabs. Session intents remain per-tab. Browsers
+without Web Locks fail closed on cleanup. If a crash/write failure interrupts a claimed
+cleanup, the attempt remains in explicit recovery and is never automatically consumed
+again. This favors keeping cart items over subtracting from a later cart. Clearing site
+storage removes local recovery context; it does not cancel any server order.
+
+Completed attempts are historical only, so later checkout can freeze a new UUID without
+using Continue shopping. Unreadable/older/corrupt potentially submitted attempts block
+fresh checkout until explicit recovery/reset; they never mint a replacement UUID silently.
+
 `005_auth_schema_hardening_verification.sql` checks customer isolation, direct browser
 denials, canonical Owner/Manager permission boundaries, invitation lifecycle protection,
 session and claim hash-only storage, claim replay prevention, final-Owner protection,

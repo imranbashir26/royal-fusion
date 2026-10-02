@@ -177,3 +177,33 @@ export interface OrderPayload {
   paymentMethod: string
   couponCode?: string
 }
+
+export type CheckoutPaymentMethod = 'Cash on Delivery' | 'Bank Transfer'
+export interface CanonicalOrderItemRequest { variantId: string; quantity: number }
+export interface CanonicalOrderRequest {
+  idempotencyKey: string
+  items: CanonicalOrderItemRequest[]
+  contact: { name: string; email: string; phone: string }
+  shipping: { address: string; city: string; province: string; notes: string }
+  paymentMethod: CheckoutPaymentMethod
+  couponCode: string
+}
+export interface CheckoutQuoteRequest {
+  items: CanonicalOrderItemRequest[]
+  shipping: { city: string; province: string }
+  email: string
+  couponCode: string
+}
+export interface CheckoutQuoteResponse {
+  subtotal: number; discount: number; shippingFee: number; total: number
+  currency: 'PKR'; shippingMethodId: string; paymentMethods: CheckoutPaymentMethod[]
+  orderingEnabled: boolean
+}
+export interface CanonicalOrderReceipt {
+  id: string; idempotencyKey: string; orderNumber: string
+  status: 'Pending' | 'Confirmed' | 'Processing' | 'Shipped' | 'Delivered' | 'Cancelled' | 'Returned' | 'Refunded'
+  paymentStatus: 'Unpaid' | 'Pending' | 'Paid' | 'Failed' | 'Refunded'
+  paymentMethod: CheckoutPaymentMethod
+  subtotal: number; discount: number; shippingFee: number; total: number
+  currency: 'PKR'; idempotent: boolean
+}

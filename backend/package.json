@@ -9,7 +9,7 @@
     "admin:create": "node server/scripts/create-admin.mjs",
     "api:smoke": "node server/scripts/smoke-test.mjs",
     "env:check:prod": "node server/scripts/check-production-env.mjs",
-    "test": "node --test --test-concurrency=1 server/tests/auth-contract-foundation.test.js server/tests/auth-backend-cookie-sessions.test.js server/tests/guest-checkout-regression.test.js server/tests/public-settings-contract.test.js server/tests/admin-products-v1.test.js server/tests/admin-categories-v1.test.js server/tests/admin-collections-v1.test.js server/tests/admin-media-v1.test.js server/tests/catalog-normalization.test.js server/tests/catalog-variants.test.js server/tests/fragrance-finder-v1.test.js server/tests/reviews-v1.test.js server/tests/newsletter-v1.test.js server/tests/settings-v1.test.js",
+    "test": "node --test --test-concurrency=1 server/tests/auth-contract-foundation.test.js server/tests/auth-backend-cookie-sessions.test.js server/tests/guest-checkout-regression.test.js server/tests/public-settings-contract.test.js server/tests/admin-products-v1.test.js server/tests/admin-categories-v1.test.js server/tests/admin-collections-v1.test.js server/tests/admin-media-v1.test.js server/tests/catalog-normalization.test.js server/tests/catalog-variants.test.js server/tests/fragrance-finder-v1.test.js server/tests/reviews-v1.test.js server/tests/newsletter-v1.test.js server/tests/settings-v1.test.js server/tests/orders-v1.test.js server/tests/checkout-sql.test.js",
     "test:settings": "node --test server/tests/settings-v1.test.js",
     "test:newsletter": "node --test server/tests/newsletter-v1.test.js",
     "test:reviews": "node --test server/tests/reviews-v1.test.js",
@@ -23,7 +23,8 @@
     "test:guest-checkout": "node --test --test-concurrency=1 server/tests/guest-checkout-regression.test.js",
     "test:sql-auth-schema": "node server/scripts/check-auth-schema-sql.mjs",
     "test:auth-sessions": "node --test --test-concurrency=1 server/tests/auth-backend-cookie-sessions.test.js",
-    "test:sql-auth-sessions": "node server/scripts/check-auth-session-sql.mjs"
+    "test:sql-auth-sessions": "node server/scripts/check-auth-session-sql.mjs",
+    "test:checkout": "node --test --test-concurrency=1 server/tests/orders-v1.test.js server/tests/checkout-sql.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.8",
