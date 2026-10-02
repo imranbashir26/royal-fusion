@@ -331,8 +331,8 @@ test('customer auth during admin authorization cannot change the session reposit
       }
       const rows = {
         profiles: { id: userId, full_name: 'Owner', status: 'Active' },
-        user_roles: [{ role_id: 'owner-role', active: true }],
-        roles: [{ id: 'owner-role', key: 'owner_admin', name: 'Owner', active: true }],
+        user_roles: [{ role_id: 'owner-role', active: true, revoked_at: null, expires_at: null }],
+        roles: [{ id: 'owner-role', key: 'owner', name: 'Owner', active: true }],
         role_permissions: [{ permission_id: 'wildcard' }],
         permissions: [{ key: '*' }],
       }
@@ -357,7 +357,7 @@ test('customer auth during admin authorization cannot change the session reposit
     const administratorAuth = await runtime.gateway.signInAdministrator({
       email: 'admin@example.invalid', password: 'fictional-password', requireMfa: false,
     })
-    assert.equal((await runtime.adminAuthorization.resolve(userId)).roleKey, 'owner_admin')
+    assert.equal((await runtime.adminAuthorization.resolve(userId)).roleKey, 'owner')
     assert.equal(customerSignedInDuringAuthorization, true)
     await runtime.sessionService.createSession(administratorAuth, { sessionClass: 'administrator' })
     await runtime.gateway.refresh(customerAuth.refreshToken)
@@ -915,21 +915,32 @@ test('canonical database assignments determine administrator roles and effective
   const rows = {
     profiles: [{ id: userId, full_name: 'Canonical Owner', status: 'Active' }],
     user_roles: [{ user_id: userId, role_id: 'owner-role', active: true, revoked_at: null, expires_at: null }],
-    roles: [{ id: 'owner-role', key: 'owner_admin', name: 'Owner', active: true }],
+    roles: [{ id: 'owner-role', key: 'owner', name: 'Owner', active: true }],
     role_permissions: [{ role_id: 'owner-role', permission_id: 'wildcard' }],
     permissions: [{ id: 'wildcard', key: '*' }],
   }
   const service = new AdminAuthorizationService(fakeAdminTables(rows))
   assert.deepEqual(await service.resolve(userId), {
-    userId, name: 'Canonical Owner', role: 'Owner', roleKey: 'owner_admin', permissions: ['*'],
+    userId, name: 'Canonical Owner', role: 'Owner', roleKey: 'owner', permissions: ['*'],
   })
   rows.user_roles[0].active = false
   assert.equal(await service.resolve(userId), null)
   rows.user_roles[0].active = true
+  for (const expiry of ['2000-01-01T00:00:00Z', 'not-a-date', undefined]) {
+    rows.user_roles[0].expires_at = expiry
+    assert.equal(await service.resolve(userId), null, 'An expired/invalid owner never inherits wildcard')
+  }
+  rows.user_roles[0].expires_at = null
+  rows.user_roles[0].revoked_at = '2000-01-01T00:00:00Z'
+  assert.equal(await service.resolve(userId), null, 'Even an inconsistent active/revoked assignment grants nothing')
+  rows.user_roles[0].revoked_at = null
+  rows.roles[0].active = false
+  assert.equal(await service.resolve(userId), null)
+  rows.roles[0].active = true
   rows.profiles[0].status = 'Inactive'
   assert.equal(await service.resolve(userId), null)
   rows.profiles[0].status = 'Active'
-  rows.roles[0].key = 'owner'
+  rows.roles[0].key = 'owner_admin'
   assert.equal(await service.resolve(userId), null)
 })
 

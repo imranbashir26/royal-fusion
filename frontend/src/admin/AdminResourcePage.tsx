@@ -522,7 +522,7 @@ function AdminRecordForm({
       if (initialValue || (config.endpoint === 'products' && form.id)) {
         if (config.endpoint === 'products') {
           const productId = String(initialValue?.id || form.id)
-          await adminProductsApi.update(productId, payload)
+          await adminProductsApi.update(productId, { ...payload, expectedRevision: String(initialValue?.catalogRevision ?? form.catalogRevision ?? '') })
           try {
             for (const [secureUrl, uploadToken] of stagedMediaRef.current) {
               await adminMediaApi.claim(productId, uploadToken)
@@ -541,7 +541,7 @@ function AdminRecordForm({
         if (config.endpoint === 'products') {
           const created = await adminProductsApi.create(payload)
           if (stagedMediaRef.current.size > 0) {
-            setForm((current) => ({ ...current, id: created.id }))
+            setForm((current) => ({ ...current, id: created.id, catalogRevision: created.catalogRevision }))
             try {
               for (const [secureUrl, uploadToken] of stagedMediaRef.current) {
                 await adminMediaApi.claim(created.id, uploadToken)

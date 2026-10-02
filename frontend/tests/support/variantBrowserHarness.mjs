@@ -93,7 +93,7 @@ after(async () => {
   await server?.close()
 })
 
-export async function pageFixture(t, { webLocks = true, checkout = null, variants = [variantRow, otherVariant], legacy, wishlist = false, products = [productRow, otherProduct], variantError = false } = {}) {
+export async function pageFixture(t, { admin = null, webLocks = true, checkout = null, variants = [variantRow, otherVariant], legacy, wishlist = false, products = [productRow, otherProduct], variantError = false } = {}) {
   const catalog = { products, variants, variantError, productError: false }
   const context = await browser.newContext({ serviceWorkers: 'block' })
   t.after(() => context.close())
@@ -109,6 +109,10 @@ export async function pageFixture(t, { webLocks = true, checkout = null, variant
   const orders = [], variantReads = [], errors = []
   await context.route('**/*', async (route) => {
     const url = new URL(route.request().url())
+    if (admin && url.pathname.startsWith('/api/')) {
+      admin.paths ??= []; admin.paths.push(url.pathname)
+      if (url.pathname.startsWith('/api/v1/admin/orders')) return admin.handle(route, url)
+    }
     if (url.pathname.includes('/rpc/')) { orders.push(url.pathname); return route.abort() }
     if (url.pathname.endsWith('/public/orders')) {
       if (!checkout) { orders.push(url.pathname); return route.abort() }
@@ -122,7 +126,7 @@ export async function pageFixture(t, { webLocks = true, checkout = null, variant
         paymentMethod: body.paymentMethod, subtotal, discount: 0, shippingFee, total: subtotal + shippingFee, currency: 'PKR', idempotent: orders.slice(0, -1).some((previous) => previous.idempotencyKey === body.idempotencyKey),
       } } })
     }
-    if (url.pathname.endsWith('/v1/auth/session')) return route.fulfill({ json: { data: { authenticated: false, csrfToken: 'fixture-csrf' } } })
+    if (url.pathname.endsWith('/v1/auth/session')) return route.fulfill({ json: { data: admin?.session ?? { authenticated: false, csrfToken: 'fixture-csrf' } } })
     if (url.pathname.endsWith('/checkout/quote') && checkout) {
       const body = route.request().postDataJSON(); checkout.quotes ??= []; checkout.quotes.push(body)
       const subtotal = body.items.reduce((sum, item) => sum + item.quantity * 2900, 0), shippingFee = checkout.shippingFee ?? 777

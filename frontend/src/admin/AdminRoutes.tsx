@@ -3,6 +3,7 @@ import { AdminDashboardPage } from './AdminDashboardPage'
 import { AdminFragranceFinderPage } from './AdminFragranceFinderPage'
 import { AdminLayout } from './AdminLayout'
 import { AdminOrdersPage } from './AdminOrdersPage'
+import { AdminOrderDetailsPage } from './AdminOrderDetailsPage'
 import { AdminResourceManager } from './AdminResourcePage'
 import { AdminReviewsPage } from './AdminReviewsPage'
 import { AdminNewsletterPage } from './AdminNewsletterPage'
@@ -20,6 +21,7 @@ export function AdminRoutes() {
         <Route path="categories" element={<AdminResourceManager resource="categories" />} />
         <Route path="fragrance-finder" element={<AdminFragranceFinderPage />} />
         <Route path="orders" element={<AdminOrdersPage />} />
+        <Route path="orders/:id" element={<AdminOrderDetailsPage />} />
         <Route path="customers" element={<AdminResourceManager resource="customers" />} />
         <Route path="coupons" element={<AdminResourceManager resource="coupons" />} />
         <Route path="banners" element={<AdminResourceManager resource="banners" />} />

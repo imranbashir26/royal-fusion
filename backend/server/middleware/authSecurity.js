@@ -116,7 +116,7 @@ export function createAdminIdentity({ config, sessionService, adminAuthorization
         (restored.record.mfaAssurance !== 'aal2' || restored.identity.assuranceLevel !== 'aal2')) {
         return sendCode(res, AUTH_ERROR_CODES.MFA_REQUIRED, req.requestId)
       }
-      const administrator = await adminAuthorization.resolve(restored.identity.id)
+      const administrator = await adminAuthorization.resolve(restored.identity.id, { requestId: req.requestId })
       if (!administrator) {
         return sendCode(res, AUTH_ERROR_CODES.PERMISSION_DENIED, req.requestId)
       }

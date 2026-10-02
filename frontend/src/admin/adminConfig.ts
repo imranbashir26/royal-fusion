@@ -71,7 +71,7 @@ export const adminNav: AdminNavItem[] = [
   { label: 'Curated Collections', to: '/admin/collections', icon: Boxes, permission: 'collections:manage', group: 'Perfume Catalog' },
   { label: 'Fragrance Finder', to: '/admin/fragrance-finder', icon: Sparkles, permission: 'homepage.manage', group: 'Perfume Catalog' },
   { label: 'Customer Reviews', to: '/admin/reviews', icon: Star, permission: 'reviews:manage', group: 'Perfume Catalog' },
-  { label: 'Orders & Deliveries', to: '/admin/orders', icon: ShoppingBag, permission: 'orders:manage', group: 'Sales & Orders' },
+  { label: 'Orders & Deliveries', to: '/admin/orders', icon: ShoppingBag, permission: 'orders.read', group: 'Sales & Orders' },
   { label: 'Customer Database', to: '/admin/customers', icon: Users, permission: 'customers:read', group: 'Sales & Orders' },
   { label: 'Newsletter List', to: '/admin/newsletter', icon: Mail, permission: 'newsletter:manage', group: 'Sales & Orders' },
   { label: 'Contact Messages', to: '/admin/contact-messages', icon: MessageSquare, permission: 'contactMessages:manage', group: 'Sales & Orders' },

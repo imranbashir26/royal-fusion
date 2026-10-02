@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node --test tests/adminProductContract.test.mjs tests/adminMediaContract.test.mjs tests/adminCategoryContract.test.mjs tests/adminCollectionContract.test.mjs tests/collectionConsistency.test.mjs tests/catalogNormalization.test.mjs tests/fragranceFinder.test.mjs tests/reviewsIntegration.test.mjs tests/newsletterIntegration.test.mjs tests/settingsIntegration.test.mjs tests/productVariants.test.mjs tests/checkoutIntegration.test.mjs",
+    "test": "node --test tests/adminProductContract.test.mjs tests/adminMediaContract.test.mjs tests/adminCategoryContract.test.mjs tests/adminCollectionContract.test.mjs tests/collectionConsistency.test.mjs tests/catalogNormalization.test.mjs tests/fragranceFinder.test.mjs tests/reviewsIntegration.test.mjs tests/newsletterIntegration.test.mjs tests/settingsIntegration.test.mjs tests/productVariants.test.mjs tests/checkoutIntegration.test.mjs tests/adminOrders.test.mjs",
     "test:settings": "node --test tests/settingsIntegration.test.mjs",
     "test:newsletter": "node --test tests/newsletterIntegration.test.mjs",
     "test:reviews": "node --test tests/reviewsIntegration.test.mjs",
@@ -19,7 +19,9 @@
     "test:variants": "node --test tests/productVariants.test.mjs",
     "test:variants:browser": "node --test tests/variantBrowser.test.mjs",
     "test:checkout": "node --test tests/checkoutIntegration.test.mjs",
-    "test:checkout:browser": "node --test tests/checkoutBrowser.test.mjs"
+    "test:checkout:browser": "node --test tests/checkoutBrowser.test.mjs",
+    "test:fulfillment": "node --test tests/adminOrders.test.mjs",
+    "test:fulfillment:browser": "node --test tests/adminOrdersBrowser.test.mjs"
   },
   "dependencies": {
     "@sanity/client": "^7.23.0",

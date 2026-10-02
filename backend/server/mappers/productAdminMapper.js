@@ -41,5 +41,6 @@ export function toProductDto(row) {
   dto.publishedAt = row.published_at
   dto.createdAt = row.created_at
   dto.updatedAt = row.updated_at
+  dto.catalogRevision = String(row.catalog_revision ?? 0)
   return dto
 }

@@ -19,6 +19,7 @@ import { createAdminReviewsV1Router, createPublicReviewsV1Router } from './route
 import { createAdminNewsletterV1Router, createPublicNewsletterV1Router } from './routes/newsletterV1.js'
 import { createAdminSettingsV1Router } from './routes/settingsV1.js'
 import { createOrdersV1Router } from './routes/ordersV1.js'
+import { createAdminOrdersV1Router } from './routes/adminOrdersV1.js'
 import { mediaRouter } from './routes/media.js'
 import { publicRouter } from './routes/public.js'
 import { updateDb, nowIso } from './utils/database.js'
@@ -84,7 +85,8 @@ app.use('/api/v1/public/reviews', createPublicReviewsV1Router(authRuntime))
 app.use('/api/v1/admin/newsletter', createAdminNewsletterV1Router(authRuntime))
 app.use('/api/v1/public/newsletter', createPublicNewsletterV1Router(authRuntime))
 app.use('/api/v1/admin/settings', createAdminSettingsV1Router(authRuntime))
-app.use('/api/v1/public', createOrdersV1Router(authRuntime))
+  app.use('/api/v1/public', createOrdersV1Router(authRuntime))
+  app.use('/api/v1/admin/orders', createAdminOrdersV1Router(authRuntime))
 app.use('/api/v1/admin/products/:productId/media', createAdminMediaV1Router(authRuntime))
 app.use('/uploads', express.static(path.resolve(__dirname, 'uploads')))
 

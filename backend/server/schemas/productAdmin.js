@@ -87,7 +87,7 @@ export const createProductSchema = fields.required({
   cardBackgroundColor: true,
 }).superRefine(validatePriceRelationship)
 
-export const updateProductSchema = fields.partial().refine(
+export const updateProductSchema = fields.partial().extend({ expectedRevision: z.string().regex(/^(0|[1-9][0-9]{0,18})$/).optional() }).refine(
   (value) => Object.keys(value).length > 0,
   'At least one product field is required.',
 ).superRefine(validatePriceRelationship)

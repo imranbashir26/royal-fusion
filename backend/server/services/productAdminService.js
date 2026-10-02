@@ -107,6 +107,7 @@ export class ProductAdminService {
     }
     const { data, error } = await client.rpc('save_catalog_product', {
       p_product_id: id, p_patch: columns, p_variants: normalizedVariants(input),
+      p_expected_revision: input.expectedRevision ?? null,
     })
     if (error) throw databaseError(error)
     if (!data) throw notFound()
@@ -197,6 +198,7 @@ function catalogDto(data) {
 }
 
 function databaseError(error) {
+  if (error.message === 'CATALOG_STALE') return new ProductApiError(409, 'CATALOG_STALE', 'Catalog changed. Reload the product before saving stock.')
   if (error.code === 'P0002') return notFound()
   if (error.code === '22023') {
     const safeMessages = [
