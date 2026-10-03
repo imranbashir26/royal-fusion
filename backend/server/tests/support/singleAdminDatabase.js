@@ -3,11 +3,38 @@ import { readFile } from 'node:fs/promises'
 import { createCatalogDatabase } from './catalogDatabase.js'
 import { sqlClient } from './fulfillmentDatabase.js'
 
+// Exact body supplied by the production read-only inspection; local PGlite fixture only.
+export const verifiedLegacyPermissionBody = `select exists (
+  select 1
+  from public.user_roles user_roles
+  join public.roles roles
+    on roles.id = user_roles.role_id
+  join public.role_permissions role_permissions
+    on role_permissions.role_id = roles.id
+  join public.permissions permissions
+    on permissions.id = role_permissions.permission_id
+  where user_roles.user_id = auth.uid()
+    and user_roles.active
+    and roles.active
+    and (
+      permissions.key = required_permission
+      or permissions.key = '*'
+    )
+);`
+export async function installVerifiedLegacyPermission(db, body = verifiedLegacyPermissionBody) {
+  await db.exec(`create or replace function public.has_permission(required_permission text)
+    returns boolean language sql stable security definer set search_path='' as $$${body}$$;
+    alter function public.has_permission(text) owner to postgres;
+    revoke execute on function public.has_permission(text) from public,anon;
+    grant execute on function public.has_permission(text) to authenticated,service_role;`)
+}
+
 export async function legacyAdminDatabase() {
   const db = await createCatalogDatabase()
   const admin = randomUUID(), customer = randomUUID()
   for (const id of [admin,customer]) await db.query('insert into auth.users(id,email) values($1,$2)', [id, `${id}@example.invalid`])
   await db.query("insert into public.user_roles(user_id,role_id) select $1,id from public.roles where key='owner_admin'", [admin])
+  await installVerifiedLegacyPermission(db)
   return { db, admin, customer }
 }
 export async function applyRelease(db, name, admin) {

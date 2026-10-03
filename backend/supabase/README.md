@@ -34,12 +34,22 @@ single Admin model; it does not create the obsolete invitation workflow.
 The three manual release files are:
 
 - `release-migrations/001_single_admin_expansion.sql`: atomic overlap, active-only
-  assignments, secure sessions, canonical permission resolver and last-Admin guards.
+  assignments, secure sessions, guarded permission resolver and last-Admin guards.
+  The resolver requires Active profile, active assignment/role and wildcard. During
+  overlap only, it also recognizes the exact legacy owner_admin UUID pinned by
+  immutable first_admin bootstrap evidence. Runtime settings cannot select it.
+  The compatibility check accepts only the read-only verified production SQL body
+  or the exact expanded body, with matching signature/security/owner/EXECUTE ACLs.
+  Each body has explicit LF and CRLF representations. Only outer whitespace is
+  trimmed from installed source; characters inside quoted values are never normalized.
 - `release-migrations/002_single_admin_fulfillment.sql`: immediately after ordinary
   011; changes only its actor authorization, removes the obsolete order-manager
   payment grant, and preserves the reviewed transactional body.
 - `release-migrations/003_single_admin_retirement.sql`: separate, deliberate cutover
-  after successful deployment and canonical authentication verification.
+  after successful deployment and canonical authentication verification. It guards
+  the installed resolver and atomically removes the approved legacy fallback;
+  final has_permission recognizes canonical admin only. Unknown definitions abort
+  the entire retirement; reruns accept only the exact final definition.
 
 Release sequence, subject to separate migration/deployment approval:
 

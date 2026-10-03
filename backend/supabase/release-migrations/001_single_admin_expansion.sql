@@ -1,6 +1,7 @@
 -- RELEASE ONLY: manual EXPAND before ordinary 010/011, not part of automatic numeric replay.
 -- Requires royal_fusion.approved_admin_uuid on this release connection. No identity inference.
 begin;
+
 set local lock_timeout='5s';
 set local statement_timeout='60s';
 lock table public.roles,public.user_roles,public.role_permissions,public.profiles in share row exclusive mode;
@@ -220,50 +221,62 @@ do $identity_indexes$ declare i pg_index%rowtype; begin
 end; $identity_indexes$;
 
 alter table public.order_status_history add column if not exists is_customer_visible boolean not null default false;
-do $function_install$
-declare p pg_proc%rowtype;
-begin
-  select * into p from pg_proc where oid=to_regprocedure('public.has_permission(text)');
-  if found then
-    if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
-      or p.prorettype<>'boolean'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
-      or p.provolatile<>'s' then raise exception 'RF_INCOMPATIBLE_FUNCTION: has_permission'; end if;
-    if btrim(replace(p.prosrc,chr(13),''))=btrim($expected$
+-- Exact reviewed LF/CRLF bodies only; trim outer whitespace, never installed SQL tokens.
+-- Overlap fallback is pinned to the immutable, approved bootstrap identity, never a GUC.
+do $permission_install$
+declare
+  p pg_proc%rowtype;
+  installed_body text;
+  -- Only these reviewed constants are converted to LF. Installed SQL is never normalized.
+  approved_target_lf text:=btrim(replace($expected$
   select exists(select 1 from public.user_roles ur join public.roles r on r.id=ur.role_id
     join public.profiles pr on pr.id=ur.user_id join public.role_permissions rp on rp.role_id=r.id
     join public.permissions pe on pe.id=rp.permission_id
     where ur.user_id=auth.uid() and ur.active and pr.status='Active' and r.active
-      and r.key='admin' and pe.key='*');
-$expected$) then return; end if;
-    if not (btrim(replace(p.prosrc,chr(13),''))=btrim($previous_0$
-  select exists (
-    select 1
-    from public.user_roles user_roles
-    join public.roles roles on roles.id = user_roles.role_id
-    join public.role_permissions role_permissions on role_permissions.role_id = roles.id
-    join public.permissions permissions on permissions.id = role_permissions.permission_id
-    where user_roles.user_id = auth.uid()
-      and user_roles.active
-      and roles.active
-      and (permissions.key = required_permission or permissions.key = '*')
-  );
-$previous_0$) or btrim(replace(p.prosrc,chr(13),''))=btrim($previous_1$
-  select exists (
-    select 1
-    from public.user_roles user_roles
-    join public.roles roles on roles.id = user_roles.role_id
-    join public.role_permissions role_permissions on role_permissions.role_id = roles.id
-    join public.permissions permissions on permissions.id = role_permissions.permission_id
-    join public.profiles profiles on profiles.id = user_roles.user_id
-    where user_roles.user_id = auth.uid()
-      and user_roles.active
-      and user_roles.revoked_at is null
-      and (user_roles.expires_at is null or user_roles.expires_at > now())
-      and roles.active
-      and profiles.status = 'Active'
-      and (permissions.key = required_permission or permissions.key = '*')
-  );
-$previous_1$)) then raise exception 'RF_INCOMPATIBLE_FUNCTION: has_permission'; end if;
+      and pe.key='*' and (r.key='admin' or (r.key='owner_admin' and exists(
+        select 1 from public.auth_bootstrap_state boot
+        where boot.id='first_admin' and boot.completed_by=ur.user_id))));
+$expected$,E'\r\n',E'\n'),E' \t\r\n');
+  approved_source_lf text:=btrim(replace($verified_source$
+select exists (
+  select 1
+  from public.user_roles user_roles
+  join public.roles roles
+    on roles.id = user_roles.role_id
+  join public.role_permissions role_permissions
+    on role_permissions.role_id = roles.id
+  join public.permissions permissions
+    on permissions.id = role_permissions.permission_id
+  where user_roles.user_id = auth.uid()
+    and user_roles.active
+    and roles.active
+    and (
+      permissions.key = required_permission
+      or permissions.key = '*'
+    )
+);
+$verified_source$,E'\r\n',E'\n'),E' \t\r\n');
+begin
+  select * into p from pg_proc where oid=to_regprocedure('public.has_permission(text)');
+  if not found then raise exception 'RF_INCOMPATIBLE_FUNCTION: has_permission'; end if;
+  if p.pronargs<>1 or p.proargtypes<>'25'::oidvector
+    or p.proargnames is distinct from array['required_permission']::text[]
+    or p.proallargtypes is not null or p.proargmodes is not null or p.pronargdefaults<>0
+    or p.prokind<>'f' or p.proretset or p.prorettype<>'boolean'::regtype
+    or p.proisstrict or p.proleakproof or p.proparallel<>'u' or p.prosupport<>0
+    or p.prolang is distinct from (select oid from pg_language where lanname='sql')
+    or p.prosecdef is distinct from true or p.provolatile<>'s'
+    or p.proconfig is distinct from array['search_path=""']::text[]
+    or p.proowner is distinct from (select oid from pg_roles where rolname='postgres')
+    or has_function_privilege('anon',p.oid,'EXECUTE') is distinct from false
+    or has_function_privilege('authenticated',p.oid,'EXECUTE') is distinct from true
+    or has_function_privilege('service_role',p.oid,'EXECUTE') is distinct from true then
+    raise exception 'RF_INCOMPATIBLE_FUNCTION: has_permission';
+  end if;
+  installed_body:=btrim(p.prosrc,E' \t\r\n');
+  if installed_body in (approved_target_lf,replace(approved_target_lf,E'\n',E'\r\n')) then return; end if;
+  if installed_body not in (approved_source_lf,replace(approved_source_lf,E'\n',E'\r\n')) then
+    raise exception 'RF_INCOMPATIBLE_FUNCTION: has_permission';
   end if;
   execute $ddl$create or replace function public.has_permission(required_permission text)
 returns boolean language sql stable security definer set search_path = '' as $$
@@ -271,10 +284,12 @@ returns boolean language sql stable security definer set search_path = '' as $$
     join public.profiles pr on pr.id=ur.user_id join public.role_permissions rp on rp.role_id=r.id
     join public.permissions pe on pe.id=rp.permission_id
     where ur.user_id=auth.uid() and ur.active and pr.status='Active' and r.active
-      and r.key='admin' and pe.key='*');
+      and pe.key='*' and (r.key='admin' or (r.key='owner_admin' and exists(
+        select 1 from public.auth_bootstrap_state boot
+        where boot.id='first_admin' and boot.completed_by=ur.user_id))));
 $$;$ddl$;
 end;
-$function_install$;
+$permission_install$;
 
 do $function_install$
 declare p pg_proc%rowtype;
