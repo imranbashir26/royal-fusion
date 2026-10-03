@@ -1,11 +1,6 @@
 import type { BlogPost, Category, Collection, FinderPreference, Product, Review } from './index'
 
-export type AdminRole =
-  | 'Owner/Admin'
-  | 'Shop Manager'
-  | 'Order Manager'
-  | 'Content Editor'
-  | 'Blog Writer'
+export type AdminRole = 'admin'
 
 export interface AdminUser {
   id: string

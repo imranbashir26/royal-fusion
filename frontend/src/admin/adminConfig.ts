@@ -82,7 +82,6 @@ export const adminNav: AdminNavItem[] = [
   { label: 'Custom Policy Pages', to: '/admin/editable-pages', icon: FileText, permission: 'editablePages:manage', group: 'Content & Journal' },
   { label: 'Store Settings', to: '/admin/settings', icon: Boxes, permission: 'settings:manage', group: 'Store Control' },
   { label: 'SEO Settings', to: '/admin/seo', icon: Search, permission: 'seo:manage', group: 'Store Control' },
-  { label: 'Admin Users & Roles', to: '/admin/users', icon: Users, permission: 'users:manage', group: 'Store Control' },
 ]
 
 const statusOptions = ['Published', 'Draft', 'Unpublished', 'Archived']

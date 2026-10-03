@@ -10,7 +10,7 @@ export interface Administrator {
   userId: string
   name: string
   role: string
-  roleKey: string
+  roleKey: 'admin'
   permissions: string[]
 }
 

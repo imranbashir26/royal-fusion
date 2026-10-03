@@ -16,12 +16,8 @@ import {
 import { MockSupabaseAuthGateway } from './support/mockSupabaseAuthGateway.js'
 import {
   CUSTOMER_PERMISSIONS,
-  MANAGER_CAPABILITIES,
-  MANAGER_FORBIDDEN_CAPABILITIES,
-  MANAGER_FORBIDDEN_PERMISSIONS,
-  MANAGER_PERMISSIONS,
-  OWNER_CAPABILITIES,
-  OWNER_PERMISSIONS,
+  ADMIN_CAPABILITIES,
+  ADMIN_PERMISSIONS,
 } from './support/permissionFixtures.js'
 
 const expectedErrorCodes = [
@@ -49,7 +45,7 @@ test('mock gateway covers approved identities and safe failure outcomes without 
   const originalFetch = globalThis.fetch
   globalThis.fetch = async () => { throw new Error('External network is forbidden in Auth contract tests.') }
   try {
-    for (const type of ['owner', 'manager', 'customer']) {
+    for (const type of ['admin', 'customer']) {
       const result = await gateway.verifyIdentity(type)
       assert.equal(result.authenticated, true)
       assert.equal(result.identity.type, type)
@@ -238,30 +234,9 @@ test('feature flag validator accepts explicit development modes and fails closed
   assert.throws(() => validateAuthFeatureFlags(prototype, 'prodution'), /environment configuration/)
 })
 
-test('permission fixtures preserve Owner, Manager, and customer boundaries', () => {
-  assert.deepEqual(OWNER_PERMISSIONS, ['*'])
-  for (const capability of ['users', 'orders', 'refunds', 'tax', 'deployment']) {
-    assert.ok(OWNER_CAPABILITIES.includes(capability))
-  }
-  for (const capability of [
-    'products', 'variants', 'categories', 'collections', 'inventory', 'commerce-media',
-    'homepage', 'announcement-bar', 'hero-slides', 'promotional-banners',
-    'featured-products', 'best-sellers', 'new-arrivals', 'testimonials', 'blogs',
-    'journals', 'content-seo',
-  ]) {
-    assert.ok(MANAGER_CAPABILITIES.includes(capability))
-  }
-  for (const capability of [
-    'users', 'roles', 'orders', 'customers', 'refund-authorization', 'tax-configuration',
-    'payment-configuration', 'shipping-configuration', 'protected-settings',
-    'provider-secrets', 'audit-log-deletion', 'deployment',
-  ]) {
-    assert.ok(MANAGER_FORBIDDEN_CAPABILITIES.includes(capability))
-  }
-  for (const permission of MANAGER_FORBIDDEN_PERMISSIONS) {
-    assert.equal(MANAGER_PERMISSIONS.includes(permission), false)
-  }
-  assert.deepEqual(CUSTOMER_PERMISSIONS, [])
+test('single Admin wildcard and role-free customer boundaries', () => {
+ assert.deepEqual(ADMIN_PERMISSIONS,['*']); assert.deepEqual(CUSTOMER_PERMISSIONS,[])
+ for(const capability of ['products','inventory','orders','payments','settings']) assert.ok(ADMIN_CAPABILITIES.includes(capability))
 })
 
 test('optional authentication distinguishes guest, verified customer, and invalid credentials', () => {

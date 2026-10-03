@@ -59,27 +59,6 @@ export const adminApi = {
       headers: authHeaders(),
       body: JSON.stringify({ courierName, trackingNumber }),
     }),
-  users: <T>() =>
-    apiClient.request<T[]>('/admin/auth/users', {
-      headers: authHeaders(),
-    }),
-  createUser: <T>(payload: unknown) =>
-    apiClient.request<T>('/admin/auth/users', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(payload),
-    }),
-  updateUser: <T>(id: string, payload: unknown) =>
-    apiClient.request<T>(`/admin/auth/users/${id}`, {
-      method: 'PUT',
-      headers: authHeaders(),
-      body: JSON.stringify(payload),
-    }),
-  deleteUser: (id: string) =>
-    apiClient.request<void>(`/admin/auth/users/${id}`, {
-      method: 'DELETE',
-      headers: authHeaders(),
-    }),
   async exportResource(resource: string) {
     const response = await fetch(`${API_BASE_URL}/admin/resources/${resource}/export`, {
       headers: authHeaders(),

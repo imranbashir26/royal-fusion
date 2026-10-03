@@ -44,9 +44,15 @@ create table auth.users(id uuid primary key,email text,phone text,raw_user_meta_
 create function auth.uid() returns uuid language sql stable as $$select null::uuid$$;
 create function auth.role() returns text language sql stable as $$select current_setting('request.jwt.claim.role',true)$$;
 grant usage on schema auth to anon,authenticated,service_role;`)
-for (const file of ['001_initial_schema.sql', '002_launch_schema_foundation.sql', '003_auth_schema_hardening.sql', '005_product_card_presentation.sql', '009_catalog_product_variants.sql', '010_checkout_product_locking.sql', '011_admin_order_fulfillment.sql']) {
+for (const file of ['001_initial_schema.sql', '002_launch_schema_foundation.sql', '005_product_card_presentation.sql', '009_catalog_product_variants.sql']) {
   await run((await readFile(new URL(`../../supabase/migrations/${file}`, import.meta.url), 'utf8')).replace(/create extension if not exists pgcrypto;/i, ''))
 }
+const actor = randomUUID()
+await run(`insert into auth.users(id,email) values('${actor}','admin-concurrency@example.invalid'); insert into public.user_roles(user_id,role_id) select '${actor}',id from public.roles where key='owner_admin';`)
+const release = async file => run(`select set_config('royal_fusion.approved_admin_uuid','${actor}',false);`+(await readFile(new URL(`../../supabase/release-migrations/${file}`,import.meta.url),'utf8')))
+await release('001_single_admin_expansion.sql')
+for(const file of ['010_checkout_product_locking.sql','011_admin_order_fulfillment.sql']) await run(await readFile(new URL(`../../supabase/migrations/${file}`,import.meta.url),'utf8'))
+await release('002_single_admin_fulfillment.sql')
 const product = '45852db8-8b83-425e-8d1f-4112958ed505', a = 'b35b3be7-a7dd-4c70-9c14-d1a9394d4711', b = '8baeb954-f221-4990-a644-81d558aa22f2'
 await run(`insert into public.products(id,name,slug,sku,price,scent_family,main_image_url,status,active)
 values('${product}','Baraan','baraan','RF-BAR-001',2900,'Woody','https://example.invalid/fixture.webp','Published',true);
@@ -81,9 +87,6 @@ assert.notEqual(rolledBack.code, 0)
 assert.equal(await run('select count(*) from public.orders;'), before)
 assert.equal(await run(`select stock_quantity from public.products where id='${product}';`), '18')
 // Relational admin races: all actors, orders and stock below are disposable fixtures.
-const actor = randomUUID()
-await run(`insert into auth.users(id,email) values('${actor}','admin-concurrency@example.invalid');
-insert into public.user_roles(user_id,role_id) select '${actor}',id from public.roles where key='owner';`)
 const admin = (id, action, revision, payload, mutation = randomUUID()) =>
   `select public.apply_admin_order_action('${id}','${actor}','${action}','${mutation}','${revision}','${JSON.stringify(payload)}','req_concurrency_fixture');`
 const orderRevision = (id) => run(`select revision from public.orders where id='${id}';`)

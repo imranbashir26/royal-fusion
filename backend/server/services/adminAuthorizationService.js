@@ -1,13 +1,5 @@
 import { AUTH_ERROR_CODES } from '../auth/contracts.js'
 
-const ADMIN_ROLE_KEYS = new Set([
-  'owner',
-  'manager',
-  'order_manager',
-  'content_editor',
-  'blog_writer',
-])
-
 export class AdminAuthorizationService {
   constructor(client) {
     this.client = client
@@ -28,20 +20,13 @@ export class AdminAuthorizationService {
 
     const { data: assignments, error: assignmentsError } = await this.client
       .from('user_roles')
-      .select('role_id,active,revoked_at,expires_at')
+      .select('role_id,active')
       .eq('user_id', userId)
       .eq('active', true)
 
     assertAvailable(assignmentsError, 'user_roles.select', requestId)
 
-    // Match migration 003's canonical assignment lifecycle before inheriting permissions.
-    const now = Date.now()
-    const roleIds = (assignments ?? []).filter((row) =>
-      row.active === true && row.revoked_at === null &&
-      (row.expires_at === null || row.expires_at === 'infinity' ||
-        (row.expires_at instanceof Date ? row.expires_at.getTime() > now :
-          typeof row.expires_at === 'string' && Date.parse(row.expires_at) > now)),
-    ).map((row) => row.role_id)
+    const roleIds = (assignments ?? []).filter((row) => row.active === true).map((row) => row.role_id)
 
     if (!roleIds.length) return null
 
@@ -53,9 +38,7 @@ export class AdminAuthorizationService {
 
     assertAvailable(rolesError, 'roles.select', requestId)
 
-    const adminRoles = (roles ?? []).filter((role) =>
-      ADMIN_ROLE_KEYS.has(role.key),
-    )
+    const adminRoles = (roles ?? []).filter((role) => role.key === 'admin' && role.active === true)
 
     if (!adminRoles.length) return null
 
@@ -83,15 +66,15 @@ export class AdminAuthorizationService {
       permissions = [...new Set((data ?? []).map((row) => row.key))].sort()
     }
 
-    const primaryRole =
-      adminRoles.find((role) => role.key === 'owner') ?? adminRoles[0]
+    if (!permissions.includes('*')) return null
+    const primaryRole = adminRoles[0]
 
     return Object.freeze({
       userId,
       name: profile.full_name || '',
       role: primaryRole.name,
       roleKey: primaryRole.key,
-      permissions,
+      permissions: ['*'],
     })
   }
 }

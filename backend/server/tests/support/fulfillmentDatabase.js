@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { createCatalogDatabase } from './catalogDatabase.js';
+import { legacyAdminDatabase, applyRelease } from './singleAdminDatabase.js';
 export async function fulfillmentDatabase() {
-    const db = await createCatalogDatabase();
-    for (const name of ['003_auth_schema_hardening.sql', '010_checkout_product_locking.sql', '011_admin_order_fulfillment.sql'])
-        await db.exec(await readFile(new URL(`../../../supabase/migrations/${name}`, import.meta.url), 'utf8'));
+    const {db,admin}=await legacyAdminDatabase();
+    db.approvedAdminUUID=admin;
+    await applyRelease(db,'001_single_admin_expansion.sql',admin);
+    for(const name of ['010_checkout_product_locking.sql','011_admin_order_fulfillment.sql']) await db.exec(await readFile(new URL(`../../../supabase/migrations/${name}`,import.meta.url),'utf8'));
+    await applyRelease(db,'002_single_admin_fulfillment.sql',admin);
     return db;
 }
 // Bound-value PostgREST adapter exclusively for the disposable SQL tests.
@@ -95,6 +97,7 @@ export function sqlClient(db) {
     };
 }
 export async function seedActor(db, key) {
+    if(key==='admin') return db.approvedAdminUUID;
     const id = randomUUID();
     await db.query('insert into auth.users(id,email) values($1,$2)', [id, `${id}@example.invalid`]);
     await db.query('insert into public.user_roles(user_id,role_id) select $1,id from public.roles where key=$2', [id, key]);

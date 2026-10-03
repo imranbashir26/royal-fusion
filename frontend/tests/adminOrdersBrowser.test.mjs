@@ -20,7 +20,7 @@ function detail(overrides = {}) {
 function adminFixture(overrides = {}, permissions = ['*']) {
   const admin = {
     order: detail(overrides), writes: [], reads: [], paths: [], mode: '', lost: false,
-    session: { authenticated: true, identity: { id: 'actor', email: 'admin@example.invalid', emailVerified: true }, csrfToken: 'fixture-csrf', administrator: { userId: 'actor', name: 'Operator', role: 'Owner', roleKey: 'owner', permissions } },
+    session: { authenticated: true, identity: { id: 'actor', email: 'admin@example.invalid', emailVerified: true }, csrfToken: 'fixture-csrf', administrator: { userId: 'actor', name: 'Operator', role: 'Admin', roleKey: 'admin', permissions } },
     async handle(route, url) {
       const request = route.request()
       if (request.method() === 'GET') {
@@ -198,4 +198,16 @@ test('read-only permission hides all mutations and historical terminal states re
     await page.getByText('This order is read-only for your role and its current state.').waitFor()
   }
   assert.equal(admin.writes.length, 0)
+})
+
+test('single Admin wildcard sees supported navigation; customer sees no Admin routes',async t=>{
+ const admin=adminFixture();const page=await setup(t,admin,'/admin/orders')
+ await page.getByRole('heading',{name:'Orders',exact:true}).waitFor()
+ assert.equal(await page.getByRole('link',{name:/Users.*Roles/}).count(),0)
+ for(const name of ['Perfumes & Products','Fragrance Categories','Curated Collections','Orders & Deliveries','Store Settings']) assert.ok(await page.getByRole('link',{name,exact:true}).count()>0)
+ const customer=adminFixture();customer.session.administrator=null
+ const other=await setup(t,customer,'/admin/orders')
+ await other.getByRole('alert').filter({hasText:'Administrator access is required.'}).waitFor()
+ assert.equal(await other.getByLabel('Admin navigation').count(),0)
+ assert.equal(customer.paths.some(path=>path.startsWith('/api/v1/admin/orders')),false)
 })

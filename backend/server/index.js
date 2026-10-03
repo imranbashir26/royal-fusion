@@ -9,6 +9,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { authRouter } from './routes/auth.js'
 import { createAuthV1Router } from './routes/authV1.js'
+import { createCustomerAccountV1Router } from './routes/customerAccountV1.js'
 import { adminRouter } from './routes/admin.js'
 import { createAdminProductsV1Router } from './routes/adminProductsV1.js'
 import { createAdminCategoriesV1Router } from './routes/adminCategoriesV1.js'
@@ -73,6 +74,7 @@ app.use(rateLimit({
 app.use(express.json({ limit: '1mb' }))
 app.use(cookieParser())
 app.use('/api/v1/auth', createAuthV1Router(authRuntime))
+app.use('/api/v1/customer', createCustomerAccountV1Router(authRuntime))
 app.use(sanitizeBody)
 app.use('/api/v1/admin/products', createAdminProductsV1Router(authRuntime))
 app.use('/api/v1/admin/categories', createAdminCategoriesV1Router(authRuntime))

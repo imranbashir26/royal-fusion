@@ -12,7 +12,7 @@ import { fulfillmentDatabase, sqlClient, seedActor, seedOrder } from './support/
 test('relational API: real authorization, list/detail, strict writes, replay and safe errors', async (t) => {
     const db = await fulfillmentDatabase();
     t.after(() => db.close());
-    const owner = await seedActor(db, 'owner'), operator = await seedActor(db, 'order_manager'), manager = await seedActor(db, 'manager'), editor = await seedActor(db, 'content_editor'), writer = await seedActor(db, 'blog_writer'), customer = randomUUID(), first = await seedOrder(db);
+    const owner = await seedActor(db, 'admin'), operator = await seedActor(db, 'order_manager'), manager = await seedActor(db, 'manager'), editor = await seedActor(db, 'content_editor'), writer = await seedActor(db, 'blog_writer'), customer = randomUUID(), first = await seedOrder(db);
     for (let i = 0; i < 26; i++)
         await seedOrder(db);
     const origin = 'http://localhost:5173', config = createAuthConfig({
@@ -67,12 +67,12 @@ test('relational API: real authorization, list/detail, strict writes, replay and
             status: response.status, cache: response.headers.get('cache-control'), body: await response.json()
         };
     }
-    await t.test('owner/operator allowed; manager/editor/writer/customer/anonymous/disabled denied', async () => {
-        for (const actor of [owner, operator])
+    await t.test('Admin allowed; legacy assignments/customer/guest/disabled authority denied', async () => {
+        for (const actor of [owner])
             assert.equal((await request('', {
                 actor
             })).status, 200);
-        for (const actor of [manager, editor, writer, customer, null])
+        for (const actor of [operator, manager, editor, writer, customer, null])
             assert.notEqual((await request('', {
                 actor
             })).status, 200);
@@ -104,20 +104,11 @@ test('relational API: real authorization, list/detail, strict writes, replay and
         assert.equal((await request('/bad')).status, 400);
         assert.equal((await request('/' + randomUUID())).status, 404);
     });
-    await t.test('expired/revoked assignments and mixed content role cannot read or mutate orders', async () => {
-        const expired = await seedActor(db, 'order_manager');
-        await db.query("update public.user_roles set expires_at='2000-01-01T00:00:00Z' where user_id=$1", [expired]);
-        for (const mixed of [false, true]) {
-            if (mixed) await db.query("insert into public.user_roles(user_id,role_id) select $1,id from public.roles where key='content_editor'", [expired]);
-            assert.equal((await request('', { actor: expired })).status, 403);
-            for (const [action, fields] of [['status', { status: 'Confirmed' }], ['payment', { reference: '', reason: 'No authority' }]])
-                assert.equal((await request('/' + first.id + '/' + action, { method: 'PATCH', actor: expired, body: { mutationId: randomUUID(), expectedRevision: '0', ...fields } })).status, 403);
-        }
-        const future = await seedActor(db, 'order_manager');
-        await db.query("update public.user_roles set expires_at='2099-01-01T00:00:00Z' where user_id=$1", [future]);
-        assert.equal((await request('', { actor: future })).status, 200);
-        await db.query("update public.user_roles set active=false,revoked_at='2000-01-01T00:00:00Z' where user_id=$1", [future]);
-        assert.equal((await request('', { actor: future })).status, 403);
+    await t.test('legacy permission merging never authorizes any order operation',async()=>{
+        const legacy=await seedActor(db,'order_manager');
+        await db.query("insert into public.user_roles(user_id,role_id) select $1,id from public.roles where key='content_editor'",[legacy]);
+        assert.equal((await request('',{actor:legacy})).status,403);
+        for(const [action,fields] of [['status',{status:'Confirmed'}],['payment',{reference:'',reason:'No authority'}]]) assert.equal((await request('/'+first.id+'/'+action,{method:'PATCH',actor:legacy,body:{mutationId:randomUUID(),expectedRevision:'0',...fields}})).status,403);
     });
     await t.test('admin correction DTO exposes controlled reason and before/after only', async () => {
         const o = await seedOrder(db);

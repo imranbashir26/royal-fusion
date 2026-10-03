@@ -330,9 +330,9 @@ test('customer auth during admin authorization cannot change the session reposit
         })
       }
       const rows = {
-        profiles: { id: userId, full_name: 'Owner', status: 'Active' },
+        profiles: { id: userId, full_name: 'Admin', status: 'Active' },
         user_roles: [{ role_id: 'owner-role', active: true, revoked_at: null, expires_at: null }],
-        roles: [{ id: 'owner-role', key: 'owner', name: 'Owner', active: true }],
+        roles: [{ id: 'owner-role', key: 'admin', name: 'Admin', active: true }],
         role_permissions: [{ permission_id: 'wildcard' }],
         permissions: [{ key: '*' }],
       }
@@ -357,7 +357,7 @@ test('customer auth during admin authorization cannot change the session reposit
     const administratorAuth = await runtime.gateway.signInAdministrator({
       email: 'admin@example.invalid', password: 'fictional-password', requireMfa: false,
     })
-    assert.equal((await runtime.adminAuthorization.resolve(userId)).roleKey, 'owner')
+    assert.equal((await runtime.adminAuthorization.resolve(userId)).roleKey, 'admin')
     assert.equal(customerSignedInDuringAuthorization, true)
     await runtime.sessionService.createSession(administratorAuth, { sessionClass: 'administrator' })
     await runtime.gateway.refresh(customerAuth.refreshToken)
@@ -834,7 +834,7 @@ test('administrator signin rejects wrong password, non-admin users, and browser-
 test('administrator session requires MFA, restores permissions, refreshes, and signs out', async () => {
   const gateway = new TestAuthGateway()
   const adminAuthorization = { resolve: async (userId) => ({
-    userId, name: 'Test Owner', role: 'Owner', roleKey: 'owner', permissions: ['*'],
+    userId, name: 'Test Owner', role: 'Admin', roleKey: 'admin', permissions: ['*'],
   }) }
   const api = await startAuthApi({ gateway, adminAuthorization })
   const jar = {}
@@ -850,17 +850,17 @@ test('administrator session requires MFA, restores permissions, refreshes, and s
     ...base, body: { email: 'owner@example.invalid', password: 'fictional-password', verificationCode: '123456' },
   })
   assert.equal(signedIn.response.status, 200)
-  assert.equal(signedIn.body.data.administrator.roleKey, 'owner')
+  assert.equal(signedIn.body.data.administrator.roleKey, 'admin')
   assert.deepEqual(signedIn.body.data.administrator.permissions, ['*'])
   assertNoCredentialFields(signedIn.body)
   absorbCookies(signedIn.response, jar)
   const restored = await request(api, '/api/v1/auth/session', { jar })
-  assert.equal(restored.body.data.administrator.role, 'Owner')
+  assert.equal(restored.body.data.administrator.role, 'Admin')
   const refreshed = await request(api, '/api/v1/auth/refresh', {
     method: 'POST', origin: api.allowedOrigin, csrf: restored.body.data.csrfToken, jar,
   })
   assert.equal(refreshed.response.status, 200)
-  assert.equal(refreshed.body.data.administrator.roleKey, 'owner')
+  assert.equal(refreshed.body.data.administrator.roleKey, 'admin')
   absorbCookies(refreshed.response, jar)
   const invalidCsrf = await request(api, '/api/v1/auth/signout', {
     method: 'POST', origin: api.allowedOrigin, csrf: 'wrong', jar,
@@ -877,7 +877,7 @@ test('administrator session requires MFA, restores permissions, refreshes, and s
 test('deactivated administrator loses restored and refreshed access', async () => {
   let active = true
   const adminAuthorization = { resolve: async (userId) => active ? {
-    userId, name: 'Test Manager', role: 'Manager', roleKey: 'manager', permissions: ['catalog.read'],
+    userId, name: 'Test Admin', role: 'Admin', roleKey: 'admin', permissions: ['*'],
   } : null }
   const api = await startAuthApi({ adminAuthorization })
   const jar = {}
@@ -915,25 +915,24 @@ test('canonical database assignments determine administrator roles and effective
   const rows = {
     profiles: [{ id: userId, full_name: 'Canonical Owner', status: 'Active' }],
     user_roles: [{ user_id: userId, role_id: 'owner-role', active: true, revoked_at: null, expires_at: null }],
-    roles: [{ id: 'owner-role', key: 'owner', name: 'Owner', active: true }],
+    roles: [{ id: 'owner-role', key: 'admin', name: 'Admin', active: true }],
     role_permissions: [{ role_id: 'owner-role', permission_id: 'wildcard' }],
     permissions: [{ id: 'wildcard', key: '*' }],
   }
   const service = new AdminAuthorizationService(fakeAdminTables(rows))
   assert.deepEqual(await service.resolve(userId), {
-    userId, name: 'Canonical Owner', role: 'Owner', roleKey: 'owner', permissions: ['*'],
+    userId, name: 'Canonical Owner', role: 'Admin', roleKey: 'admin', permissions: ['*'],
   })
   rows.user_roles[0].active = false
   assert.equal(await service.resolve(userId), null)
   rows.user_roles[0].active = true
-  for (const expiry of ['2000-01-01T00:00:00Z', 'not-a-date', undefined]) {
-    rows.user_roles[0].expires_at = expiry
-    assert.equal(await service.resolve(userId), null, 'An expired/invalid owner never inherits wildcard')
-  }
-  rows.user_roles[0].expires_at = null
-  rows.user_roles[0].revoked_at = '2000-01-01T00:00:00Z'
-  assert.equal(await service.resolve(userId), null, 'Even an inconsistent active/revoked assignment grants nothing')
-  rows.user_roles[0].revoked_at = null
+  // Assignment authority is active-only. Optional historical lifecycle fields are not required.
+  rows.user_roles[0].expires_at='2000-01-01T00:00:00Z'
+  rows.user_roles[0].revoked_at='2000-01-01T00:00:00Z'
+  assert.ok(await service.resolve(userId))
+  delete rows.user_roles[0].expires_at; delete rows.user_roles[0].revoked_at
+  rows.permissions[0].key='orders.read'; assert.equal(await service.resolve(userId),null)
+  rows.permissions[0].key='*'
   rows.roles[0].active = false
   assert.equal(await service.resolve(userId), null)
   rows.roles[0].active = true

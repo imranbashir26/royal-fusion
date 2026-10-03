@@ -28,15 +28,12 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
   const signUp = useCustomerAuthStore((state) => state.signUp)
   const updateProfile = useCustomerAuthStore((state) => state.updateProfile)
   const logout = useCustomerAuthStore((state) => state.logout)
+  const restoreSession = useCustomerAuthStore((state) => state.restoreSession)
   const [mode, setMode] = useState<AccountMode>('signin')
   const [authForm, setAuthForm] = useState(emptyAuthForm)
   const [profileForm, setProfileForm] = useState<CustomerProfileUpdate>({
     name: '',
-    email: '',
     phone: '',
-    address: '',
-    city: '',
-    province: '',
   })
   const [errors, setErrors] = useState<FieldErrors>({})
   const [message, setMessage] = useState('')
@@ -46,17 +43,17 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
     if (!isOpen) return
     setErrors({})
     setMessage('')
-  }, [isOpen, mode])
+  }, [isOpen])
+
+  useEffect(() => {
+    if (isOpen) void restoreSession().catch(error => setErrors({ form: error instanceof Error ? error.message : 'Account unavailable.' }))
+  }, [isOpen, restoreSession])
 
   useEffect(() => {
     if (!currentCustomer) return
     setProfileForm({
       name: currentCustomer.name,
-      email: currentCustomer.email,
       phone: currentCustomer.phone,
-      address: currentCustomer.address,
-      city: currentCustomer.city,
-      province: currentCustomer.province,
     })
   }, [currentCustomer])
 
@@ -84,7 +81,8 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
           phone: authForm.phone,
           password: authForm.password,
         })
-        setMessage('Account created successfully.')
+        setMessage('Check your email to verify your account, then sign in.')
+        setMode('signin')
       }
       setAuthForm(emptyAuthForm)
     } catch (err) {
@@ -94,19 +92,20 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
     }
   }
 
-  const handleProfileSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleProfileSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const validation = validateProfileForm(profileForm)
     setErrors(validation)
     setMessage('')
     if (Object.keys(validation).length > 0) return
 
+    setIsSaving(true)
     try {
-      updateProfile(profileForm)
+      await updateProfile(profileForm)
       setMessage('Profile updated successfully.')
     } catch (err) {
       setErrors({ form: err instanceof Error ? err.message : 'Unable to update profile.' })
-    }
+    } finally { setIsSaving(false) }
   }
 
   return (
@@ -158,48 +157,20 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
                     required
                     value={profileForm.name}
                   />
-                  <Field
-                    error={errors.email}
-                    label="Email address (optional)"
-                    onChange={(value) => setProfileForm((current) => ({ ...current, email: value }))}
-                    type="email"
-                    value={profileForm.email}
-                  />
+
                   <Field
                     error={errors.phone}
                     label="Phone number (optional)"
                     onChange={(value) => setProfileForm((current) => ({ ...current, phone: value }))}
                     value={profileForm.phone}
                   />
-                  <Field
-                    error={errors.address}
-                    label="Shipping address"
-                    onChange={(value) => setProfileForm((current) => ({ ...current, address: value }))}
-                    value={profileForm.address}
-                  />
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <Field
-                      error={errors.city}
-                      label="City"
-                      onChange={(value) => setProfileForm((current) => ({ ...current, city: value }))}
-                      value={profileForm.city}
-                    />
-                    <Field
-                      error={errors.province}
-                      label="Province"
-                      onChange={(value) => setProfileForm((current) => ({ ...current, province: value }))}
-                      value={profileForm.province}
-                    />
-                  </div>
+
                   <Alert errors={errors} message={message} />
                   <div className="flex flex-col gap-3 sm:flex-row">
-                    <Button className="flex-1" type="submit">Update Profile</Button>
+                    <Button className="flex-1" type="submit" disabled={isSaving}>Update Profile</Button>
                     <Button
                       className="flex-1"
-                      onClick={() => {
-                        logout()
-                        setMessage('')
-                      }}
+                      onClick={() => { void logout().then(() => setMessage('')).catch(error => setErrors({ form: error instanceof Error ? error.message : 'Sign out unavailable.' })) }}
                       variant="outline"
                     >
                       <LogOut className="h-4 w-4" aria-hidden="true" />
@@ -244,10 +215,10 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
                     )}
                     <Field
                       error={errors.email}
-                      label={mode === 'signin' ? 'Email or phone number' : 'Email address (optional)'}
+                      label="Email address"
                       onChange={(value) => setAuthForm((current) => ({ ...current, email: value }))}
-                      required={mode === 'signin'}
-                      type={mode === 'signin' ? 'text' : 'email'}
+                      required
+                      type="email"
                       value={authForm.email}
                     />
                     <Field
@@ -351,11 +322,10 @@ function Alert({ errors, message }: { errors: FieldErrors; message: string }) {
 function validateAuthForm(form: typeof emptyAuthForm, mode: AccountMode) {
   const errors: FieldErrors = {}
   if (mode === 'signup' && form.name.trim().length < 2) errors.name = 'Enter your full name.'
-  if (mode === 'signin' && !form.email.trim()) errors.email = 'Enter your email or phone number.'
-  if (mode === 'signup' && !hasContactMethod(form)) errors.form = 'Enter either an email address or phone number.'
-  if (form.email.trim() && !isValidEmail(form.email)) errors.email = 'Enter a valid email address.'
+  if (!isValidEmail(form.email)) errors.email = 'Enter a valid email address.'
+
   if (form.phone.trim() && !isValidPhone(form.phone)) errors.phone = 'Enter a valid phone number.'
-  if (!isStrongPassword(form.password)) {
+  if (mode === 'signup' ? !isStrongPassword(form.password) : form.password.length < 8) {
     errors.password = 'Use 8+ characters with uppercase, lowercase, number, and symbol.'
   }
   if (mode === 'signup' && form.password !== form.confirmPassword) {
@@ -367,17 +337,8 @@ function validateAuthForm(form: typeof emptyAuthForm, mode: AccountMode) {
 function validateProfileForm(form: CustomerProfileUpdate) {
   const errors: FieldErrors = {}
   if (form.name.trim().length < 2) errors.name = 'Enter your full name.'
-  if (!hasContactMethod(form)) errors.form = 'Keep either an email address or phone number on your profile.'
-  if (form.email.trim() && !isValidEmail(form.email)) errors.email = 'Enter a valid email address.'
   if (form.phone.trim() && !isValidPhone(form.phone)) errors.phone = 'Enter a valid phone number.'
-  if (form.address && form.address.trim().length < 5) errors.address = 'Address is too short.'
-  if (form.city && form.city.trim().length < 2) errors.city = 'City is too short.'
-  if (form.province && form.province.trim().length < 2) errors.province = 'Province is too short.'
   return errors
-}
-
-function hasContactMethod(value: { email: string; phone: string }) {
-  return Boolean(value.email.trim() || value.phone.trim())
 }
 
 function isValidEmail(value: string) {

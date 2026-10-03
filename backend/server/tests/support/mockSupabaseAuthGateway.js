@@ -1,8 +1,7 @@
 import { AUTH_ERROR_CODES } from '../../auth/contracts.js'
 
 const identities = Object.freeze({
-  owner: Object.freeze({ id: '00000000-0000-4000-8000-000000000101', type: 'owner', emailVerified: true }),
-  manager: Object.freeze({ id: '00000000-0000-4000-8000-000000000102', type: 'manager', emailVerified: true }),
+  admin: Object.freeze({ id: '00000000-0000-4000-8000-000000000101', type: 'admin', emailVerified: true }),
   customer: Object.freeze({ id: '00000000-0000-4000-8000-000000000103', type: 'customer', emailVerified: true }),
   unverified: Object.freeze({ id: '00000000-0000-4000-8000-000000000104', type: 'customer', emailVerified: false }),
 })

@@ -12,83 +12,32 @@ test('disposable SQL: real canonical authorization, fulfillment transactions and
     const client = sqlClient(db), service = new AdminOrdersV1Service(client, {
         warn() {
         }
-    }), auth = new AdminAuthorizationService(client), owner = await seedActor(db, 'owner'), operator = await seedActor(db, 'order_manager');
+    }), auth = new AdminAuthorizationService(client), owner = await seedActor(db, 'admin'), operator = owner;
     const mutate = async (o, action, payload, options = {}) => service.mutate(o.id, action, {
         mutationId: options.mutationId ?? randomUUID(), expectedRevision: options.rev ?? await revision(db, o.id), ...payload
     }, {
         userId: options.actor ?? owner, requestId: 'req_fulfillment_fixture'
     });
-    await t.test('real role bundles, legacy rejection and disabled assignments', async () => {
-        assert.deepEqual((await auth.resolve(owner)).permissions, ['*']);
-        const keys = (await auth.resolve(operator)).permissions;
-        for (const p of ['orders.read', 'orders.manage', 'payments.read', 'payments.manage'])
-            assert.ok(keys.includes(p));
-        for (const key of ['manager', 'content_editor', 'blog_writer']) {
-            const actor = await seedActor(db, key), a = await auth.resolve(actor);
-            assert.ok(a);
-            assert.equal(a.permissions.includes('orders.manage'), false);
-            const o = await seedOrder(db);
-            await assert.rejects(mutate(o, 'status', {
-                status: 'Confirmed'
-            }, {
-                actor
-            }), {
-                code: 'PERMISSION_DENIED'
-            });
+    await t.test('Admin wildcard only; legacy roles and customers cannot mutate', async () => {
+        assert.deepEqual((await auth.resolve(owner)).permissions,['*']);
+        for(const key of ['owner_admin','shop_manager','order_manager','content_editor','blog_writer','owner','manager']) {
+            const actor=await seedActor(db,key); assert.equal(await auth.resolve(actor),null);
+            await assert.rejects(mutate(await seedOrder(db),'status',{status:'Confirmed'},{actor}),{code:'PERMISSION_DENIED'});
         }
-        for (const key of ['owner_admin', 'shop_manager'])
-            assert.equal(await auth.resolve(await seedActor(db, key)), null);
-        await db.query('update public.user_roles set active=false where user_id=$1', [operator]);
-        assert.equal(await auth.resolve(operator), null);
-        await db.query('update public.user_roles set active=true where user_id=$1', [operator]);
     });
-    await t.test('assignment lifecycle: resolver and RPC ignore expired/revoked/disabled authority', async () => {
-        const expired = await seedActor(db, 'order_manager'), revoked = await seedActor(db, 'order_manager'), disabled = await seedActor(db, 'order_manager');
-        await db.query("update public.user_roles set expires_at='2000-01-01T00:00:00Z' where user_id=$1", [expired]);
-        await db.query("update public.user_roles set active=false,revoked_at='2000-01-01T00:00:00Z' where user_id=$1", [revoked]);
-        await db.query('update public.user_roles set active=false where user_id=$1', [disabled]);
-        for (const actor of [expired, revoked, disabled]) {
-            assert.equal(await auth.resolve(actor), null);
-            const o = await seedOrder(db), before = await revision(db, o.id);
-            for (const [action, payload] of [['status', { status: 'Confirmed' }], ['cancel', { reason: 'Must not restock' }], ['payment', { reference: '', reason: 'Must not confirm' }]])
-                await assert.rejects(mutate(o, action, payload, { actor }), { code: 'PERMISSION_DENIED' });
-            assert.equal(await revision(db, o.id), before);
-            assert.equal((await db.query('select status,payment_status from public.orders where id=$1', [o.id])).rows[0].status, 'Pending');
-            assert.equal((await db.query('select stock_quantity from public.product_variants where id=$1', [o.variant])).rows[0].stock_quantity, 10);
-            assert.equal((await db.query("select count(*)::int n from public.admin_audit_logs where resource='orders' and resource_id=$1", [o.id])).rows[0].n, 0);
-        }
-        // Canonical owner guard forbids expiring owner rows. Simulate a stale legacy row ONLY
-        // in this disposable fixture, restoring the guard before exercising real authorization.
-        const expiredOwner = await seedActor(db, 'owner');
-        await assert.rejects(db.query("update public.user_roles set expires_at='2000-01-01T00:00:00Z' where user_id=$1", [expiredOwner]), /RF_OWNER_ASSIGNMENT_MUST_NOT_EXPIRE/);
-        await db.exec('alter table public.user_roles disable trigger user_roles_protect_owner');
-        try {
-            await db.query("update public.user_roles set expires_at='2000-01-01T00:00:00Z' where user_id=$1", [expiredOwner]);
-        } finally {
-            await db.exec('alter table public.user_roles enable trigger user_roles_protect_owner');
-        }
-        assert.equal(await auth.resolve(expiredOwner), null);
-        await assert.rejects(mutate(await seedOrder(db), 'note', { text: 'No expired wildcard' }, { actor: expiredOwner }), { code: 'PERMISSION_DENIED' });
-        assert.deepEqual((await auth.resolve(owner)).permissions, ['*']);
-
-        const editor = await seedActor(db, 'content_editor');
-        await db.query("insert into public.user_roles(user_id,role_id,expires_at) select $1,id,'2000-01-01T00:00:00Z' from public.roles where key='order_manager'", [editor]);
-        const editorPermissions = (await auth.resolve(editor)).permissions;
-        assert.ok(editorPermissions.includes('promotions.manage'));
-        for (const permission of ['orders.read', 'orders.manage', 'payments.read', 'payments.manage', '*'])
-            assert.equal(editorPermissions.includes(permission), false);
-        await assert.rejects(mutate(await seedOrder(db), 'note', { text: 'No inherited order authority' }, { actor: editor }), { code: 'PERMISSION_DENIED' });
-
-        const mixed = await seedActor(db, 'order_manager'), future = await seedActor(db, 'order_manager');
-        await db.query("insert into public.user_roles(user_id,role_id,expires_at) select $1,id,'2000-01-01T00:00:00Z' from public.roles where key='content_editor'", [mixed]);
-        await db.query("update public.user_roles set expires_at='2099-01-01T00:00:00Z' where user_id=$1", [future]);
-        for (const actor of [operator, mixed, future]) {
-            assert.deepEqual((await auth.resolve(actor)).permissions, (await auth.resolve(operator)).permissions);
-            await mutate(await seedOrder(db), 'status', { status: 'Confirmed' }, { actor });
-        }
-        await db.query('update public.user_roles set expires_at=now() where user_id=$1', [future]);
-        assert.equal(await auth.resolve(future), null);
-        await assert.rejects(mutate(await seedOrder(db), 'note', { text: 'Expired at boundary' }, { actor: future }), { code: 'PERMISSION_DENIED' });
+    await t.test('inactive assignment/profile/role denied independently by resolver and RPC', async()=>{
+        // Keep a second active administrator so supported guards allow the negative fixture.
+        const actor=randomUUID(); await db.query('insert into auth.users(id,email) values($1,$2)',[actor,actor+'@example.invalid']);
+        await db.query("insert into public.user_roles(user_id,role_id) select $1,id from public.roles where key='admin'",[actor]);
+        await db.query('update public.user_roles set active=false where user_id=$1',[actor]);
+        assert.equal(await auth.resolve(actor),null);
+        await assert.rejects(mutate(await seedOrder(db),'note',{text:'Denied'},{actor}),{code:'PERMISSION_DENIED'});
+        await db.query('update public.user_roles set active=true where user_id=$1',[actor]);
+        await db.query("update public.profiles set status='Inactive' where id=$1",[actor]);
+        assert.equal(await auth.resolve(actor),null);
+        await assert.rejects(mutate(await seedOrder(db),'note',{text:'Denied'},{actor}),{code:'PERMISSION_DENIED'});
+        await db.query("update public.profiles set status='Active' where id=$1",[actor]);
+        assert.deepEqual((await auth.resolve(actor)).permissions,['*']);
     });
     await t.test('tracking correction reason is bounded, immutable, replay-safe and admin-only', async () => {
         const o = await seedOrder(db);
