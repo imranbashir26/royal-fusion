@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { legacyAdminDatabase, applyRelease, sessionSqlClient, verifiedLegacyPermissionBody, installVerifiedLegacyPermission } from './support/singleAdminDatabase.js'
 import { AdminAuthorizationService } from '../services/adminAuthorizationService.js'
@@ -220,7 +220,7 @@ async function reviewedPermissionDefinitions() {
    return {guard,source:body('verified_source'),target:body('expected')}
  }
  const [expand,retire]=sql.map(extract)
- assert.equal(expand.source,verifiedLegacyPermissionBody)
+ assert.equal(expand.source,verifiedLegacyPermissionBody.replaceAll('\r\n','\n').trim())
  assert.equal(expand.target,retire.source)
  assert.ok(!expand.guard.includes('replace(p.prosrc'))
  assert.ok(!retire.guard.includes('replace(p.prosrc'))
@@ -344,4 +344,31 @@ test('actual SQL: changed final resolver rejected by retirement reruns atomicall
    await assert.rejects(applyRelease(db,retirement,admin),/RF_INCOMPATIBLE_FUNCTION: has_permission/)
    assert.deepEqual(await authoritySnapshot(db),before)
  })
+})
+
+
+test('actual SQL: byte-exact 496-byte production prosrc and supplied metadata expand successfully',async t=>{
+ const {db,admin}=await legacyAdminDatabase();t.after(()=>db.close())
+ const production=(await db.query("select p.*,l.lanname,pg_get_userbyid(p.proowner) owner_name from pg_proc p join pg_language l on l.oid=p.prolang where p.oid='public.has_permission(text)'::regprocedure")).rows[0]
+ assert.equal(production.prosrc,verifiedLegacyPermissionBody)
+ assert.equal(Buffer.byteLength(production.prosrc,'utf8'),496)
+ assert.equal(production.prosrc.length,496)
+ assert.equal(createHash('md5').update(production.prosrc).digest('hex'),'4af18d82cf4aa911ff5a11eb02caa7fa')
+ assert.equal((production.prosrc.match(/\r/g)||[]).length,12)
+ assert.equal((production.prosrc.match(/\n/g)||[]).length,12)
+ assert.ok(production.prosrc.startsWith('\r\n  select exists (\r\n    select 1'))
+ assert.ok(production.prosrc.endsWith('\r\n  );\r\n'))
+ assert.deepEqual({language:production.lanname,owner:production.owner_name,securityDefiner:production.prosecdef,
+   volatility:production.provolatile,strict:production.proisstrict,leakproof:production.proleakproof,
+   parallel:production.proparallel,support:production.prosupport,configuration:production.proconfig},
+   {language:'sql',owner:'postgres',securityDefiner:true,volatility:'s',strict:false,leakproof:false,
+    parallel:'u',support:'-',configuration:['search_path=""']})
+ const acl=(await db.query("select proacl::text raw_acl,has_function_privilege('anon',oid,'EXECUTE') anon,has_function_privilege('authenticated',oid,'EXECUTE') authenticated,has_function_privilege('service_role',oid,'EXECUTE') service_role from pg_proc where oid='public.has_permission(text)'::regprocedure")).rows[0]
+ assert.deepEqual(acl,{raw_acl:'{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}',anon:false,authenticated:true,service_role:true})
+ await applyRelease(db,expansion,admin)
+ await applyRelease(db,expansion,admin)
+ assert.equal((await db.query("select count(*)::int n from public.user_roles ur join public.roles r on r.id=ur.role_id where ur.user_id=$1 and ur.active and r.key in ('admin','owner_admin')",[admin])).rows[0].n,2)
+ assert.equal((await db.query("select count(*)::int n from public.auth_bootstrap_state where id='first_admin' and completed_by=$1",[admin])).rows[0].n,1)
+ assert.equal((await db.query("select count(*)::int n from public.admin_audit_logs where action='authorization.expanded'")).rows[0].n,1)
+ assert.deepEqual((await new AdminAuthorizationService(sessionSqlClient(db)).resolve(admin)).permissions,['*'])
 })

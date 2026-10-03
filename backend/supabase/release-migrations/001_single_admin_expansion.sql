@@ -238,23 +238,17 @@ declare
         where boot.id='first_admin' and boot.completed_by=ur.user_id))));
 $expected$,E'\r\n',E'\n'),E' \t\r\n');
   approved_source_lf text:=btrim(replace($verified_source$
-select exists (
-  select 1
-  from public.user_roles user_roles
-  join public.roles roles
-    on roles.id = user_roles.role_id
-  join public.role_permissions role_permissions
-    on role_permissions.role_id = roles.id
-  join public.permissions permissions
-    on permissions.id = role_permissions.permission_id
-  where user_roles.user_id = auth.uid()
-    and user_roles.active
-    and roles.active
-    and (
-      permissions.key = required_permission
-      or permissions.key = '*'
-    )
-);
+  select exists (
+    select 1
+    from public.user_roles user_roles
+    join public.roles roles on roles.id = user_roles.role_id
+    join public.role_permissions role_permissions on role_permissions.role_id = roles.id
+    join public.permissions permissions on permissions.id = role_permissions.permission_id
+    where user_roles.user_id = auth.uid()
+      and user_roles.active
+      and roles.active
+      and (permissions.key = required_permission or permissions.key = '*')
+  );
 $verified_source$,E'\r\n',E'\n'),E' \t\r\n');
 begin
   select * into p from pg_proc where oid=to_regprocedure('public.has_permission(text)');

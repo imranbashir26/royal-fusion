@@ -3,24 +3,8 @@ import { readFile } from 'node:fs/promises'
 import { createCatalogDatabase } from './catalogDatabase.js'
 import { sqlClient } from './fulfillmentDatabase.js'
 
-// Exact body supplied by the production read-only inspection; local PGlite fixture only.
-export const verifiedLegacyPermissionBody = `select exists (
-  select 1
-  from public.user_roles user_roles
-  join public.roles roles
-    on roles.id = user_roles.role_id
-  join public.role_permissions role_permissions
-    on role_permissions.role_id = roles.id
-  join public.permissions permissions
-    on permissions.id = role_permissions.permission_id
-  where user_roles.user_id = auth.uid()
-    and user_roles.active
-    and roles.active
-    and (
-      permissions.key = required_permission
-      or permissions.key = '*'
-    )
-);`
+// Exact 496-byte production prosrc, including leading/trailing CRLF and indentation.
+export const verifiedLegacyPermissionBody = "\r\n  select exists (\r\n    select 1\r\n    from public.user_roles user_roles\r\n    join public.roles roles on roles.id = user_roles.role_id\r\n    join public.role_permissions role_permissions on role_permissions.role_id = roles.id\r\n    join public.permissions permissions on permissions.id = role_permissions.permission_id\r\n    where user_roles.user_id = auth.uid()\r\n      and user_roles.active\r\n      and roles.active\r\n      and (permissions.key = required_permission or permissions.key = '*')\r\n  );\r\n"
 export async function installVerifiedLegacyPermission(db, body = verifiedLegacyPermissionBody) {
   await db.exec(`create or replace function public.has_permission(required_permission text)
     returns boolean language sql stable security definer set search_path='' as $$${body}$$;
