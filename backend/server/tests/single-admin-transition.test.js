@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises'
 import { legacyAdminDatabase, applyRelease, sessionSqlClient, verifiedLegacyPermissionBody, installVerifiedLegacyPermission } from './support/singleAdminDatabase.js'
 import { verifiedLegacyRevocationBody, installVerifiedLegacyRevocation } from './support/singleAdminDatabase.js'
 import { verifiedLegacySessionFunctions, installVerifiedLegacySessionFunction } from './support/singleAdminDatabase.js'
+import { verifiedLegacyProfileBody, installVerifiedLegacyProfile, productionShapedAdminDatabase } from './support/singleAdminDatabase.js'
 import { AdminAuthorizationService } from '../services/adminAuthorizationService.js'
 import { SupabaseSessionRepository } from '../services/sessionRepository.js'
 import { AuthSessionService } from '../services/authSessionService.js'
@@ -600,4 +601,220 @@ test('actual SQL: session compatibility preserves refresh leases and security ev
  await db.query("update public.application_sessions set revocation_reason='fixture repeated' where id=$1",[id])
  assert.deepEqual(await evidence(),[{action:'session.created',n:1},{action:'session.revoked',n:1}])
  assert.deepEqual((await db.query("select metadata from public.admin_audit_logs where resource_id=$1 and action='session.revoked'",[id])).rows[0].metadata,{operation:'UPDATE'})
+})
+
+const profileTriggerTargets=[
+ ['application_sessions','application_sessions_prevent_delete','require_session_revocation',11],
+ ['application_sessions','application_sessions_security_audit','write_application_session_security_audit',21],
+ ['profiles','profiles_protect_restricted_fields','protect_profile_identity_fields',27],
+ ['user_roles','user_roles_protect_admin','protect_admin_role_assignment',31],
+ ['roles','roles_protect_admin','protect_admin_role_definition',27],
+ ['role_permissions','role_permissions_protect_admin_bundle','protect_admin_permission_bundle',27],
+ ['permissions','permissions_protect_admin_wildcard','protect_admin_permission_bundle',27],
+ ['auth_bootstrap_state','auth_bootstrap_state_immutable','protect_auth_bootstrap_state',27],
+ ['guest_order_claims','guest_order_claims_protect','protect_guest_order_claim',19],
+ ['user_roles','user_roles_security_audit','write_auth_security_audit',29],
+ ['guest_order_claims','guest_order_claims_security_audit','write_auth_security_audit',17],
+ ['admin_audit_logs','admin_audit_logs_immutable','protect_admin_audit_log',27],
+]
+const lineEndingForms={LF:sql=>sql.replaceAll('\r\n','\n'),CRLF:sql=>sql.replaceAll('\r\n','\n').replaceAll('\n','\r\n')}
+async function profileCompatibilitySource() {
+ const source=await readFile(new URL('../../supabase/release-migrations/'+expansion,import.meta.url),'utf8')
+ const guard=source.match(/do \$old_guard\$[\s\S]*?\$old_guard\$;/g).find(block=>block.includes("tgrelid='public.profiles'"))
+ const known=tag=>guard.match(new RegExp('\\$'+tag+'\\$([\\s\\S]*?)\\$'+tag+'\\$'))[1]
+ const historical=await readFile(new URL('../../supabase/migrations/003_auth_schema_hardening.sql',import.meta.url),'utf8')
+ const historicalProfile=historical.match(/create or replace function public\.protect_profile_identity_fields\(\)[\s\S]*?as \$\$([\s\S]*?)\$\$;/)[1]
+ assert.equal(lineEndingForms.LF(known('known0')).trim(),lineEndingForms.LF(verifiedLegacyProfileBody).trim())
+ assert.equal(lineEndingForms.LF(known('known1')).trim(),lineEndingForms.LF(historicalProfile).trim())
+ return {source,guard,known0:verifiedLegacyProfileBody,known1:historicalProfile}
+}
+async function applyProfileCompatibilitySource(db,source,admin) {
+ await db.query("select set_config('royal_fusion.approved_admin_uuid',$1,false)",[admin])
+ try {await db.exec(source)} catch(error) {await db.exec('rollback');throw error}
+}
+async function profileCompatibilitySnapshot(db) {
+ return {authority:await authoritySnapshot(db),
+   functions:(await db.query("select to_jsonb(p) value from pg_proc p where pronamespace='public'::regnamespace order by oid")).rows,
+   triggers:(await db.query("select to_jsonb(t) value from pg_trigger t where tgrelid in ('public.profiles'::regclass,'public.application_sessions'::regclass) order by oid")).rows,
+   sessions:(await db.query('select to_jsonb(s) value from public.application_sessions s order by id')).rows}
+}
+
+test('actual SQL: profile compatibility retains known0/known1 for LF and CRLF migration input',async t=>{
+ const {guard,known0,known1}=await profileCompatibilitySource()
+ const {db}=await legacyAdminDatabase();t.after(()=>db.close())
+ assert.equal(verifiedLegacyProfileBody.length,244)
+ assert.equal(Buffer.byteLength(verifiedLegacyProfileBody),244)
+ assert.equal(createHash('md5').update(verifiedLegacyProfileBody).digest('hex'),'14e130fd608e482e2dceb1b79c40b6a6')
+ assert.equal((verifiedLegacyProfileBody.match(/\r/g)||[]).length,10)
+ assert.equal((verifiedLegacyProfileBody.match(/\n/g)||[]).length,10)
+ const installTrigger=()=>db.exec(`create trigger profiles_protect_restricted_fields before update on public.profiles
+   for each row execute function public.protect_profile_restricted_fields()`)
+ for(const [inputName,input] of Object.entries(lineEndingForms)) {
+   for(const [bodyName,body] of [['known0',known0],['known1',known1]]) {
+     for(const [formatName,format] of [...Object.entries(lineEndingForms),['outer whitespace',sql=>' \t\r\n'+lineEndingForms.CRLF(sql).trim()+'\r\n\t ']]) {
+       await t.test(inputName+' migration / '+bodyName+' '+formatName,async()=>{
+         await installVerifiedLegacyProfile(db,format(body))
+         await db.exec(input(guard))
+         assert.equal((await db.query("select count(*)::int n from pg_trigger where tgrelid='public.profiles'::regclass and tgname='profiles_protect_restricted_fields'")).rows[0].n,0)
+         assert.equal((await db.query("select prosrc from pg_proc where oid='public.protect_profile_restricted_fields()'::regprocedure")).rows[0].prosrc,format(body))
+         await installTrigger()
+       })
+     }
+   }
+ }
+ // Preserve the pre-existing canonical function-name acceptance path on reruns.
+ for(const [inputName,input] of Object.entries(lineEndingForms)) await t.test(inputName+' canonical name retained',async()=>{
+   await db.exec(`drop trigger profiles_protect_restricted_fields on public.profiles;
+     create or replace function public.protect_profile_identity_fields() returns trigger language plpgsql as $$begin return new;end;$$;
+     create trigger profiles_protect_restricted_fields before update on public.profiles
+       for each row execute function public.protect_profile_identity_fields()`)
+   await db.exec(input(guard))
+   await installTrigger()
+ })
+})
+
+function profileCompatibilityMutations(body,known1=false) {
+ const change=(from,to)=>{assert.ok(body.includes(from));return body.replace(from,()=>to)}
+ return known1 ? [
+   ['changed owner role',change("r.key = 'owner'","r.key = 'manager'")],
+   ['removed protected field',change('      or new.email is distinct from old.email\r\n','')],
+   ['changed status protection',change('new.status is distinct from old.status','new.status is not distinct from old.status')],
+   ['changed return',change('return new;','return old;')],
+   ['extra SQL',change('begin\r\n','begin\r\n  perform 1;\r\n')],
+   ['internal whitespace',change('  remaining_owners bigint;','   remaining_owners bigint;')],
+   ['mixed line endings',change('declare\r\n','declare\n')],
+   ['CR inside literal',change("'Active'","'Active\r'")],
+ ] : [
+   ['changed permission',change('customers.manage','roles.manage')],
+   ['removed protected field',change('    new.email := old.email;\r\n','')],
+   ['changed status assignment',change('new.status := old.status','new.status := new.status')],
+   ['changed return',change('return new;','return old;')],
+   ['extra SQL',change('begin\r\n','begin\r\n  perform 1;\r\n')],
+   ['internal whitespace',change('    new.id := old.id;','     new.id := old.id;')],
+   ['mixed line endings',change('begin\r\n','begin\n')],
+   ['CR inside literal',change("'customers.manage'","'customers.manage\r'")],
+ ]
+}
+test('actual SQL: profile compatibility rejects mutations and rolls back LF/CRLF full expansion',async t=>{
+ const {source,known0,known1}=await profileCompatibilitySource()
+ const {db,admin}=await productionShapedAdminDatabase();t.after(()=>db.close())
+ for(const [bodyName,body] of [['known0',known0],['known1',known1]]) {
+   for(const [mutationName,mutated] of profileCompatibilityMutations(lineEndingForms.CRLF(body),bodyName==='known1')) {
+     for(const [inputName,input] of Object.entries(lineEndingForms)) await t.test(inputName+' '+bodyName+' '+mutationName,async()=>{
+       await installVerifiedLegacyProfile(db,mutated)
+       const before=await profileCompatibilitySnapshot(db)
+       await assert.rejects(applyProfileCompatibilitySource(db,input(source),admin),/RF_UNEXPECTED_EXISTING_GUARD: profiles_protect_restricted_fields/)
+       assert.deepEqual(await profileCompatibilitySnapshot(db),before)
+       assert.equal(before.authority.bootstrap,null)
+       assert.ok(before.authority.roles.every(role=>role.key!=='admin'))
+       assert.ok(!before.authority.audit?.some(row=>row.action==='authorization.expanded'))
+     })
+   }
+ }
+})
+
+test('actual SQL: profile compatibility full production-shaped LF/CRLF expansion and rerun preserve sessions',async t=>{
+ const {source}=await profileCompatibilitySource()
+ for(const [inputName,input] of Object.entries(lineEndingForms)) await t.test(inputName+' complete migration and rerun',async t=>{
+   const {db,admin}=await productionShapedAdminDatabase();t.after(()=>db.close())
+   const sql=input(source)
+   assert.ok(inputName==='LF'?!sql.includes('\r'):!sql.replaceAll('\r\n','').includes('\n'))
+   const before=await profileCompatibilitySnapshot(db)
+   assert.equal(before.sessions.length,10)
+   assert.equal((await db.query("select prosrc from pg_proc where oid='public.protect_profile_restricted_fields()'::regprocedure")).rows[0].prosrc,verifiedLegacyProfileBody)
+   for(const [signature,body] of [['has_permission(text)',verifiedLegacyPermissionBody],['require_session_revocation()',verifiedLegacyRevocationBody],
+     ...verifiedLegacySessionFunctions.map(spec=>[spec.name+'('+spec.types+')',spec.body])]) {
+     assert.equal((await db.query('select prosrc from pg_proc where oid=$1::regprocedure',['public.'+signature])).rows[0].prosrc,body)
+   }
+   const oldTrigger=(await db.query("select oid,tgtype,tgenabled,tgnargs,octet_length(tgargs) args_bytes,tgqual::text qual,tgfoid='public.protect_profile_restricted_fields()'::regprocedure bound from pg_trigger where tgrelid='public.profiles'::regclass and tgname='profiles_protect_restricted_fields'")).rows[0]
+   assert.deepEqual({...oldTrigger,oid:0},{oid:0,tgtype:19,tgenabled:'O',tgnargs:0,args_bytes:0,qual:null,bound:true})
+   const allNames=[...profileTriggerTargets.slice(3).map(row=>row[1]),'user_roles_protect_owner','roles_protect_owner','role_permissions_protect_owner_bundle','permissions_protect_owner_wildcard']
+   assert.equal((await db.query("select count(*)::int n from pg_trigger where not tgisinternal and tgname=any($1::text[])",[allNames])).rows[0].n,0)
+   for(const name of absentSingleAdminFunctions) assert.equal((await db.query("select to_regprocedure($1)::text value",['public.'+name+'()'])).rows[0].value,null)
+   await db.exec("create or replace function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('fixture.user_uuid',true),'')::uuid$$")
+   await setIdentity(db,admin)
+   const fingerprint=rows=>createHash('sha256').update(JSON.stringify(rows)).digest('hex')
+   const verify=async()=>{
+     const sessions=(await db.query('select to_jsonb(s) value from public.application_sessions s order by id')).rows
+     assert.deepEqual(sessions,before.sessions);assert.equal(fingerprint(sessions),fingerprint(before.sessions))
+     assert.equal((await db.query("select count(*)::int n from public.user_roles ur join public.roles r on r.id=ur.role_id where ur.user_id=$1 and ur.active and r.active and r.key in ('admin','owner_admin')",[admin])).rows[0].n,2)
+     assert.equal((await db.query("select completed_by from public.auth_bootstrap_state where id='first_admin'")).rows[0].completed_by,admin)
+     assert.equal((await db.query("select count(*)::int n from public.admin_audit_logs where action='authorization.expanded'")).rows[0].n,1)
+     assert.equal(await permission(db,'unlisted.permission'),true)
+     assert.deepEqual((await new AdminAuthorizationService(sessionSqlClient(db)).resolve(admin)).permissions,['*'])
+     for(const [table,name,func,type] of profileTriggerTargets) {
+       const trigger=(await db.query("select tgtype,tgenabled,tgnargs,octet_length(tgargs) args_bytes,tgqual::text qual,tgfoid=$3::regprocedure bound from pg_trigger where tgrelid=$1::regclass and tgname=$2 and not tgisinternal",['public.'+table,name,'public.'+func+'()'])).rows[0]
+       assert.deepEqual(trigger,{tgtype:type,tgenabled:'O',tgnargs:0,args_bytes:0,qual:null,bound:true},name)
+     }
+     for(const name of ['require_session_revocation','write_application_session_security_audit']) {
+       const initial=before.functions.find(row=>row.value.proname===name).value
+       assert.equal(String((await db.query('select $1::regprocedure::oid oid',['public.'+name+'()'])).rows[0].oid),String(initial.oid))
+     }
+     assert.notEqual((await db.query("select oid from pg_trigger where tgrelid='public.profiles'::regclass and tgname='profiles_protect_restricted_fields'")).rows[0].oid,oldTrigger.oid)
+   }
+   await applyProfileCompatibilitySource(db,sql,admin);await verify()
+   const auditAfterFirst=(await db.query('select to_jsonb(a) value from public.admin_audit_logs a order by id')).rows
+   assert.equal(auditAfterFirst.filter(row=>row.value.action==='session.created').length,10)
+   for(const initial of before.authority.audit) assert.deepEqual(auditAfterFirst.find(row=>row.value.id===initial.id)?.value,initial)
+   await applyProfileCompatibilitySource(db,sql,admin);await verify()
+   assert.deepEqual((await db.query('select to_jsonb(a) value from public.admin_audit_logs a order by id')).rows,auditAfterFirst)
+ })
+})
+
+async function targetHelperCompatibilitySource() {
+ const {source}=await profileCompatibilitySource()
+ const guards=[...source.match(/do \$function_install\$[\s\S]*?\$function_install\$;/g),
+   source.match(/do \$guest_guard\$[\s\S]*?\$guest_guard\$;/)[0]]
+ return {source,specs:absentSingleAdminFunctions.map(name=>{
+   const guard=guards.find(block=>block.includes("to_regprocedure('public."+name+'('))
+   const bodies=[...guard.matchAll(/\$(expected|previous_\d+)\$([\s\S]*?)\$\1\$/g)].map(match=>[match[1],lineEndingForms.LF(match[2]).trim()])
+   assert.ok(!guard.includes('replace(p.prosrc'))
+   return {name,guard,bodies,target:bodies.find(([tag])=>tag==='expected')[1]}
+ })}
+}
+async function installTargetHelperBody(db,name,body) {
+ await db.exec(`create or replace function public.${name}() returns trigger language plpgsql
+   security definer set search_path='' as $$${body}$$;`)
+}
+test('actual SQL: target helper compatibility accepts reviewed LF/CRLF target and previous bodies',async t=>{
+ const {source,specs}=await targetHelperCompatibilitySource()
+ const {db,admin}=await productionShapedAdminDatabase();t.after(()=>db.close())
+ await applyProfileCompatibilitySource(db,lineEndingForms.LF(source),admin)
+ for(const spec of specs) for(const [tag,body] of spec.bodies) {
+   for(const [inputName,input] of Object.entries(lineEndingForms)) {
+     for(const [bodyName,format] of [...Object.entries(lineEndingForms),['outer whitespace',sql=>' \t\r\n'+lineEndingForms.CRLF(sql)+'\r\n\t ']]) {
+       await t.test(spec.name+' '+tag+' '+bodyName+' / '+inputName+' input',async()=>{
+         await installTargetHelperBody(db,spec.name,format(body))
+         await db.exec(input(spec.guard))
+         assert.equal(lineEndingForms.LF((await db.query('select prosrc from pg_proc where oid=$1::regprocedure',['public.'+spec.name+'()'])).rows[0].prosrc).trim(),spec.target)
+       })
+     }
+   }
+ }
+})
+test('actual SQL: target helper compatibility rejects internal mutations and rolls back complete reruns',async t=>{
+ const {source,specs}=await targetHelperCompatibilitySource()
+ const {db,admin}=await productionShapedAdminDatabase();t.after(()=>db.close())
+ await applyProfileCompatibilitySource(db,lineEndingForms.LF(source),admin)
+ for(const spec of specs) {
+   const body=lineEndingForms.CRLF(spec.target)
+   const mutations=[
+     ['changed literal',body.replace(/'([^'\r\n]+)'/,(_,literal)=>"'"+literal+"_changed'")],
+     ['CR in literal',body.replace(/'([^'\r\n]+)'/,(_,literal)=>"'"+literal+"\r'")],
+     ['mixed line endings',body.replace('begin\r\n','begin\n')],
+     ['internal whitespace',body.replace('  ','   ')],
+     ['extra statement',body.replace('begin\r\n','begin\r\n  perform 1;\r\n')],
+   ]
+   for(const [mutationName,mutated] of mutations) for(const [inputName,input] of Object.entries(lineEndingForms)) {
+     await t.test(spec.name+' '+mutationName+' / '+inputName+' input',async()=>{
+       assert.notEqual(mutated,body)
+       await installTargetHelperBody(db,spec.name,mutated)
+       const before=await profileCompatibilitySnapshot(db)
+       await assert.rejects(applyProfileCompatibilitySource(db,input(source),admin),
+         spec.name==='protect_guest_order_claim'?/RF_INCOMPATIBLE_GUEST_GUARD/:new RegExp('RF_INCOMPATIBLE_FUNCTION: '+spec.name))
+       assert.deepEqual(await profileCompatibilitySnapshot(db),before)
+       await installTargetHelperBody(db,spec.name,spec.target)
+     })
+   }
+ }
 })

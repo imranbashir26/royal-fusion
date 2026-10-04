@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { createCatalogDatabase } from './catalogDatabase.js'
 import { sqlClient } from './fulfillmentDatabase.js'
@@ -45,6 +45,35 @@ export async function legacyAdminDatabase() {
   await installVerifiedLegacyRevocation(db)
   for (const spec of verifiedLegacySessionFunctions) await installVerifiedLegacySessionFunction(db,spec)
   return { db, admin, customer }
+}
+
+// Exact supplied production profile prosrc: 244 bytes, ten CRLF pairs.
+export const verifiedLegacyProfileBody = "\r\nbegin\r\n  if auth.uid() = old.id and not public.has_permission('customers.manage') then\r\n    new.id := old.id;\r\n    new.status := old.status;\r\n    new.email := old.email;\r\n    new.created_at := old.created_at;\r\n  end if;\r\n  return new;\r\nend;\r\n"
+export async function installVerifiedLegacyProfile(db, body = verifiedLegacyProfileBody) {
+  await db.exec(`create or replace function public.protect_profile_restricted_fields()
+    returns trigger language plpgsql security definer set search_path='' as $$${body}$$;`)
+}
+
+// In-memory production-shaped baseline; no production connection or private session data.
+export async function productionShapedAdminDatabase() {
+  const fixture = await legacyAdminDatabase()
+  const { db, admin, customer } = fixture
+  const source = (await readFile(new URL('../../../supabase/release-migrations/001_single_admin_expansion.sql',import.meta.url),'utf8')).replaceAll('\r\n','\n')
+  await installVerifiedLegacyProfile(db)
+  await db.exec(source.match(/create table if not exists public\.application_sessions \([\s\S]*?\n\);/)[0])
+  await db.exec(source.match(/alter table public\.application_sessions\n  add column if not exists refresh_lock_hash[\s\S]*?;/)[0])
+  await db.exec(`drop trigger profiles_protect_restricted_fields on public.profiles;
+    create trigger profiles_protect_restricted_fields before update on public.profiles
+      for each row execute function public.protect_profile_restricted_fields();
+    create trigger application_sessions_prevent_delete before delete on public.application_sessions
+      for each row execute function public.require_session_revocation();
+    create trigger application_sessions_security_audit after insert or update on public.application_sessions
+      for each row execute function public.write_application_session_security_audit();`)
+  for (let i=0;i<10;i++) await db.query(`insert into public.application_sessions
+    (user_id,session_class,created_at,last_seen_at,idle_expires_at,absolute_expires_at,session_key_hash,mfa_assurance)
+    values($1,$2,'2030-01-01T00:00:00Z','2030-01-01T00:00:00Z','2030-01-01T01:00:00Z','2030-01-01T02:00:00Z',$3,$4)`,
+    [i<3?admin:customer,i<3?'administrator':'customer',createHash('sha256').update('synthetic-session-'+i).digest('hex'),i<3?'aal2':'aal1'])
+  return fixture
 }
 export async function applyRelease(db, name, admin) {
   await db.query("select set_config('royal_fusion.approved_admin_uuid',$1,false)", [admin])

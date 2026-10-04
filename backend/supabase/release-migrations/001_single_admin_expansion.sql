@@ -286,14 +286,10 @@ end;
 $permission_install$;
 
 do $function_install$
-declare p pg_proc%rowtype;
-begin
-  select * into p from pg_proc where oid=to_regprocedure('public.protect_profile_identity_fields()');
-  if found then
-    if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
-      or p.prorettype<>'trigger'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
-      or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_profile_identity_fields'; end if;
-    if btrim(replace(p.prosrc,chr(13),''))=btrim($expected$
+declare
+  p pg_proc%rowtype;
+  -- Exact reviewed LF/CRLF bodies; never normalize installed SQL internally.
+  approved_expected_lf text:=btrim(replace($expected$
 declare
   remaining_admins bigint;
 begin
@@ -331,8 +327,8 @@ begin
   if tg_op='DELETE' then return old; end if;
   return new;
 end;
-$expected$) then return; end if;
-    if not (btrim(replace(p.prosrc,chr(13),''))=btrim($previous_0$
+$expected$,E'\r\n',E'\n'),E' \t\r\n');
+  approved_previous_0_lf text:=btrim(replace($previous_0$
 declare
   remaining_owners bigint;
 begin
@@ -371,7 +367,15 @@ begin
 
   return new;
 end;
-$previous_0$)) then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_profile_identity_fields'; end if;
+$previous_0$,E'\r\n',E'\n'),E' \t\r\n');
+begin
+  select * into p from pg_proc where oid=to_regprocedure('public.protect_profile_identity_fields()');
+  if found then
+    if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
+      or p.prorettype<>'trigger'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
+      or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_profile_identity_fields'; end if;
+    if btrim(p.prosrc,E' \t\r\n') in (approved_expected_lf,replace(approved_expected_lf,E'\n',E'\r\n')) then return; end if;
+    if not (btrim(p.prosrc,E' \t\r\n') in (approved_previous_0_lf,replace(approved_previous_0_lf,E'\n',E'\r\n'))) then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_profile_identity_fields'; end if;
   end if;
   execute $ddl$create or replace function public.protect_profile_identity_fields()
 returns trigger
@@ -421,14 +425,10 @@ end;
 $function_install$;
 
 do $function_install$
-declare p pg_proc%rowtype;
-begin
-  select * into p from pg_proc where oid=to_regprocedure('public.protect_admin_role_assignment()');
-  if found then
-    if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
-      or p.prorettype<>'trigger'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
-      or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_admin_role_assignment'; end if;
-    if btrim(replace(p.prosrc,chr(13),''))=btrim($expected$
+declare
+  p pg_proc%rowtype;
+  -- Exact reviewed LF/CRLF bodies; never normalize installed SQL internally.
+  approved_expected_lf text:=btrim(replace($expected$
 declare
   admin_role_id uuid;
   remaining_admins bigint;
@@ -525,7 +525,14 @@ begin
   end if;
   return new;
 end;
-$expected$) then return; end if;
+$expected$,E'\r\n',E'\n'),E' \t\r\n');
+begin
+  select * into p from pg_proc where oid=to_regprocedure('public.protect_admin_role_assignment()');
+  if found then
+    if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
+      or p.prorettype<>'trigger'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
+      or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_admin_role_assignment'; end if;
+    if btrim(p.prosrc,E' \t\r\n') in (approved_expected_lf,replace(approved_expected_lf,E'\n',E'\r\n')) then return; end if;
     if not (false) then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_admin_role_assignment'; end if;
   end if;
   execute $ddl$create or replace function public.protect_admin_role_assignment()
@@ -635,14 +642,10 @@ end;
 $function_install$;
 
 do $function_install$
-declare p pg_proc%rowtype;
-begin
-  select * into p from pg_proc where oid=to_regprocedure('public.protect_admin_role_definition()');
-  if found then
-    if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
-      or p.prorettype<>'trigger'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
-      or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_admin_role_definition'; end if;
-    if btrim(replace(p.prosrc,chr(13),''))=btrim($expected$
+declare
+  p pg_proc%rowtype;
+  -- Exact reviewed LF/CRLF bodies; never normalize installed SQL internally.
+  approved_expected_lf text:=btrim(replace($expected$
 declare
   role_being_disabled boolean := false;
 begin
@@ -661,7 +664,14 @@ begin
   end if;
   return new;
 end;
-$expected$) then return; end if;
+$expected$,E'\r\n',E'\n'),E' \t\r\n');
+begin
+  select * into p from pg_proc where oid=to_regprocedure('public.protect_admin_role_definition()');
+  if found then
+    if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
+      or p.prorettype<>'trigger'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
+      or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_admin_role_definition'; end if;
+    if btrim(p.prosrc,E' \t\r\n') in (approved_expected_lf,replace(approved_expected_lf,E'\n',E'\r\n')) then return; end if;
     if not (false) then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_admin_role_definition'; end if;
   end if;
   execute $ddl$create or replace function public.protect_admin_role_definition()
@@ -693,14 +703,10 @@ end;
 $function_install$;
 
 do $function_install$
-declare p pg_proc%rowtype;
-begin
-  select * into p from pg_proc where oid=to_regprocedure('public.protect_admin_permission_bundle()');
-  if found then
-    if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
-      or p.prorettype<>'trigger'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
-      or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_admin_permission_bundle'; end if;
-    if btrim(replace(p.prosrc,chr(13),''))=btrim($expected$
+declare
+  p pg_proc%rowtype;
+  -- Exact reviewed LF/CRLF bodies; never normalize installed SQL internally.
+  approved_expected_lf text:=btrim(replace($expected$
 declare
   protected_owner_grant boolean;
   owner_grant_being_removed boolean := false;
@@ -744,7 +750,14 @@ begin
   end if;
   return new;
 end;
-$expected$) then return; end if;
+$expected$,E'\r\n',E'\n'),E' \t\r\n');
+begin
+  select * into p from pg_proc where oid=to_regprocedure('public.protect_admin_permission_bundle()');
+  if found then
+    if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
+      or p.prorettype<>'trigger'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
+      or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_admin_permission_bundle'; end if;
+    if btrim(p.prosrc,E' \t\r\n') in (approved_expected_lf,replace(approved_expected_lf,E'\n',E'\r\n')) then return; end if;
     if not (false) then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_admin_permission_bundle'; end if;
   end if;
   execute $ddl$create or replace function public.protect_admin_permission_bundle()
@@ -801,23 +814,27 @@ end;
 $function_install$;
 
 do $function_install$
-declare p pg_proc%rowtype;
+declare
+  p pg_proc%rowtype;
+  -- Exact reviewed LF/CRLF bodies; never normalize installed SQL internally.
+  approved_expected_lf text:=btrim(replace($expected$
+begin
+  raise exception using errcode = '42501', message = 'RF_ADMIN_BOOTSTRAP_IMMUTABLE';
+end;
+$expected$,E'\r\n',E'\n'),E' \t\r\n');
+  approved_previous_0_lf text:=btrim(replace($previous_0$
+begin
+  raise exception using errcode = '42501', message = 'RF_OWNER_BOOTSTRAP_IMMUTABLE';
+end;
+$previous_0$,E'\r\n',E'\n'),E' \t\r\n');
 begin
   select * into p from pg_proc where oid=to_regprocedure('public.protect_auth_bootstrap_state()');
   if found then
     if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
       or p.prorettype<>'trigger'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
       or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_auth_bootstrap_state'; end if;
-    if btrim(replace(p.prosrc,chr(13),''))=btrim($expected$
-begin
-  raise exception using errcode = '42501', message = 'RF_ADMIN_BOOTSTRAP_IMMUTABLE';
-end;
-$expected$) then return; end if;
-    if not (btrim(replace(p.prosrc,chr(13),''))=btrim($previous_0$
-begin
-  raise exception using errcode = '42501', message = 'RF_OWNER_BOOTSTRAP_IMMUTABLE';
-end;
-$previous_0$)) then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_auth_bootstrap_state'; end if;
+    if btrim(p.prosrc,E' \t\r\n') in (approved_expected_lf,replace(approved_expected_lf,E'\n',E'\r\n')) then return; end if;
+    if not (btrim(p.prosrc,E' \t\r\n') in (approved_previous_0_lf,replace(approved_previous_0_lf,E'\n',E'\r\n'))) then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_auth_bootstrap_state'; end if;
   end if;
   execute $ddl$create or replace function public.protect_auth_bootstrap_state()
 returns trigger
@@ -833,14 +850,10 @@ end;
 $function_install$;
 
 do $function_install$
-declare p pg_proc%rowtype;
-begin
-  select * into p from pg_proc where oid=to_regprocedure('public.write_auth_security_audit()');
-  if found then
-    if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
-      or p.prorettype<>'trigger'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
-      or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: write_auth_security_audit'; end if;
-    if btrim(replace(p.prosrc,chr(13),''))=btrim($expected$
+declare
+  p pg_proc%rowtype;
+  -- Exact reviewed LF/CRLF bodies; never normalize installed SQL internally.
+  approved_expected_lf text:=btrim(replace($expected$
 declare
   actor_id uuid;
   event_action text;
@@ -898,8 +911,8 @@ begin
   end if;
   return new;
 end;
-$expected$) then return; end if;
-    if not (btrim(replace(p.prosrc,chr(13),''))=btrim($previous_0$
+$expected$,E'\r\n',E'\n'),E' \t\r\n');
+  approved_previous_0_lf text:=btrim(replace($previous_0$
 declare
   actor_id uuid;
   event_action text;
@@ -957,7 +970,15 @@ begin
   end if;
   return new;
 end;
-$previous_0$)) then raise exception 'RF_INCOMPATIBLE_FUNCTION: write_auth_security_audit'; end if;
+$previous_0$,E'\r\n',E'\n'),E' \t\r\n');
+begin
+  select * into p from pg_proc where oid=to_regprocedure('public.write_auth_security_audit()');
+  if found then
+    if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
+      or p.prorettype<>'trigger'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
+      or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: write_auth_security_audit'; end if;
+    if btrim(p.prosrc,E' \t\r\n') in (approved_expected_lf,replace(approved_expected_lf,E'\n',E'\r\n')) then return; end if;
+    if not (btrim(p.prosrc,E' \t\r\n') in (approved_previous_0_lf,replace(approved_previous_0_lf,E'\n',E'\r\n'))) then raise exception 'RF_INCOMPATIBLE_FUNCTION: write_auth_security_audit'; end if;
   end if;
   execute $ddl$create or replace function public.write_auth_security_audit()
 returns trigger
@@ -1069,23 +1090,27 @@ end;
 $function_install$;
 
 do $function_install$
-declare p pg_proc%rowtype;
+declare
+  p pg_proc%rowtype;
+  -- Exact reviewed LF/CRLF bodies; never normalize installed SQL internally.
+  approved_expected_lf text:=btrim(replace($expected$
+begin
+  raise exception using errcode = '42501', message = 'RF_AUDIT_LOG_IMMUTABLE';
+end;
+$expected$,E'\r\n',E'\n'),E' \t\r\n');
+  approved_previous_0_lf text:=btrim(replace($previous_0$
+begin
+  raise exception using errcode = '42501', message = 'RF_AUDIT_LOG_IMMUTABLE';
+end;
+$previous_0$,E'\r\n',E'\n'),E' \t\r\n');
 begin
   select * into p from pg_proc where oid=to_regprocedure('public.protect_admin_audit_log()');
   if found then
     if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
       or p.prorettype<>'trigger'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
       or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_admin_audit_log'; end if;
-    if btrim(replace(p.prosrc,chr(13),''))=btrim($expected$
-begin
-  raise exception using errcode = '42501', message = 'RF_AUDIT_LOG_IMMUTABLE';
-end;
-$expected$) then return; end if;
-    if not (btrim(replace(p.prosrc,chr(13),''))=btrim($previous_0$
-begin
-  raise exception using errcode = '42501', message = 'RF_AUDIT_LOG_IMMUTABLE';
-end;
-$previous_0$)) then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_admin_audit_log'; end if;
+    if btrim(p.prosrc,E' \t\r\n') in (approved_expected_lf,replace(approved_expected_lf,E'\n',E'\r\n')) then return; end if;
+    if not (btrim(p.prosrc,E' \t\r\n') in (approved_previous_0_lf,replace(approved_previous_0_lf,E'\n',E'\r\n'))) then raise exception 'RF_INCOMPATIBLE_FUNCTION: protect_admin_audit_log'; end if;
   end if;
   execute $ddl$create or replace function public.protect_admin_audit_log()
 returns trigger
@@ -1458,9 +1483,10 @@ drop trigger if exists application_sessions_security_audit on public.application
 create trigger application_sessions_security_audit
 after insert or update on public.application_sessions
 for each row execute function public.write_application_session_security_audit();
-do $old_guard$ begin
-if exists(select 1 from pg_trigger where tgrelid='public.profiles'::regclass and tgname='profiles_protect_restricted_fields') then
-  if not exists(select 1 from pg_trigger t join pg_proc p on p.oid=t.tgfoid where t.tgrelid='public.profiles'::regclass and t.tgname='profiles_protect_restricted_fields' and (btrim(replace(p.prosrc,chr(13),''))=btrim($known0$
+do $old_guard$
+declare
+  -- Convert reviewed constants only; preserve all internal installed SQL characters.
+  approved_known0_lf text:=btrim(replace($known0$
 begin
   if auth.uid() = old.id and not public.has_permission('customers.manage') then
     new.id := old.id;
@@ -1470,7 +1496,8 @@ begin
   end if;
   return new;
 end;
-$known0$) or btrim(replace(p.prosrc,chr(13),''))=btrim($known1$
+$known0$,E'\r\n',E'\n'),E' \t\r\n');
+  approved_known1_lf text:=btrim(replace($known1$
 declare
   remaining_owners bigint;
 begin
@@ -1509,7 +1536,13 @@ begin
 
   return new;
 end;
-$known1$) or p.proname='protect_profile_identity_fields')) then raise exception 'RF_UNEXPECTED_EXISTING_GUARD: profiles_protect_restricted_fields'; end if;
+$known1$,E'\r\n',E'\n'),E' \t\r\n');
+begin
+if exists(select 1 from pg_trigger where tgrelid='public.profiles'::regclass and tgname='profiles_protect_restricted_fields') then
+  if not exists(select 1 from pg_trigger t join pg_proc p on p.oid=t.tgfoid where t.tgrelid='public.profiles'::regclass and t.tgname='profiles_protect_restricted_fields' and (btrim(p.prosrc,E' \t\r\n') in (
+    approved_known0_lf,replace(approved_known0_lf,E'\n',E'\r\n'),
+    approved_known1_lf,replace(approved_known1_lf,E'\n',E'\r\n')
+  ) or p.proname='protect_profile_identity_fields')) then raise exception 'RF_UNEXPECTED_EXISTING_GUARD: profiles_protect_restricted_fields'; end if;
   execute 'drop trigger profiles_protect_restricted_fields on public.profiles';
 end if; end; $old_guard$;
 do $old_guard$ begin
@@ -1820,9 +1853,10 @@ for each row execute function public.protect_auth_bootstrap_state();
 
 
 
-do $guest_guard$ declare p pg_proc%rowtype; begin
- select * into p from pg_proc where oid=to_regprocedure('public.protect_guest_order_claim()');
- if found and (btrim(replace(p.prosrc,chr(13),''))<>btrim($expected$
+do $guest_guard$ declare
+ p pg_proc%rowtype;
+ -- Convert only the reviewed body constant; preserve internal installed characters.
+ approved_expected_lf text:=btrim(replace($expected$
 begin
   if tg_op = 'UPDATE' then
     if new.order_id is distinct from old.order_id
@@ -1840,7 +1874,10 @@ begin
   end if;
   return new;
 end;
-$expected$) or not p.prosecdef or p.proconfig is distinct from array['search_path=""']::text[]) then raise exception 'RF_INCOMPATIBLE_GUEST_GUARD'; end if;
+$expected$,E'\r\n',E'\n'),E' \t\r\n');
+begin
+ select * into p from pg_proc where oid=to_regprocedure('public.protect_guest_order_claim()');
+ if found and (btrim(p.prosrc,E' \t\r\n') not in (approved_expected_lf,replace(approved_expected_lf,E'\n',E'\r\n')) or not p.prosecdef or p.proconfig is distinct from array['search_path=""']::text[]) then raise exception 'RF_INCOMPATIBLE_GUEST_GUARD'; end if;
  execute $ddl$create or replace function public.protect_guest_order_claim()
 returns trigger
 language plpgsql
