@@ -1027,23 +1027,33 @@ end;
 $function_install$;
 
 do $function_install$
-declare p pg_proc%rowtype;
+declare
+  p pg_proc%rowtype;
+  installed_body text;
+  -- Normalize reviewed constants only; preserve every internal installed character.
+  approved_target_lf text:=btrim(replace($expected$
+begin
+  raise exception using errcode = '23514', message = 'RF_SESSION_REVOCATION_REQUIRED';
+end;
+$expected$,E'\r\n',E'\n'),E' \t\r\n');
+  approved_source_lf text:=btrim(replace($previous_0$
+begin
+  raise exception using
+    errcode = '23514',
+    message = 'RF_SESSION_REVOCATION_REQUIRED';
+end;
+$previous_0$,E'\r\n',E'\n'),E' \t\r\n');
 begin
   select * into p from pg_proc where oid=to_regprocedure('public.require_session_revocation()');
   if found then
     if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
       or p.prorettype<>'trigger'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
       or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: require_session_revocation'; end if;
-    if btrim(replace(p.prosrc,chr(13),''))=btrim($expected$
-begin
-  raise exception using errcode = '23514', message = 'RF_SESSION_REVOCATION_REQUIRED';
-end;
-$expected$) then return; end if;
-    if not (btrim(replace(p.prosrc,chr(13),''))=btrim($previous_0$
-begin
-  raise exception using errcode = '23514', message = 'RF_SESSION_REVOCATION_REQUIRED';
-end;
-$previous_0$)) then raise exception 'RF_INCOMPATIBLE_FUNCTION: require_session_revocation'; end if;
+    installed_body:=btrim(p.prosrc,E' \t\r\n');
+    if installed_body in (approved_target_lf,replace(approved_target_lf,E'\n',E'\r\n')) then return; end if;
+    if installed_body not in (approved_source_lf,replace(approved_source_lf,E'\n',E'\r\n')) then
+      raise exception 'RF_INCOMPATIBLE_FUNCTION: require_session_revocation';
+    end if;
   end if;
   execute $ddl$create or replace function public.require_session_revocation()
 returns trigger

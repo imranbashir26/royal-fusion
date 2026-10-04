@@ -13,12 +13,22 @@ export async function installVerifiedLegacyPermission(db, body = verifiedLegacyP
     grant execute on function public.has_permission(text) to authenticated,service_role;`)
 }
 
+// Exact 113-byte production prosrc; explicit escapes survive source line-ending conversion.
+export const verifiedLegacyRevocationBody = "\r\nbegin\r\n  raise exception using\r\n    errcode = '23514',\r\n    message = 'RF_SESSION_REVOCATION_REQUIRED';\r\nend;\r\n"
+export async function installVerifiedLegacyRevocation(db, body = verifiedLegacyRevocationBody) {
+  await db.exec(`create or replace function public.require_session_revocation()
+    returns trigger language plpgsql volatile security definer set search_path='' as $$${body}$$;
+    alter function public.require_session_revocation() owner to postgres;
+    revoke execute on function public.require_session_revocation() from public,anon,authenticated,service_role;`)
+}
+
 export async function legacyAdminDatabase() {
   const db = await createCatalogDatabase()
   const admin = randomUUID(), customer = randomUUID()
   for (const id of [admin,customer]) await db.query('insert into auth.users(id,email) values($1,$2)', [id, `${id}@example.invalid`])
   await db.query("insert into public.user_roles(user_id,role_id) select $1,id from public.roles where key='owner_admin'", [admin])
   await installVerifiedLegacyPermission(db)
+  await installVerifiedLegacyRevocation(db)
   return { db, admin, customer }
 }
 export async function applyRelease(db, name, admin) {

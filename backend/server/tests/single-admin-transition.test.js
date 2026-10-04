@@ -3,6 +3,7 @@ import test from 'node:test'
 import { randomUUID, createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { legacyAdminDatabase, applyRelease, sessionSqlClient, verifiedLegacyPermissionBody, installVerifiedLegacyPermission } from './support/singleAdminDatabase.js'
+import { verifiedLegacyRevocationBody, installVerifiedLegacyRevocation } from './support/singleAdminDatabase.js'
 import { AdminAuthorizationService } from '../services/adminAuthorizationService.js'
 import { SupabaseSessionRepository } from '../services/sessionRepository.js'
 import { AuthSessionService } from '../services/authSessionService.js'
@@ -371,4 +372,83 @@ test('actual SQL: byte-exact 496-byte production prosrc and supplied metadata ex
  assert.equal((await db.query("select count(*)::int n from public.auth_bootstrap_state where id='first_admin' and completed_by=$1",[admin])).rows[0].n,1)
  assert.equal((await db.query("select count(*)::int n from public.admin_audit_logs where action='authorization.expanded'")).rows[0].n,1)
  assert.deepEqual((await new AdminAuthorizationService(sessionSqlClient(db)).resolve(admin)).permissions,['*'])
+})
+
+async function reviewedRevocationDefinition() {
+ const source=await readFile(new URL('../../supabase/release-migrations/'+expansion,import.meta.url),'utf8')
+ const guard=source.match(/do \$function_install\$[\s\S]*?\$function_install\$;/g)
+   .find(block=>block.includes("to_regprocedure('public.require_session_revocation()')"))
+ const body=tag=>guard.match(new RegExp('\\$'+tag+'\\$([\\s\\S]*?)\\$'+tag+'\\$'))[1].replaceAll('\r\n','\n').trim()
+ assert.ok(guard.includes("installed_body:=btrim(p.prosrc,E' \\t\\r\\n')"))
+ assert.ok(!guard.includes('replace(p.prosrc'))
+ assert.equal(body('previous_0'),verifiedLegacyRevocationBody.replaceAll('\r\n','\n').trim())
+ return {guard,legacy:body('previous_0'),target:body('expected')}
+}
+
+test('actual SQL: byte-exact 113-byte production revocation body expands and keeps deletion blocked',async t=>{
+ const {db,admin}=await legacyAdminDatabase();t.after(()=>db.close())
+ const installed=(await db.query("select p.prosrc,p.prosecdef,p.proconfig,p.provolatile,p.proisstrict,p.proleakproof,p.proparallel,p.prosupport,l.lanname,pg_get_userbyid(p.proowner) owner,p.proacl::text acl from pg_proc p join pg_language l on l.oid=p.prolang where p.oid='public.require_session_revocation()'::regprocedure")).rows[0]
+ assert.equal(installed.prosrc,verifiedLegacyRevocationBody)
+ assert.equal(installed.prosrc.length,113)
+ assert.equal(Buffer.byteLength(installed.prosrc,'utf8'),113)
+ assert.equal(createHash('md5').update(installed.prosrc).digest('hex'),'53cb5ceeea8d08e90f859710176b854b')
+ assert.equal((installed.prosrc.match(/\r/g)||[]).length,6)
+ assert.equal((installed.prosrc.match(/\n/g)||[]).length,6)
+ assert.ok(installed.prosrc.startsWith('\r\nbegin\r\n  raise exception using\r\n'))
+ assert.ok(installed.prosrc.endsWith('\r\nend;\r\n'))
+ const {prosrc,...attributes}=installed
+ assert.deepEqual(attributes,{prosecdef:true,proconfig:['search_path=""'],provolatile:'v',proisstrict:false,
+   proleakproof:false,proparallel:'u',prosupport:'-',lanname:'plpgsql',owner:'postgres',acl:'{postgres=X/postgres}'})
+ assert.deepEqual((await db.query("select has_function_privilege('anon','public.require_session_revocation()','EXECUTE') anon,has_function_privilege('authenticated','public.require_session_revocation()','EXECUTE') authenticated,has_function_privilege('service_role','public.require_session_revocation()','EXECUTE') service_role")).rows[0],{anon:false,authenticated:false,service_role:false})
+ await applyRelease(db,expansion,admin)
+ await applyRelease(db,expansion,admin)
+ assert.equal((await db.query("select count(*)::int n from public.user_roles ur join public.roles r on r.id=ur.role_id where ur.user_id=$1 and ur.active and r.active and r.key in ('admin','owner_admin')",[admin])).rows[0].n,2)
+ assert.equal((await db.query("select count(*)::int n from public.auth_bootstrap_state where id='first_admin' and completed_by=$1",[admin])).rows[0].n,1)
+ assert.equal((await db.query("select count(*)::int n from public.admin_audit_logs where action='authorization.expanded'")).rows[0].n,1)
+ assert.deepEqual((await new AdminAuthorizationService(sessionSqlClient(db)).resolve(admin)).permissions,['*'])
+ await db.exec('create temporary table revocation_probe(id integer); insert into revocation_probe values(1); create trigger revocation_probe_delete before delete on revocation_probe for each row execute function public.require_session_revocation()')
+ await assert.rejects(db.exec('delete from revocation_probe'),error=>error.code==='23514' && error.message==='RF_SESSION_REVOCATION_REQUIRED')
+ assert.equal((await db.query('select count(*)::int n from revocation_probe')).rows[0].n,1)
+})
+
+test('actual SQL: reviewed revocation legacy/target LF, CRLF and outer whitespace are repeatable',async t=>{
+ const {guard,legacy,target}=await reviewedRevocationDefinition()
+ const {db}=await legacyAdminDatabase();t.after(()=>db.close())
+ for(const [name,format] of [
+   ['LF',body=>body],['CRLF',body=>body.replaceAll('\n','\r\n')],
+   ['outer whitespace',body=>' \t\r\n'+body.replaceAll('\n','\r\n')+'\r\n\t '],
+ ]) for(const [kind,body] of [['legacy',legacy],['target',target]]) await t.test(kind+' '+name,async()=>{
+   await installVerifiedLegacyRevocation(db,format(body))
+   await db.exec(guard)
+   const first=(await db.query("select prosrc from pg_proc where oid='public.require_session_revocation()'::regprocedure")).rows[0].prosrc
+   assert.equal(first.replaceAll('\r\n','\n').trim(),target)
+   if(kind==='target') assert.equal(first,format(body))
+   await db.exec(guard.replaceAll('\r\n','\n').replaceAll('\n','\r\n'))
+   assert.equal((await db.query("select prosrc from pg_proc where oid='public.require_session_revocation()'::regprocedure")).rows[0].prosrc,first)
+ })
+})
+
+test('actual SQL: revocation semantic and internal-character mutations roll back expansion',async t=>{
+ const {db,admin}=await legacyAdminDatabase();t.after(()=>db.close())
+ for(const [name,body] of [
+   ['different SQLSTATE',verifiedLegacyRevocationBody.replace('23514','23505')],
+   ['different message',verifiedLegacyRevocationBody.replace('RF_SESSION_REVOCATION_REQUIRED','RF_OTHER_MESSAGE')],
+   ['missing exception','\r\nbegin\r\n  return new;\r\nend;\r\n'],
+   ['authority-changing statement',verifiedLegacyRevocationBody.replace('begin','begin\r\n  update public.user_roles set active = false;')],
+   ['extra statement',verifiedLegacyRevocationBody.replace('begin','begin\r\n  perform 1;')],
+   ['CR inside message',verifiedLegacyRevocationBody.replace('RF_SESSION_REVOCATION_REQUIRED','RF_SESSION_REVOCATION_REQUIRED\r')],
+   ['mixed internal line endings',verifiedLegacyRevocationBody.replace('using\r\n','using\n')],
+   ['internal whitespace',verifiedLegacyRevocationBody.replace('  raise','   raise')],
+ ]) await t.test(name,async()=>{
+   assert.notEqual(body,verifiedLegacyRevocationBody)
+   await installVerifiedLegacyRevocation(db,body)
+   const before=await authoritySnapshot(db)
+   const resolverBefore=(await db.query("select to_jsonb(p) value from pg_proc p where p.oid='public.require_session_revocation()'::regprocedure")).rows[0].value
+   await assert.rejects(applyRelease(db,expansion,admin),/RF_INCOMPATIBLE_FUNCTION: require_session_revocation/)
+   assert.deepEqual(await authoritySnapshot(db),before)
+   assert.deepEqual((await db.query("select to_jsonb(p) value from pg_proc p where p.oid='public.require_session_revocation()'::regprocedure")).rows[0].value,resolverBefore)
+   assert.equal(before.bootstrap,null)
+   assert.ok(before.roles.every(role=>role.key!=='admin'))
+   assert.ok(!before.audit?.some(row=>row.action==='authorization.expanded'))
+ })
 })
