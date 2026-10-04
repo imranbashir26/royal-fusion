@@ -818,3 +818,127 @@ test('actual SQL: target helper compatibility rejects internal mutations and rol
    }
  }
 })
+
+const fulfillmentCompatibilitySignature='public.apply_admin_order_action(uuid,uuid,text,uuid,text,jsonb,text)'
+async function fulfillmentCompatibilitySource() {
+ const source=await readFile(new URL('../../supabase/release-migrations/002_single_admin_fulfillment.sql',import.meta.url),'utf8')
+ const original=await readFile(new URL('../../supabase/migrations/011_admin_order_fulfillment.sql',import.meta.url),'utf8')
+ const body=sql=>sql.match(/create or replace function public\.apply_admin_order_action[\s\S]*?as \$\$([\s\S]*?)\$\$;/)[1]
+ const reviewed=source.match(/\$reviewed\$([\s\S]*?)\$reviewed\$/)[1]
+ const corrected=source.match(/\$corrected\$([\s\S]*?)\$corrected\$/)[1]
+ assert.equal(lineEndingForms.LF(reviewed).trim(),lineEndingForms.LF(body(original)).trim())
+ assert.equal(lineEndingForms.LF(corrected).trim(),lineEndingForms.LF(body(source)).trim())
+ return {source,original,reviewed,corrected,header:source.match(/create or replace function public\.apply_admin_order_action[\s\S]*?as \$\$/)[0]}
+}
+async function preFulfillmentCompatibilityDatabase() {
+ const fixture=await productionShapedAdminDatabase()
+ await applyRelease(fixture.db,expansion,fixture.admin)
+ await fixture.db.exec(await readFile(new URL('../../supabase/migrations/010_checkout_product_locking.sql',import.meta.url),'utf8'))
+ return fixture
+}
+async function fulfillmentCompatibilitySnapshot(db) {
+ return {authority:await authoritySnapshot(db),
+   function:(await db.query('select to_jsonb(p) value from pg_proc p where oid=$1::regprocedure',[fulfillmentCompatibilitySignature])).rows[0].value,
+   sessions:(await db.query('select to_jsonb(s) value from public.application_sessions s order by id')).rows,
+   orders:(await db.query('select to_jsonb(o) value from public.orders o order by id')).rows,
+   payments:(await db.query('select to_jsonb(p) value from public.payments p order by id')).rows,
+   inventory:(await db.query('select to_jsonb(i) value from public.inventory_movements i order by id')).rows,
+   triggers:(await db.query("select to_jsonb(t) value from pg_trigger t join pg_class c on c.oid=t.tgrelid where c.relnamespace='public'::regnamespace order by t.oid")).rows}
+}
+async function verifyFulfillmentCompatibilityState(db,admin,corrected,baseline) {
+ const installed=(await db.query(`select p.oid,p.prosrc,p.prosecdef,p.proconfig,p.prorettype::regtype::text result,
+   has_function_privilege('anon',p.oid,'execute') anon,has_function_privilege('authenticated',p.oid,'execute') authenticated,
+   has_function_privilege('service_role',p.oid,'execute') service_role
+   from pg_proc p where oid=$1::regprocedure`,[fulfillmentCompatibilitySignature])).rows[0]
+ assert.equal(lineEndingForms.LF(installed.prosrc).trim(),lineEndingForms.LF(corrected).trim())
+ assert.ok(installed.prosrc.includes("and r.key='admin'"));assert.ok(installed.prosrc.includes("and pe.key='*'"))
+ assert.ok(!installed.prosrc.includes("r.key in ('owner'"))
+ assert.deepEqual({...installed,oid:0,prosrc:''},{oid:0,prosrc:'',prosecdef:true,proconfig:['search_path=""'],result:'jsonb',anon:false,authenticated:false,service_role:true})
+ assert.equal(String(installed.oid),String(baseline.function.oid))
+ assert.equal((await db.query("select count(*)::int n from public.role_permissions rp join public.roles r on r.id=rp.role_id join public.permissions p on p.id=rp.permission_id where r.key='order_manager' and p.key='payments.manage'")).rows[0].n,0)
+ const after=await fulfillmentCompatibilitySnapshot(db)
+ for(const key of ['sessions','orders','payments','inventory','triggers']) assert.deepEqual(after[key],baseline[key])
+ assert.equal(createHash('sha256').update(JSON.stringify(after.sessions)).digest('hex'),createHash('sha256').update(JSON.stringify(baseline.sessions)).digest('hex'))
+ assert.deepEqual(after.authority.audit,baseline.authority.audit)
+ assert.deepEqual(after.authority.assignments,baseline.authority.assignments)
+ assert.deepEqual(after.authority.roles,baseline.authority.roles)
+ assert.deepEqual((await new AdminAuthorizationService(sessionSqlClient(db)).resolve(admin)).permissions,['*'])
+ return after
+}
+test('actual SQL: fulfillment compatibility preserves both reviewed bodies in LF/CRLF input',async t=>{
+ const {source,original,reviewed,corrected,header}=await fulfillmentCompatibilitySource()
+ const {db,admin}=await preFulfillmentCompatibilityDatabase();t.after(()=>db.close())
+ await db.exec(original)
+ for(const [bodyName,body] of [['reviewed',reviewed],['corrected',corrected]]) {
+   for(const [installedName,format] of [...Object.entries(lineEndingForms),['outer whitespace',sql=>' \t\r\n'+lineEndingForms.CRLF(sql).trim()+'\r\n\t ']]) {
+     for(const [inputName,input] of Object.entries(lineEndingForms)) await t.test(bodyName+' '+installedName+' / '+inputName+' migration',async()=>{
+       await db.exec(header+format(body)+'$$;')
+       const baseline=await fulfillmentCompatibilitySnapshot(db)
+       await applyProfileCompatibilitySource(db,input(source),admin)
+       const afterFirst=await verifyFulfillmentCompatibilityState(db,admin,corrected,baseline)
+       await applyProfileCompatibilitySource(db,input(source),admin)
+       assert.deepEqual(await verifyFulfillmentCompatibilityState(db,admin,corrected,baseline),afterFirst)
+     })
+   }
+ }
+})
+test('actual SQL: fulfillment compatibility exact 011 to 002 LF/CRLF sequence has identical canonical results',async t=>{
+ const {source,original,reviewed,corrected}=await fulfillmentCompatibilitySource()
+ const results=[]
+ for(const [format,input] of Object.entries(lineEndingForms)) await t.test(format+' exact 011, 002 first run and 002 rerun',async()=>{
+   // Each exact 011 -> 002 sequence starts from a fresh pre-011 database.
+   const {db,admin,customer}=await preFulfillmentCompatibilityDatabase()
+   try {
+   await db.query("insert into public.user_roles(user_id,role_id) select $1,id from public.roles where key='owner_admin'",[customer])
+   await db.exec(input(original))
+   const baseline=await fulfillmentCompatibilitySnapshot(db)
+   assert.equal(lineEndingForms.LF(baseline.function.prosrc).trim(),lineEndingForms.LF(reviewed).trim())
+   assert.equal((await db.query("select count(*)::int n from public.role_permissions rp join public.roles r on r.id=rp.role_id join public.permissions p on p.id=rp.permission_id where r.key='order_manager' and p.key='payments.manage'")).rows[0].n,1)
+   await applyProfileCompatibilitySource(db,input(source),admin)
+   const first=await verifyFulfillmentCompatibilityState(db,admin,corrected,baseline)
+   await applyProfileCompatibilitySource(db,input(source),admin)
+   const again=await verifyFulfillmentCompatibilityState(db,admin,corrected,baseline);assert.deepEqual(again,first)
+   const probe=actor=>db.query('select public.apply_admin_order_action($1::uuid,$2::uuid,$3,$4::uuid,$5,$6::jsonb,$7)',[randomUUID(),actor,'note',randomUUID(),'0',JSON.stringify({text:'Local authorization probe'}),'req_002_fixture'])
+   await db.exec('set role service_role')
+   try {
+     // Missing local order proves canonical authorization passed; legacy-only actor is denied first.
+     await assert.rejects(probe(admin),/ORDER_NOT_FOUND/)
+     await assert.rejects(probe(customer),/PERMISSION_DENIED/)
+   } finally {await db.exec('reset role')}
+   // Compare stable function/authority state; fixture UUIDs, timestamps and OIDs are independent.
+   const grants=(await db.query("select r.key role,p.key permission from public.role_permissions rp join public.roles r on r.id=rp.role_id join public.permissions p on p.id=rp.permission_id order by r.key,p.key")).rows
+   const sessionClasses=(await db.query('select session_class,mfa_assurance,count(*)::int n from public.application_sessions group by session_class,mfa_assurance order by session_class,mfa_assurance')).rows
+   const auditActions=(await db.query('select action,count(*)::int n from public.admin_audit_logs group by action order by action')).rows
+   const {oid,prosrc,...attributes}=(await db.query("select oid,prosrc,prosecdef,proconfig,prorettype::regtype::text result,pg_get_userbyid(proowner) owner,proacl::text acl,proargnames,provolatile from pg_proc where oid=$1::regprocedure",[fulfillmentCompatibilitySignature])).rows[0]
+   results.push({function:{...attributes,prosrc:lineEndingForms.LF(prosrc)},grants,sessionClasses,auditActions,orders:again.orders,payments:again.payments,inventory:again.inventory})
+   } finally {await db.close()}
+ })
+ assert.deepEqual(results[1],results[0])
+})
+function fulfillmentCompatibilityMutations(body,canonical) {
+ const change=(from,to)=>{assert.ok(body.includes(from));return body.replace(from,()=>to)}
+ return [
+   [canonical?'canonical admin requirement':'legacy role list',canonical?change("and r.key='admin'","and r.key='manager'"):change("'owner','manager','order_manager','content_editor','blog_writer'","'owner','manager','order_manager','content_editor','blog_writer','admin'")],
+   ['permission requirement',canonical?change("and pe.key='*'","and pe.key in ('*',permission)"):change("and pe.key in ('*',permission)","and pe.key='*'")],
+   ['business logic',change('o.revision::text <> p_expected_revision','o.revision::text = p_expected_revision')],
+   ['extra statement',change('begin\r\n','begin\r\n  perform 1;\r\n')],
+   ['internal whitespace',change('  o public.orders%rowtype;','   o public.orders%rowtype;')],
+   ['mixed line endings',change('  item record; item_count integer;\r\n','  item record; item_count integer;\n')],
+   ['CR inside literal',change("'service_role'","'service_role\r'")],
+ ]
+}
+test('actual SQL: fulfillment compatibility rejects mutations with full migration rollback',async t=>{
+ const {source,original,reviewed,corrected,header}=await fulfillmentCompatibilitySource()
+ const {db,admin}=await preFulfillmentCompatibilityDatabase();t.after(()=>db.close())
+ await db.exec(original)
+ for(const [kind,body] of [['reviewed',reviewed],['corrected',corrected]]) {
+   for(const [mutation,mutated] of fulfillmentCompatibilityMutations(lineEndingForms.CRLF(body),kind==='corrected')) {
+     for(const [format,input] of Object.entries(lineEndingForms)) await t.test(kind+' '+mutation+' / '+format+' input',async()=>{
+       await db.exec(header+mutated+'$$;')
+       const before=await fulfillmentCompatibilitySnapshot(db)
+       await assert.rejects(applyProfileCompatibilitySource(db,input(source),admin),/RF_UNREVIEWED_FULFILLMENT_BODY/)
+       assert.deepEqual(await fulfillmentCompatibilitySnapshot(db),before)
+     })
+   }
+ }
+})

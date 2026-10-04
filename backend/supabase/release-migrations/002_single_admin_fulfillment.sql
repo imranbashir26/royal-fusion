@@ -7,9 +7,11 @@ do $prerequisite$ begin
  if to_regprocedure('public.apply_admin_order_action(uuid,uuid,text,uuid,text,jsonb,text)') is null
  or not exists(select 1 from public.roles r join public.role_permissions rp on rp.role_id=r.id join public.permissions p on p.id=rp.permission_id where r.key='admin' and r.active and p.key='*') then raise exception 'RF_SINGLE_ADMIN_FULFILLMENT_PREREQUISITE'; end if;
 end; $prerequisite$;
-do $body_precondition$ declare p pg_proc%rowtype; begin
- select * into p from pg_proc where oid='public.apply_admin_order_action(uuid,uuid,text,uuid,text,jsonb,text)'::regprocedure;
- if not p.prosecdef or p.proconfig is distinct from array['search_path=""']::text[] or p.prorettype<>'jsonb'::regtype or btrim(replace(p.prosrc,chr(13),'')) not in (btrim($reviewed$
+do $body_precondition$
+declare
+ p pg_proc%rowtype;
+ -- Convert only the two reviewed constants; preserve internal installed SQL characters.
+ approved_reviewed_lf text:=btrim(replace($reviewed$
 declare
   o public.orders%rowtype; pay public.payments%rowtype; previous public.admin_audit_logs%rowtype;
   permission text; fingerprint text; result jsonb; target public.order_status;
@@ -162,7 +164,8 @@ begin
     values(p_actor_id,'order.'||p_action,'orders',o.id::text,permission,p_request_id,
       jsonb_build_object('mutationId',p_mutation_id,'fingerprint',fingerprint,'result',result) || audit_details);
   return result;
-end $reviewed$),btrim($corrected$
+end $reviewed$,E'\r\n',E'\n'),E' \t\r\n');
+ approved_corrected_lf text:=btrim(replace($corrected$
 declare
   o public.orders%rowtype; pay public.payments%rowtype; previous public.admin_audit_logs%rowtype;
   permission text; fingerprint text; result jsonb; target public.order_status;
@@ -314,7 +317,14 @@ begin
     values(p_actor_id,'order.'||p_action,'orders',o.id::text,permission,p_request_id,
       jsonb_build_object('mutationId',p_mutation_id,'fingerprint',fingerprint,'result',result) || audit_details);
   return result;
-end $corrected$)) then raise exception 'RF_UNREVIEWED_FULFILLMENT_BODY'; end if;
+end $corrected$,E'\r\n',E'\n'),E' \t\r\n');
+begin
+ select * into p from pg_proc where oid='public.apply_admin_order_action(uuid,uuid,text,uuid,text,jsonb,text)'::regprocedure;
+ if not p.prosecdef or p.proconfig is distinct from array['search_path=""']::text[] or p.prorettype<>'jsonb'::regtype
+ or btrim(p.prosrc,E' \t\r\n') not in (
+   approved_reviewed_lf,replace(approved_reviewed_lf,E'\n',E'\r\n'),
+   approved_corrected_lf,replace(approved_corrected_lf,E'\n',E'\r\n')
+ ) then raise exception 'RF_UNREVIEWED_FULFILLMENT_BODY'; end if;
 end; $body_precondition$;
 create or replace function public.apply_admin_order_action(
   p_order_id uuid, p_actor_id uuid, p_action text, p_mutation_id uuid,
