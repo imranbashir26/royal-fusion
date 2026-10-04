@@ -1153,14 +1153,11 @@ create index if not exists application_sessions_refresh_lease_idx
   where refresh_locked_until is not null and revoked_at is null;
 
 do $function_install$
-declare p pg_proc%rowtype;
-begin
-  select * into p from pg_proc where oid=to_regprocedure('public.claim_application_session_refresh(text,text,timestamptz,integer)');
-  if found then
-    if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
-      or p.prorettype<>'boolean'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
-      or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: claim_application_session_refresh'; end if;
-    if btrim(replace(p.prosrc,chr(13),''))=btrim($expected$
+declare
+  p pg_proc%rowtype;
+  installed_body text;
+  -- Only reviewed constants are converted; installed SQL retains internal characters.
+  approved_target_lf text:=btrim(replace($expected$
 declare
   claimed_id uuid;
 begin
@@ -1183,8 +1180,47 @@ begin
 
   return claimed_id is not null;
 end;
-$expected$) then return; end if;
-    if not (false) then raise exception 'RF_INCOMPATIBLE_FUNCTION: claim_application_session_refresh'; end if;
+$expected$,E'\r\n',E'\n'),E' \t\r\n');
+  approved_source_lf text:=btrim(replace($verified_source$
+declare
+  claimed_id uuid;
+begin
+  if p_session_key_hash !~ '^[0-9a-f]{64}$'
+    or p_lock_hash !~ '^[0-9a-f]{64}$'
+    or p_lease_seconds < 5
+    or p_lease_seconds > 120 then
+    return false;
+  end if;
+
+  update public.application_sessions
+  set
+    refresh_lock_hash = p_lock_hash,
+    refresh_locked_until =
+      p_now + make_interval(secs => p_lease_seconds)
+  where session_key_hash = p_session_key_hash
+    and revoked_at is null
+    and idle_expires_at > p_now
+    and absolute_expires_at > p_now
+    and (
+      refresh_locked_until is null
+      or refresh_locked_until <= p_now
+    )
+  returning id into claimed_id;
+
+  return claimed_id is not null;
+end;
+$verified_source$,E'\r\n',E'\n'),E' \t\r\n');
+begin
+  select * into p from pg_proc where oid=to_regprocedure('public.claim_application_session_refresh(text,text,timestamptz,integer)');
+  if found then
+    if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
+      or p.prorettype<>'boolean'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
+      or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: claim_application_session_refresh'; end if;
+    installed_body:=btrim(p.prosrc,E' \t\r\n');
+    if installed_body in (approved_target_lf,replace(approved_target_lf,E'\n',E'\r\n')) then return; end if;
+    if installed_body not in (approved_source_lf,replace(approved_source_lf,E'\n',E'\r\n')) then
+      raise exception 'RF_INCOMPATIBLE_FUNCTION: claim_application_session_refresh';
+    end if;
   end if;
   execute $ddl$create or replace function public.claim_application_session_refresh(
   p_session_key_hash text,
@@ -1224,14 +1260,11 @@ end;
 $function_install$;
 
 do $function_install$
-declare p pg_proc%rowtype;
-begin
-  select * into p from pg_proc where oid=to_regprocedure('public.release_application_session_refresh(text,text)');
-  if found then
-    if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
-      or p.prorettype<>'boolean'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
-      or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: release_application_session_refresh'; end if;
-    if btrim(replace(p.prosrc,chr(13),''))=btrim($expected$
+declare
+  p pg_proc%rowtype;
+  installed_body text;
+  -- Only reviewed constants are converted; installed SQL retains internal characters.
+  approved_target_lf text:=btrim(replace($expected$
 declare
   released_id uuid;
 begin
@@ -1244,8 +1277,33 @@ begin
 
   return released_id is not null;
 end;
-$expected$) then return; end if;
-    if not (false) then raise exception 'RF_INCOMPATIBLE_FUNCTION: release_application_session_refresh'; end if;
+$expected$,E'\r\n',E'\n'),E' \t\r\n');
+  approved_source_lf text:=btrim(replace($verified_source$
+declare
+  released_id uuid;
+begin
+  update public.application_sessions
+  set
+    refresh_lock_hash = null,
+    refresh_locked_until = null
+  where session_key_hash = p_session_key_hash
+    and refresh_lock_hash = p_lock_hash
+  returning id into released_id;
+
+  return released_id is not null;
+end;
+$verified_source$,E'\r\n',E'\n'),E' \t\r\n');
+begin
+  select * into p from pg_proc where oid=to_regprocedure('public.release_application_session_refresh(text,text)');
+  if found then
+    if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
+      or p.prorettype<>'boolean'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
+      or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: release_application_session_refresh'; end if;
+    installed_body:=btrim(p.prosrc,E' \t\r\n');
+    if installed_body in (approved_target_lf,replace(approved_target_lf,E'\n',E'\r\n')) then return; end if;
+    if installed_body not in (approved_source_lf,replace(approved_source_lf,E'\n',E'\r\n')) then
+      raise exception 'RF_INCOMPATIBLE_FUNCTION: release_application_session_refresh';
+    end if;
   end if;
   execute $ddl$create or replace function public.release_application_session_refresh(
   p_session_key_hash text,
@@ -1284,14 +1342,11 @@ grant execute on function public.release_application_session_refresh(text, text)
 -- Migration 003 used a generic session trigger that also audited last-seen and
 -- refresh-lease maintenance. Keep immutable security events, not heartbeat noise.
 do $function_install$
-declare p pg_proc%rowtype;
-begin
-  select * into p from pg_proc where oid=to_regprocedure('public.write_application_session_security_audit()');
-  if found then
-    if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
-      or p.prorettype<>'trigger'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
-      or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: write_application_session_security_audit'; end if;
-    if btrim(replace(p.prosrc,chr(13),''))=btrim($expected$
+declare
+  p pg_proc%rowtype;
+  installed_body text;
+  -- Only reviewed constants are converted; installed SQL retains internal characters.
+  approved_target_lf text:=btrim(replace($expected$
 declare
   event_action text;
 begin
@@ -1314,8 +1369,52 @@ begin
   );
   return new;
 end;
-$expected$) then return; end if;
-    if not (false) then raise exception 'RF_INCOMPATIBLE_FUNCTION: write_application_session_security_audit'; end if;
+$expected$,E'\r\n',E'\n'),E' \t\r\n');
+  approved_source_lf text:=btrim(replace($verified_source$
+declare
+  event_action text;
+begin
+  if tg_op = 'INSERT' then
+    event_action := 'session.created';
+
+  elsif new.revoked_at is not null
+    and old.revoked_at is null then
+
+    event_action := 'session.revoked';
+
+  else
+    return new;
+  end if;
+
+  insert into public.admin_audit_logs (
+    admin_id,
+    action,
+    resource,
+    resource_id,
+    metadata
+  )
+  values (
+    coalesce(auth.uid(), new.revoked_by),
+    event_action,
+    'application_sessions',
+    new.id::text,
+    jsonb_build_object('operation', tg_op)
+  );
+
+  return new;
+end;
+$verified_source$,E'\r\n',E'\n'),E' \t\r\n');
+begin
+  select * into p from pg_proc where oid=to_regprocedure('public.write_application_session_security_audit()');
+  if found then
+    if p.prosecdef is distinct from true or p.proconfig is distinct from array['search_path=""']::text[]
+      or p.prorettype<>'trigger'::regtype or p.prolang not in (select oid from pg_language where lanname in ('sql','plpgsql'))
+      or p.provolatile<>'v' then raise exception 'RF_INCOMPATIBLE_FUNCTION: write_application_session_security_audit'; end if;
+    installed_body:=btrim(p.prosrc,E' \t\r\n');
+    if installed_body in (approved_target_lf,replace(approved_target_lf,E'\n',E'\r\n')) then return; end if;
+    if installed_body not in (approved_source_lf,replace(approved_source_lf,E'\n',E'\r\n')) then
+      raise exception 'RF_INCOMPATIBLE_FUNCTION: write_application_session_security_audit';
+    end if;
   end if;
   execute $ddl$create or replace function public.write_application_session_security_audit()
 returns trigger

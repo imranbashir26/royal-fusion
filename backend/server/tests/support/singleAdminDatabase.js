@@ -22,6 +22,20 @@ export async function installVerifiedLegacyRevocation(db, body = verifiedLegacyR
     revoke execute on function public.require_session_revocation() from public,anon,authenticated,service_role;`)
 }
 
+// Independently verified raw production CRLF bodies; JSON escapes preserve every byte.
+export const verifiedLegacySessionFunctions = [
+  {"name":"claim_application_session_refresh","types":"text,text,timestamptz,integer","args":"p_session_key_hash text,p_lock_hash text,p_now timestamptz,p_lease_seconds integer","result":"boolean","length":697,"md5":"a2edb69902fc454fd7f2a28e068eba41","lines":28,"service":true,"body":"\r\ndeclare\r\n  claimed_id uuid;\r\nbegin\r\n  if p_session_key_hash !~ '^[0-9a-f]{64}$'\r\n    or p_lock_hash !~ '^[0-9a-f]{64}$'\r\n    or p_lease_seconds < 5\r\n    or p_lease_seconds > 120 then\r\n    return false;\r\n  end if;\r\n\r\n  update public.application_sessions\r\n  set\r\n    refresh_lock_hash = p_lock_hash,\r\n    refresh_locked_until =\r\n      p_now + make_interval(secs => p_lease_seconds)\r\n  where session_key_hash = p_session_key_hash\r\n    and revoked_at is null\r\n    and idle_expires_at > p_now\r\n    and absolute_expires_at > p_now\r\n    and (\r\n      refresh_locked_until is null\r\n      or refresh_locked_until <= p_now\r\n    )\r\n  returning id into claimed_id;\r\n\r\n  return claimed_id is not null;\r\nend;\r\n"},
+  {"name":"release_application_session_refresh","types":"text,text","args":"p_session_key_hash text,p_lock_hash text","result":"boolean","length":313,"md5":"8121051a13e394c82c4aefb3408f7685","lines":14,"service":true,"body":"\r\ndeclare\r\n  released_id uuid;\r\nbegin\r\n  update public.application_sessions\r\n  set\r\n    refresh_lock_hash = null,\r\n    refresh_locked_until = null\r\n  where session_key_hash = p_session_key_hash\r\n    and refresh_lock_hash = p_lock_hash\r\n  returning id into released_id;\r\n\r\n  return released_id is not null;\r\nend;\r\n"},
+  {"name":"write_application_session_security_audit","types":"","args":"","result":"trigger","length":581,"md5":"04e6a12df58fcf69463e2412b113f4fc","lines":33,"service":false,"body":"\r\ndeclare\r\n  event_action text;\r\nbegin\r\n  if tg_op = 'INSERT' then\r\n    event_action := 'session.created';\r\n\r\n  elsif new.revoked_at is not null\r\n    and old.revoked_at is null then\r\n\r\n    event_action := 'session.revoked';\r\n\r\n  else\r\n    return new;\r\n  end if;\r\n\r\n  insert into public.admin_audit_logs (\r\n    admin_id,\r\n    action,\r\n    resource,\r\n    resource_id,\r\n    metadata\r\n  )\r\n  values (\r\n    coalesce(auth.uid(), new.revoked_by),\r\n    event_action,\r\n    'application_sessions',\r\n    new.id::text,\r\n    jsonb_build_object('operation', tg_op)\r\n  );\r\n\r\n  return new;\r\nend;\r\n"},
+]
+export async function installVerifiedLegacySessionFunction(db, spec, body = spec.body) {
+  await db.exec(`create or replace function public.${spec.name}(${spec.args})
+    returns ${spec.result} language plpgsql volatile security definer set search_path='' as $$${body}$$;
+    alter function public.${spec.name}(${spec.types}) owner to postgres;
+    revoke execute on function public.${spec.name}(${spec.types}) from public,anon,authenticated,service_role;
+    ${spec.service ? `grant execute on function public.${spec.name}(${spec.types}) to service_role;` : ''}`)
+}
+
 export async function legacyAdminDatabase() {
   const db = await createCatalogDatabase()
   const admin = randomUUID(), customer = randomUUID()
@@ -29,6 +43,7 @@ export async function legacyAdminDatabase() {
   await db.query("insert into public.user_roles(user_id,role_id) select $1,id from public.roles where key='owner_admin'", [admin])
   await installVerifiedLegacyPermission(db)
   await installVerifiedLegacyRevocation(db)
+  for (const spec of verifiedLegacySessionFunctions) await installVerifiedLegacySessionFunction(db,spec)
   return { db, admin, customer }
 }
 export async function applyRelease(db, name, admin) {

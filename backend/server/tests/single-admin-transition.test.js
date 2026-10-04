@@ -4,6 +4,7 @@ import { randomUUID, createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { legacyAdminDatabase, applyRelease, sessionSqlClient, verifiedLegacyPermissionBody, installVerifiedLegacyPermission } from './support/singleAdminDatabase.js'
 import { verifiedLegacyRevocationBody, installVerifiedLegacyRevocation } from './support/singleAdminDatabase.js'
+import { verifiedLegacySessionFunctions, installVerifiedLegacySessionFunction } from './support/singleAdminDatabase.js'
 import { AdminAuthorizationService } from '../services/adminAuthorizationService.js'
 import { SupabaseSessionRepository } from '../services/sessionRepository.js'
 import { AuthSessionService } from '../services/authSessionService.js'
@@ -451,4 +452,152 @@ test('actual SQL: revocation semantic and internal-character mutations roll back
    assert.ok(before.roles.every(role=>role.key!=='admin'))
    assert.ok(!before.audit?.some(row=>row.action==='authorization.expanded'))
  })
+})
+
+const absentSingleAdminFunctions=['protect_profile_identity_fields','protect_admin_role_assignment',
+ 'protect_admin_role_definition','protect_admin_permission_bundle','protect_auth_bootstrap_state',
+ 'protect_admin_audit_log','protect_guest_order_claim','write_auth_security_audit']
+async function reviewedSessionCompatibility() {
+ const source=await readFile(new URL('../../supabase/release-migrations/'+expansion,import.meta.url),'utf8')
+ return verifiedLegacySessionFunctions.map(spec=>{
+   const guard=source.match(/do \$function_install\$[\s\S]*?\$function_install\$;/g)
+     .find(block=>block.includes("to_regprocedure('public."+spec.name+'('))
+   const body=tag=>guard.match(new RegExp('\\$'+tag+'\\$([\\s\\S]*?)\\$'+tag+'\\$'))[1].replaceAll('\r\n','\n').trim()
+   assert.ok(guard.includes("installed_body:=btrim(p.prosrc,E' \\t\\r\\n')"))
+   assert.ok(!guard.includes('replace(p.prosrc'))
+   assert.equal(body('verified_source'),spec.body.replaceAll('\r\n','\n').trim())
+   return {...spec,guard,legacy:body('verified_source'),target:body('expected')}
+ })
+}
+async function sessionCompatibilitySnapshot(db) {
+ const names=[...verifiedLegacySessionFunctions.map(spec=>spec.name),...absentSingleAdminFunctions]
+ return {authority:await authoritySnapshot(db),
+   functions:(await db.query("select to_jsonb(p) value from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname=any($1::text[]) order by p.proname",[names])).rows,
+   tables:(await db.query("select to_regclass('public.application_sessions')::text sessions,to_regclass('public.guest_order_claims')::text claims")).rows[0]}
+}
+
+test('actual SQL: session compatibility installs all three byte-exact production baselines and expands twice',async t=>{
+ const {db,admin}=await legacyAdminDatabase();t.after(()=>db.close())
+ const missing=(await db.query("select to_regprocedure('public.'||name||'()')::text value from unnest($1::text[]) names(name)",[absentSingleAdminFunctions])).rows
+ assert.ok(missing.every(row=>row.value===null))
+ for(const spec of verifiedLegacySessionFunctions) await t.test(spec.name,async()=>{
+   const installed=(await db.query("select p.prosrc,p.prorettype::regtype::text result,l.lanname language,p.prosecdef security_definer,p.proconfig configuration,p.provolatile volatility,pg_get_userbyid(p.proowner) owner,p.proacl::text acl,has_function_privilege('anon',p.oid,'EXECUTE') anon,has_function_privilege('authenticated',p.oid,'EXECUTE') authenticated,has_function_privilege('service_role',p.oid,'EXECUTE') service_role from pg_proc p join pg_language l on l.oid=p.prolang where p.oid=$1::regprocedure",['public.'+spec.name+'('+spec.types+')'])).rows[0]
+   assert.equal(installed.prosrc,spec.body)
+   assert.equal(installed.prosrc.length,spec.length)
+   assert.equal(Buffer.byteLength(installed.prosrc,'utf8'),spec.length)
+   assert.equal(createHash('md5').update(installed.prosrc).digest('hex'),spec.md5)
+   assert.equal((installed.prosrc.match(/\r/g)||[]).length,spec.lines)
+   assert.equal((installed.prosrc.match(/\n/g)||[]).length,spec.lines)
+   assert.ok(installed.prosrc.startsWith('\r\ndeclare\r\n'))
+   assert.ok(installed.prosrc.endsWith('\r\nend;\r\n'))
+   const {prosrc,...attributes}=installed
+   assert.deepEqual(attributes,{result:spec.result,language:'plpgsql',security_definer:true,
+     configuration:['search_path=""'],volatility:'v',owner:'postgres',
+     acl:spec.service?'{postgres=X/postgres,service_role=X/postgres}':'{postgres=X/postgres}',
+     anon:false,authenticated:false,service_role:spec.service})
+ })
+ await applyRelease(db,expansion,admin)
+ await applyRelease(db,expansion,admin)
+ assert.equal((await db.query("select count(*)::int n from public.user_roles ur join public.roles r on r.id=ur.role_id where ur.user_id=$1 and ur.active and r.active and r.key in ('admin','owner_admin')",[admin])).rows[0].n,2)
+ assert.equal((await db.query("select count(*)::int n from public.auth_bootstrap_state where id='first_admin' and completed_by=$1",[admin])).rows[0].n,1)
+ assert.equal((await db.query("select count(*)::int n from public.admin_audit_logs where action='authorization.expanded'")).rows[0].n,1)
+ assert.deepEqual((await new AdminAuthorizationService(sessionSqlClient(db)).resolve(admin)).permissions,['*'])
+ assert.ok((await db.query("select to_regprocedure('public.'||name||'()')::text value from unnest($1::text[]) names(name)",[absentSingleAdminFunctions])).rows.every(row=>row.value!==null))
+})
+
+test('actual SQL: session compatibility accepts only reviewed legacy/target LF, CRLF and outer whitespace',async t=>{
+ const definitions=await reviewedSessionCompatibility()
+ const {db}=await legacyAdminDatabase();t.after(()=>db.close())
+ for(const spec of definitions) for(const [name,format] of [
+   ['LF',body=>body],['CRLF',body=>body.replaceAll('\n','\r\n')],
+   ['outer whitespace',body=>' \t\r\n'+body.replaceAll('\n','\r\n')+'\r\n\t '],
+ ]) for(const [kind,body] of [['legacy',spec.legacy],['target',spec.target]]) await t.test(spec.name+' '+kind+' '+name,async()=>{
+   await installVerifiedLegacySessionFunction(db,spec,format(body))
+   await db.exec(spec.guard)
+   const first=(await db.query('select prosrc from pg_proc where oid=$1::regprocedure',['public.'+spec.name+'('+spec.types+')'])).rows[0].prosrc
+   assert.equal(first.replaceAll('\r\n','\n').trim(),spec.target)
+   if(kind==='target') assert.equal(first,format(body))
+   await db.exec(spec.guard.replaceAll('\r\n','\n').replaceAll('\n','\r\n'))
+   assert.equal((await db.query('select prosrc from pg_proc where oid=$1::regprocedure',['public.'+spec.name+'('+spec.types+')'])).rows[0].prosrc,first)
+ })
+})
+
+function sessionCompatibilityMutations(spec) {
+ const change=(from,to)=>spec.body.replace(from,()=>to)
+ if(spec.name==='claim_application_session_refresh') return [
+   ['hash regex',change("'^[0-9a-f]{64}$'","'^[0-9a-f]{32}$'")],
+   ['lease lower bound',change('p_lease_seconds < 5','p_lease_seconds < 1')],
+   ['lease upper bound',change('p_lease_seconds > 120','p_lease_seconds > 121')],
+   ['revoked condition',change('and revoked_at is null','and true')],
+   ['idle expiry',change('and idle_expires_at > p_now','and true')],
+   ['absolute expiry',change('and absolute_expires_at > p_now','and true')],
+   ['refresh lease logic',change('refresh_locked_until <= p_now','refresh_locked_until >= p_now')],
+   ['extra statement',change('begin\r\n','begin\r\n  perform 1;\r\n')],
+   ['mixed line endings',change('  set\r\n','  set\n')],
+   ['CR inside literal',change("'^[0-9a-f]{64}$'","'^[0-9a-f]{64}$\r'")],
+ ]
+ if(spec.name==='release_application_session_refresh') return [
+   ['lock-hash match',change('and refresh_lock_hash = p_lock_hash','and true')],
+   ['session-key condition',change('where session_key_hash = p_session_key_hash','where session_key_hash <> p_session_key_hash')],
+   ['update target',change('update public.application_sessions','update public.profiles')],
+   ['extra statement',change('begin\r\n','begin\r\n  perform 1;\r\n')],
+   ['internal whitespace',change('  set\r\n','   set\r\n')],
+   ['mixed line endings',change('  set\r\n','  set\n')],
+ ]
+ return [
+   ['event action',change('session.created','session.updated')],
+   ['revoked transition',change('and old.revoked_at is null','and old.revoked_at is not null')],
+   ['audit target',change('public.admin_audit_logs','public.profiles')],
+   ['resource name',change("'application_sessions'","'profiles'")],
+   ['metadata behavior',change("jsonb_build_object('operation', tg_op)","'{}'::jsonb")],
+   ['extra statement',change('begin\r\n','begin\r\n  perform 1;\r\n')],
+   ['mixed line endings',change('  event_action text;\r\n','  event_action text;\n')],
+ ]
+}
+
+test('actual SQL: session compatibility rejects semantic mutations and rolls back all expansion effects',async t=>{
+ const {db,admin}=await legacyAdminDatabase();t.after(()=>db.close())
+ for(const spec of verifiedLegacySessionFunctions) {
+   for(const [name,body] of sessionCompatibilityMutations(spec)) await t.test(spec.name+' '+name,async()=>{
+     assert.notEqual(body,spec.body)
+     await db.exec('set check_function_bodies=off')
+     try {await installVerifiedLegacySessionFunction(db,spec,body)} finally {await db.exec('reset check_function_bodies')}
+     const before=await sessionCompatibilitySnapshot(db)
+     await assert.rejects(applyRelease(db,expansion,admin),new RegExp('RF_INCOMPATIBLE_FUNCTION: '+spec.name))
+     assert.deepEqual(await sessionCompatibilitySnapshot(db),before)
+     assert.equal(before.authority.bootstrap,null)
+     assert.ok(before.authority.roles.every(role=>role.key!=='admin'))
+     assert.ok(!before.authority.audit?.some(row=>row.action==='authorization.expanded'))
+   })
+   await installVerifiedLegacySessionFunction(db,spec)
+ }
+})
+
+test('actual SQL: session compatibility preserves refresh leases and security events without heartbeat noise',async t=>{
+ const {db,admin,customer}=await legacyAdminDatabase();t.after(()=>db.close())
+ await applyRelease(db,expansion,admin)
+ const epoch=new Date('2030-01-01T00:00:00Z').getTime(),time=seconds=>new Date(epoch+seconds*1000).toISOString()
+ const key='a'.repeat(64),lock='b'.repeat(64),other='c'.repeat(64)
+ const id=(await db.query("insert into public.application_sessions(user_id,session_class,created_at,last_seen_at,idle_expires_at,absolute_expires_at,session_key_hash) values($1,'customer',$2::timestamptz,$2::timestamptz,$3::timestamptz,$4::timestamptz,$5) returning id",[customer,time(0),time(3600),time(7200),key])).rows[0].id
+ const evidence=async()=> (await db.query("select action,count(*)::int n from public.admin_audit_logs where resource='application_sessions' and resource_id=$1 group by action order by action",[id])).rows
+ const claim=async(sessionKey,lockKey,seconds=15,now=0)=>(await db.query('select public.claim_application_session_refresh($1,$2,$3::timestamptz,$4) value',[sessionKey,lockKey,time(now),seconds])).rows[0].value
+ const release=async(sessionKey,lockKey)=>(await db.query('select public.release_application_session_refresh($1,$2) value',[sessionKey,lockKey])).rows[0].value
+ assert.deepEqual(await evidence(),[{action:'session.created',n:1}])
+ for(const [sessionKey,lockKey,seconds] of [['bad',lock,15],[key,'bad',15],[key,lock,4],[key,lock,121]]) assert.equal(await claim(sessionKey,lockKey,seconds),false)
+ assert.equal(await claim(key,lock),true)
+ assert.equal(await claim(key,other),false)
+ assert.equal(await release(other,lock),false)
+ assert.equal(await release(key,other),false)
+ assert.equal(await release(key,lock),true)
+ assert.deepEqual((await db.query('select refresh_lock_hash,refresh_locked_until from public.application_sessions where id=$1',[id])).rows[0],{refresh_lock_hash:null,refresh_locked_until:null})
+ assert.equal(await claim(key,other),true)
+ assert.equal(await claim(key,lock,15,16),true)
+ assert.equal(await release(key,lock),true)
+ await db.query('update public.application_sessions set last_seen_at=$2::timestamptz where id=$1',[id,time(1)])
+ assert.deepEqual(await evidence(),[{action:'session.created',n:1}])
+ await db.query("update public.application_sessions set revoked_at=$2::timestamptz,revoked_by=$3,revocation_reason='fixture' where id=$1",[id,time(2),admin])
+ assert.equal(await claim(key,lock,15,2),false)
+ await db.query("update public.application_sessions set revocation_reason='fixture repeated' where id=$1",[id])
+ assert.deepEqual(await evidence(),[{action:'session.created',n:1},{action:'session.revoked',n:1}])
+ assert.deepEqual((await db.query("select metadata from public.admin_audit_logs where resource_id=$1 and action='session.revoked'",[id])).rows[0].metadata,{operation:'UPDATE'})
 })
