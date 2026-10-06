@@ -1,5 +1,5 @@
 const messages = {
-    ORDER_NOT_FOUND: 'Order not found.', ORDER_STALE: 'This order changed. Refresh before continuing.', INVALID_ADMIN_ORDER_REQUEST: 'Check the order request fields.', INVALID_ORDER_TRANSITION: 'This action is not available in the current state.', MUTATION_CONFLICT: 'This mutation belongs to a different request.', CANCELLATION_NOT_ALLOWED: 'Cancellation is only available before shipping.', PAID_CANCELLATION_BLOCKED: 'Paid cancellation requires a refund workflow.', ORDER_LEDGER_INCONSISTENT: 'The inventory ledger requires review.', PAYMENT_NOT_FOUND: 'The checkout payment is missing.', PAYMENT_INCONSISTENT: 'The checkout payment requires review.', PAYMENT_CONFIRMATION_CONFLICT: 'Payment confirmation conflicts with the recorded result.', FULFILLMENT_REQUIRED: 'Enter courier and tracking before shipping.', INVALID_TRACKING: 'Enter tracking information and a correction reason.', PERMISSION_DENIED: 'You do not have permission for this action.', ADMIN_ORDER_UNAVAILABLE: 'The order service is unavailable.'
+    ORDER_VERSION_UNSUPPORTED: 'This checkout version requires updated fulfillment support.', ORDER_NOT_FOUND: 'Order not found.', ORDER_STALE: 'This order changed. Refresh before continuing.', INVALID_ADMIN_ORDER_REQUEST: 'Check the order request fields.', INVALID_ORDER_TRANSITION: 'This action is not available in the current state.', MUTATION_CONFLICT: 'This mutation belongs to a different request.', CANCELLATION_NOT_ALLOWED: 'Cancellation is only available before shipping.', PAID_CANCELLATION_BLOCKED: 'Paid cancellation requires a refund workflow.', ORDER_LEDGER_INCONSISTENT: 'The inventory ledger requires review.', PAYMENT_NOT_FOUND: 'The checkout payment is missing.', PAYMENT_INCONSISTENT: 'The checkout payment requires review.', PAYMENT_CONFIRMATION_CONFLICT: 'Payment confirmation conflicts with the recorded result.', FULFILLMENT_REQUIRED: 'Enter courier and tracking before shipping.', INVALID_TRACKING: 'Enter tracking information and a correction reason.', PERMISSION_DENIED: 'You do not have permission for this action.', ADMIN_ORDER_UNAVAILABLE: 'The order service is unavailable.'
 };
 export class AdminOrderError extends Error {
     constructor(code, status = 409) {
@@ -8,7 +8,9 @@ export class AdminOrderError extends Error {
         this.status = status;
     }
 }
-const orderColumns = 'id,order_number,customer_id,customer_name,customer_email,customer_phone,shipping_address,shipping_city,shipping_province,order_notes,status,payment_method,payment_status,subtotal,discount,shipping_fee,total,currency,courier_name,tracking_number,created_at,updated_at,revision,idempotency_key';
+// Explicit mapping below prevents raw snapshot/contact internals entering responses.
+// '*' also supports existing v1 installations while recognizing 013 when installed.
+const orderColumns = '*';
 export class AdminOrdersV1Service {
     constructor(client, logger = console) {
         this.client = client;
@@ -84,6 +86,8 @@ export class AdminOrdersV1Service {
         const { data: o } = await this.run(this.requireClient().from('orders').select(orderColumns).eq('id', id).maybeSingle(), requestId, 'detail');
         if (!o)
             throw new AdminOrderError('ORDER_NOT_FOUND', 404);
+        if ((o.checkout_version ?? 1) !== 1)
+            throw new AdminOrderError('ORDER_VERSION_UNSUPPORTED', 409);
         const paymentRead = permissions.includes('*') || permissions.includes('payments.read');
         const [items, payments, notes, history, inventory, audit, profiles] = await Promise.all([
             this.rows('order_items', 'id,order_id,product_id,variant_id,product_name,size,sku,quantity,unit_price,line_total', [['eq', 'order_id', id]], requestId),
@@ -144,6 +148,7 @@ function trackingCorrection(audit) {
 }
 function summary(o) {
     return {
+        checkoutVersion: o.checkout_version ?? 1, fulfillmentSupported: (o.checkout_version ?? 1) === 1,
         id: o.id, orderNumber: o.order_number, customerName: o.customer_name, email: o.customer_email ?? '', phone: o.customer_phone ?? '', createdAt: o.created_at, total: Number(o.total), currency: o.currency, paymentMethod: o.payment_method, paymentStatus: o.payment_status, status: o.status, city: o.shipping_city, province: o.shipping_province, courier: o.courier_name, trackingNumber: o.tracking_number
     };
 }

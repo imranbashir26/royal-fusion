@@ -61,7 +61,7 @@ test('migration 010 changes only approved locking/shipping/UTC blocks and preser
 })
 
 test('PGlite shipping ambiguity fails closed in quote and actual RPC, including identical fees', async (t) => {
-  const db = await createCatalogDatabase(); await db.exec("alter table public.products add column commerce_kind text not null default 'standard'"); t.after(() => db.close())
+  const db = await createCatalogDatabase(); await db.exec("alter table public.products add column commerce_kind text not null default 'standard'; alter table public.orders add column checkout_version smallint not null default 1"); t.after(() => db.close())
   await db.exec(await readFile(new URL('../../supabase/migrations/010_checkout_product_locking.sql', import.meta.url), 'utf8'))
   await db.query(`insert into public.products(id,name,slug,sku,price,scent_family,main_image_url,status,active)
     values($1,'Baraan','baraan','RF-BAR-001',2900,'Woody','https://example.invalid/fixture.webp','Published',true)`, [productId])
@@ -88,7 +88,11 @@ test('PGlite shipping ambiguity fails closed in quote and actual RPC, including 
       values($1,$2,$3,200,0),($1,$2,$4,$5,0)`, [methodId, scope, scope === 'city' ? 'Karachi' : '', scope === 'city' ? 'KARACHI' : 'alternate', sameFee ? 200 : 300])
     await assert.rejects(preview(), { code: 'CHECKOUT_UNAVAILABLE' })
     const result = await direct(); assert.equal(result.error.code, 'P0001'); assert.match(result.error.message, /ambiguous/)
+    // The service now reaches SQL rather than rejecting in JavaScript. Model
+    // PostgREST's rolled-back failed RPC while retaining this outer test fixture.
+    await db.exec('savepoint service_attempt')
     await assert.rejects(new OrdersV1Service(client, { logger: { warn() {} } }).create({ ...baseRequest, idempotencyKey: crypto.randomUUID() }), { code: 'CHECKOUT_UNAVAILABLE' })
+    await db.exec('rollback to service_attempt; release savepoint service_attempt')
     assert.equal((await db.query('select count(*)::int n from public.orders')).rows[0].n, 0)
     assert.equal((await db.query('select stock_quantity from public.product_variants where id=$1', [variantId])).rows[0].stock_quantity, 12)
     await db.exec('rollback')
@@ -101,7 +105,7 @@ test('PGlite shipping ambiguity fails closed in quote and actual RPC, including 
 })
 
 test('UTC coupon dates agree around midnight regardless of database session timezone', async (t) => {
-  const db = await createCatalogDatabase(); await db.exec("alter table public.products add column commerce_kind text not null default 'standard'"); t.after(() => db.close())
+  const db = await createCatalogDatabase(); await db.exec("alter table public.products add column commerce_kind text not null default 'standard'; alter table public.orders add column checkout_version smallint not null default 1"); t.after(() => db.close())
   for (const timezone of ['UTC', 'Asia/Karachi', 'America/Los_Angeles']) {
     await db.query("select set_config('TimeZone',$1,false)", [timezone])
     for (const instant of ['2026-10-01T23:59:59.999Z', '2026-10-02T00:00:00.000Z', '2026-10-02T04:59:59+05:00']) {
@@ -114,11 +118,11 @@ test('UTC coupon dates agree around midnight regardless of database session time
   }
 })
 test('PGlite actual RPC: Baraan snapshots, payment/inventory, replay, rollback and quote parity (not concurrency)', async (t) => {
-  const db = await createCatalogDatabase(); await db.exec("alter table public.products add column commerce_kind text not null default 'standard'"); t.after(() => db.close())
-  await db.exec(await readFile(new URL('../../supabase/migrations/010_checkout_product_locking.sql', import.meta.url), 'utf8'))
-  await db.query(`insert into public.products(id,name,slug,sku,price,scent_family,main_image_url,status,active)
-    values($1,'Baraan','baraan','RF-BAR-001',2900,'Woody','https://example.invalid/baraan.webp','Published',true)`, [productId])
-  await db.query(`insert into public.product_variants(id,product_id,option_value,sku,regular_price,stock_quantity) values($1,$2,'50 ml','RF-BAR-001',2900,12)`, [variantId, productId])
+  // The current service consumes the complete authoritative receipt introduced by 013.
+  const { fixtureV2 } = await import('./support/checkoutV2Database.js')
+  const { db } = await fixtureV2(); t.after(() => db.close())
+  await db.query("update public.product_variants set sku='RF-BAR-001' where id=$1",[variantId])
+  await db.exec('delete from public.shipping_methods')
   await db.query(`insert into public.shipping_methods(id,code,name,base_fee,free_shipping_threshold) values($1,'standard','Standard',250,7000)`, [methodId])
   await db.query(`insert into public.shipping_rates(shipping_method_id,scope_type,scope_value,fee) values($1,'city','Karachi',200),($1,'province','Sindh',300),($1,'default','',250)`, [methodId])
   await db.exec(`insert into public.site_settings(id,payments) values('site','[{"name":"Cash on Delivery","active":true},{"name":"Bank Transfer","active":true}]') on conflict(id) do update set payments=excluded.payments`)

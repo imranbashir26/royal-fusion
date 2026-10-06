@@ -20,6 +20,7 @@ import { createAdminReviewsV1Router, createPublicReviewsV1Router } from './route
 import { createAdminNewsletterV1Router, createPublicNewsletterV1Router } from './routes/newsletterV1.js'
 import { createAdminSettingsV1Router } from './routes/settingsV1.js'
 import { createOrdersV1Router } from './routes/ordersV1.js'
+import { createOrdersV2Router } from './routes/ordersV2.js'
 import { createAdminOrdersV1Router } from './routes/adminOrdersV1.js'
 import { mediaRouter } from './routes/media.js'
 import { createTesterPacksV2Router } from './routes/testerPacksV2.js'
@@ -73,6 +74,15 @@ app.use(rateLimit({
   legacyHeaders: false
 }))
 app.use('/api/v2/admin/tester-packs', express.json({ limit: '32kb' }))
+app.use('/api/v2/public/checkout/quote', express.json({ limit: '32kb' }))
+app.use('/api/v2/public/orders', express.json({ limit: '32kb' }))
+app.use((error,req,res,next)=>{
+  if (['/api/v2/public/checkout/quote','/api/v2/public/orders'].includes(req.path.replace(/\/+$/,'').toLowerCase())
+      && (error.type === 'entity.parse.failed' || error.type === 'entity.too.large')) {
+    return res.status(error.status ?? 400).json({error:{code:'INVALID_CHECKOUT_REQUEST',message:'Please check your checkout information.',requestId:req.requestId}})
+  }
+  next(error)
+})
 app.use(express.json({ limit: '1mb' }))
 app.use(cookieParser())
 app.use('/api/v1/auth', createAuthV1Router(authRuntime))
@@ -92,6 +102,7 @@ app.use('/api/v1/admin/newsletter', createAdminNewsletterV1Router(authRuntime))
 app.use('/api/v1/public/newsletter', createPublicNewsletterV1Router(authRuntime))
 app.use('/api/v1/admin/settings', createAdminSettingsV1Router(authRuntime))
   app.use('/api/v1/public', createOrdersV1Router(authRuntime))
+app.use('/api/v2/public', createOrdersV2Router(authRuntime))
   app.use('/api/v1/admin/orders', createAdminOrdersV1Router(authRuntime))
 app.use('/api/v1/admin/products/:productId/media', createAdminMediaV1Router(authRuntime))
 app.use('/uploads', express.static(path.resolve(__dirname, 'uploads')))
