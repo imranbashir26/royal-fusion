@@ -25,7 +25,7 @@ export function sqlClient(db) {
             };
             const q = {
                 select(c, opt) {
-                    columns = c.split(',').map(name).join(',');
+                    columns = c === '*' ? '*' : c.split(',').map(name).join(',');
                     count = opt?.count === 'exact';
                     return q;
                 }, eq(c, v) {

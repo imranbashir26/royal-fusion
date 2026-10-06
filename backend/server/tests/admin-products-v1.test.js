@@ -316,9 +316,9 @@ function mockClient(db) {
       assert.equal(name, 'save_catalog_product')
       try {
         const data = await saveCatalog(catalogDatabase, args.p_product_id, args.p_patch, args.p_variants)
-        db.products = (await catalogDatabase.query('select * from public.products')).rows
+        db.products = (await catalogDatabase.query('select * from public.products')).rows.map(row => ({...row,commerce_kind:'standard'}))
         db.product_variants = (await catalogDatabase.query('select * from public.product_variants')).rows
-        return { data, error: null }
+        return { data: {...data,product:{...data.product,commerce_kind:'standard'}}, error: null }
       } catch (error) { return { data: null, error } }
     },
   }
@@ -335,6 +335,7 @@ function failingCreateClient(stage, failure, throws = false) {
         return {
           select() { return this },
           eq() { return this },
+          in() { return this },
           async maybeSingle() {
             return stage === 'category.resolve'
               ? { data: null, error: failure }
@@ -366,6 +367,7 @@ class Query {
   }
   select(_columns, options = {}) { this.count = options.count === 'exact'; return this }
   eq(key, value) { this.filters.push((row) => row[key] === value); return this }
+  in(key, values) { this.filters.push(row => values.includes(row[key])); return this }
   or(value) {
     const search = value.match(/name\.ilike\.%(.+?)%,slug\.ilike/)[1].toLowerCase()
     this.filters.push((row) => ['name', 'slug', 'sku'].some((key) => String(row[key] ?? '').toLowerCase().includes(search)))

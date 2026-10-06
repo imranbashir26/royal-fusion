@@ -61,7 +61,7 @@ test('migration 010 changes only approved locking/shipping/UTC blocks and preser
 })
 
 test('PGlite shipping ambiguity fails closed in quote and actual RPC, including identical fees', async (t) => {
-  const db = await createCatalogDatabase(); t.after(() => db.close())
+  const db = await createCatalogDatabase(); await db.exec("alter table public.products add column commerce_kind text not null default 'standard'"); t.after(() => db.close())
   await db.exec(await readFile(new URL('../../supabase/migrations/010_checkout_product_locking.sql', import.meta.url), 'utf8'))
   await db.query(`insert into public.products(id,name,slug,sku,price,scent_family,main_image_url,status,active)
     values($1,'Baraan','baraan','RF-BAR-001',2900,'Woody','https://example.invalid/fixture.webp','Published',true)`, [productId])
@@ -101,7 +101,7 @@ test('PGlite shipping ambiguity fails closed in quote and actual RPC, including 
 })
 
 test('UTC coupon dates agree around midnight regardless of database session timezone', async (t) => {
-  const db = await createCatalogDatabase(); t.after(() => db.close())
+  const db = await createCatalogDatabase(); await db.exec("alter table public.products add column commerce_kind text not null default 'standard'"); t.after(() => db.close())
   for (const timezone of ['UTC', 'Asia/Karachi', 'America/Los_Angeles']) {
     await db.query("select set_config('TimeZone',$1,false)", [timezone])
     for (const instant of ['2026-10-01T23:59:59.999Z', '2026-10-02T00:00:00.000Z', '2026-10-02T04:59:59+05:00']) {
@@ -114,7 +114,7 @@ test('UTC coupon dates agree around midnight regardless of database session time
   }
 })
 test('PGlite actual RPC: Baraan snapshots, payment/inventory, replay, rollback and quote parity (not concurrency)', async (t) => {
-  const db = await createCatalogDatabase(); t.after(() => db.close())
+  const db = await createCatalogDatabase(); await db.exec("alter table public.products add column commerce_kind text not null default 'standard'"); t.after(() => db.close())
   await db.exec(await readFile(new URL('../../supabase/migrations/010_checkout_product_locking.sql', import.meta.url), 'utf8'))
   await db.query(`insert into public.products(id,name,slug,sku,price,scent_family,main_image_url,status,active)
     values($1,'Baraan','baraan','RF-BAR-001',2900,'Woody','https://example.invalid/baraan.webp','Published',true)`, [productId])

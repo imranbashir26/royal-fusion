@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AdminDashboardPage } from './AdminDashboardPage'
 import { AdminFragranceFinderPage } from './AdminFragranceFinderPage'
+import { AdminTesterPacksPage } from './AdminTesterPacksPage'
 import { AdminLayout } from './AdminLayout'
 import { AdminOrdersPage } from './AdminOrdersPage'
 import { AdminOrderDetailsPage } from './AdminOrderDetailsPage'
@@ -17,6 +18,7 @@ export function AdminRoutes() {
       <Route element={<AdminLayout />}>
         <Route index element={<Navigate replace to="dashboard" />} />
         <Route path="dashboard" element={<AdminDashboardPage />} />
+        <Route path="tester-packs" element={<AdminTesterPacksPage />} />
         <Route path="products" element={<AdminResourceManager resource="products" />} />
         <Route path="categories" element={<AdminResourceManager resource="categories" />} />
         <Route path="fragrance-finder" element={<AdminFragranceFinderPage />} />

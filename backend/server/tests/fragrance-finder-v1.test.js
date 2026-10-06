@@ -55,9 +55,9 @@ async function start() {
       { id: ids.sweet, key: 'sweet', label: 'Sweet', descriptors: 'Sweet • Amber • Radiant', copy: 'Sweet copy', icon_key: 'candy', product_id: ids.archived, active: false, display_order: 2 },
     ],
     products: [
-      { id: ids.valid, name: 'Valid Product', status: 'Published', active: true },
-      { id: ids.archived, name: 'Archived Product', status: 'Archived', active: false },
-      { id: ids.inactive, name: 'Inactive Product', status: 'Published', active: false },
+      { commerce_kind:'standard', id: ids.valid, name: 'Valid Product', status: 'Published', active: true },
+      { commerce_kind:'standard', id: ids.archived, name: 'Archived Product', status: 'Archived', active: false },
+      { commerce_kind:'standard', id: ids.inactive, name: 'Inactive Product', status: 'Published', active: false },
     ],
     admin_audit_logs: [],
   }

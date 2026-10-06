@@ -7,7 +7,7 @@ import { withApprovedReviewRatings } from '../src/services/reviewAggregation.ts'
 import { mapProduct } from '../src/services/productionMappers.ts'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const product = mapProduct({ id: 'p1', slug: 'royal', name: 'Royal', price: 4000, main_image_url: '/royal.webp' })
+const product = mapProduct({ commerce_kind: 'standard', id: 'p1', slug: 'royal', name: 'Royal', price: 4000, main_image_url: '/royal.webp' })
 
 test('genuine approved reviews set arithmetic rating and count; no-review products have no rating', () => {
   assert.equal(product.rating, null)

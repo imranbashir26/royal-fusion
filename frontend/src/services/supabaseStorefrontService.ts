@@ -7,10 +7,10 @@ import {
   mapProduct,
   type SupabaseCategoryRow,
   type SupabaseCollectionRow,
-  type SupabaseProductRow,
 } from './productionMappers'
 import { mapPublicSettingsRows, type PublicSettingsRow } from './publicSettingsMapper'
 import { getSupabaseClient } from './supabaseClient'
+import { loadNormalProductRows } from './normalCatalog'
 import { loadPublicVariants } from './storefrontVariants'
 
 export const supabaseStorefrontService = {
@@ -18,15 +18,7 @@ export const supabaseStorefrontService = {
     const client = getSupabaseClient()
     if (!client) return null
 
-    const { data, error } = await client
-      .from('products')
-      .select('*')
-      .eq('status', 'Published')
-      .eq('active', true)
-      .order('created_at', { ascending: false })
-
-    if (error) throw error
-    const products = (data as SupabaseProductRow[]).map(mapProduct)
+    const products = (await loadNormalProductRows(client)).map(mapProduct)
     const variants = await loadPublicVariants(client, products.map((product) => product.id))
     const byProduct = new Map<string, typeof variants>()
     for (const variant of variants) {

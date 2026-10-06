@@ -66,6 +66,7 @@ export const adminNavGroups = [
 
 export const adminNav: AdminNavItem[] = [
   { label: 'Dashboard Overview', to: '/admin/dashboard', icon: Boxes, permission: 'dashboard:read', group: 'Core' },
+  { label: 'Tester Packs', to: '/admin/tester-packs', icon: Package, permission: 'products:read', group: 'Perfume Catalog' },
   { label: 'Perfumes & Products', to: '/admin/products', icon: Package, permission: 'products:read', group: 'Perfume Catalog' },
   { label: 'Fragrance Categories', to: '/admin/categories', icon: Tags, permission: 'categories:manage', group: 'Perfume Catalog' },
   { label: 'Curated Collections', to: '/admin/collections', icon: Boxes, permission: 'collections:manage', group: 'Perfume Catalog' },
@@ -93,8 +94,11 @@ export const resourceConfigs: Record<string, AdminResourceConfig> = {
     endpoint: 'products',
     permission: 'products:read',
     icon: Package,
-    columns: ['name', 'sku', 'category', 'price', 'stockQuantity', 'status'],
+    columns: ['name', 'commerceKind', 'sku', 'category', 'price', 'stockQuantity', 'status'],
     fields: [
+      { name: 'commerceKind', label: 'Product type (immutable after creation)', type: 'select', options: ['standard','tester'] },
+      { name: 'sourceProductId', label: 'Source fragrance UUID (optional for testers)' },
+      { name: 'testerAvailable', label: 'Tester enabled for sale (stock availability is automatic)', type: 'checkbox' },
       { name: 'name', label: 'Product name', required: true },
       { name: 'slug', label: 'Slug', required: true },
       { name: 'sku', label: 'SKU', required: true },

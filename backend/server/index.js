@@ -22,6 +22,7 @@ import { createAdminSettingsV1Router } from './routes/settingsV1.js'
 import { createOrdersV1Router } from './routes/ordersV1.js'
 import { createAdminOrdersV1Router } from './routes/adminOrdersV1.js'
 import { mediaRouter } from './routes/media.js'
+import { createTesterPacksV2Router } from './routes/testerPacksV2.js'
 import { publicRouter } from './routes/public.js'
 import { updateDb, nowIso } from './utils/database.js'
 import { validateRuntimeEnv } from './utils/env.js'
@@ -71,11 +72,14 @@ app.use(rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 }))
+app.use('/api/v2/admin/tester-packs', express.json({ limit: '32kb' }))
 app.use(express.json({ limit: '1mb' }))
 app.use(cookieParser())
 app.use('/api/v1/auth', createAuthV1Router(authRuntime))
 app.use('/api/v1/customer', createCustomerAccountV1Router(authRuntime))
 app.use(sanitizeBody)
+app.use('/api/v2/admin/tester-packs', createTesterPacksV2Router(authRuntime))
+app.use('/api/v2/public/tester-packs', createTesterPacksV2Router(authRuntime, { publicOnly: true }))
 app.use('/api/v1/admin/products', createAdminProductsV1Router(authRuntime))
 app.use('/api/v1/admin/categories', createAdminCategoriesV1Router(authRuntime))
 app.use('/api/v1/admin/collections', createAdminCollectionsV1Router(authRuntime))

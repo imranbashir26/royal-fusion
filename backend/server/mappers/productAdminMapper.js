@@ -29,7 +29,8 @@ export function toProductColumns(input) {
 }
 
 export function toProductDto(row) {
-  const dto = { id: row.id }
+  if (!['standard','tester'].includes(row.commerce_kind) || row.price == null || !Number.isFinite(Number(row.price)) || Number(row.price) <= 0) throw new Error('Invalid normal product DTO.')
+  const dto = { id: row.id, commerceKind: row.commerce_kind }
   for (const [field, column] of Object.entries(FIELD_TO_COLUMN)) {
     dto[field] = ['price', 'salePrice', 'oldPrice'].includes(field) && row[column] != null
       ? Number(row[column]) : row[column]

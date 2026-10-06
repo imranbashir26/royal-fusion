@@ -10,7 +10,8 @@ export interface SupabaseProductRow {
   concentration?: string
   collection?: string
   gender?: Product['gender']
-  price: number
+  commerce_kind: 'standard' | 'tester' | 'tester_pack'
+  price: number | null
   sale_price?: number | null
   old_price?: number | null
   main_image_url: string
@@ -179,18 +180,20 @@ export function normalizeProductType(categoryName?: string, concentration?: stri
 }
 
 export function mapProduct(row: SupabaseProductRow): Product {
+  if (!['standard', 'tester'].includes(row.commerce_kind) || row.price == null || !Number.isFinite(Number(row.price)) || Number(row.price) <= 0 || (row.sale_price != null && row.sale_price !== 0 && (!Number.isFinite(Number(row.sale_price)) || Number(row.sale_price) < 0 || Number(row.sale_price) >= Number(row.price)))) throw new Error('Invalid normal product catalog row.')
   const categoryName = normalizeProductType(row.category_name, row.concentration)
   const isAttar = isAttarCategory(categoryName)
     || (categoryName === 'Uncategorized' && Boolean(row.is_attar))
 
   return {
     id: row.id,
+    commerceKind: row.commerce_kind as 'standard' | 'tester',
     slug: row.slug,
     name: row.name,
     category: categoryName,
     collection: '',
     gender: row.gender || 'Unisex',
-    price: Number(row.sale_price || row.price),
+    price: Number(row.sale_price) > 0 ? Number(row.sale_price) : Number(row.price),
     oldPrice: Number(row.old_price || row.price),
     rating: null,
     reviewCount: 0,
@@ -257,6 +260,7 @@ export function mergeStorefrontData(
   return {
     ...fallback,
     ...data,
+    products: (data.products ?? fallback.products ?? []).filter(product => ['standard','tester'].includes(Object.hasOwn(product, 'commerceKind') ? product.commerceKind! : 'standard') && Number.isFinite(product.price) && product.price > 0),
     collections: data.collections ?? fallback.collections ?? [],
     settings: {
       ...fallback.settings,

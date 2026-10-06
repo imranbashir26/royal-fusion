@@ -414,7 +414,11 @@ function AdminRecordForm({
   }, [config.endpoint])
 
   const setValue = (field: AdminField, value: unknown) => {
-    setForm((current) => setPath(current, field.name, value))
+    if (field.name === 'commerceKind' && (initialValue?.id || form.id)) return
+    setForm((current) => {
+      const next = setPath(current, field.name, value)
+      return field.name === 'commerceKind' && value === 'tester' ? {...next,bottleSize:'5 ml',variations:[],testerAvailable:true} : next
+    })
   }
 
   const stagedMediaRef = useRef(new Map<string, string>())
@@ -664,7 +668,7 @@ function ProductFormSections({
   const sections = [
     {
       title: '🏷️ 1. Basic Information & Pricing',
-      fields: ['name', 'slug', 'sku', 'categoryId', 'price', 'salePrice', 'oldPrice', 'stockQuantity', 'bottleSize', 'shortDescription', 'description'],
+      fields: ['commerceKind', 'sourceProductId', 'testerAvailable', 'name', 'slug', 'sku', 'categoryId', 'price', 'salePrice', 'oldPrice', 'stockQuantity', 'bottleSize', 'shortDescription', 'description'],
     },
     {
       title: '🧪 2. Fragrance Pyramid & Notes Profile',

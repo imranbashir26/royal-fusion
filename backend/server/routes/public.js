@@ -6,6 +6,11 @@ import { calculateDiscount, calculateShipping, validateCoupon } from '../utils/c
 import { contactSchema, couponValidationSchema, orderSchema } from '../utils/schemas.js'
 import { publicPrototypeSettings } from '../utils/publicStorefrontSettings.js'
 
+export function isNormalJsonProduct(product) {
+  const kind = Object.hasOwn(product,'commerceKind') ? product.commerceKind : Object.hasOwn(product,'commerce_kind') ? product.commerce_kind : 'standard'
+  return ['standard','tester'].includes(kind) && product.price != null && Number.isFinite(Number(product.price)) && Number(product.price)>0
+}
+
 export const publicRouter = Router()
 
 // Historical JSON checkout is isolated to non-production development/tests.
@@ -23,7 +28,7 @@ publicRouter.get('/storefront', async (req, res) => {
     operation = 'json.publicProjection'
     const publicSettings = publicPrototypeSettings(db)
     res.json({
-      products: db.products.filter((product) => product.status === 'Published'),
+      products: db.products.filter((product) => product.status === 'Published' && isNormalJsonProduct(product)),
       categories: db.categories
         .filter((category) => category.status === 'Published')
         .sort((a, b) => Number(a.displayOrder || 0) - Number(b.displayOrder || 0)),
@@ -54,12 +59,12 @@ publicRouter.get('/storefront', async (req, res) => {
 
 publicRouter.get('/products', async (_req, res) => {
   const db = await readDb()
-  res.json(db.products.filter((product) => product.status === 'Published'))
+  res.json(db.products.filter((product) => product.status === 'Published' && isNormalJsonProduct(product)))
 })
 
 publicRouter.get('/products/:slug', async (req, res) => {
   const db = await readDb()
-  const product = db.products.find((item) => item.slug === req.params.slug && item.status === 'Published')
+  const product = db.products.find((item) => item.slug === req.params.slug && item.status === 'Published' && isNormalJsonProduct(item))
   if (!product) return res.status(404).json({ message: 'Product not found.' })
   res.json(product)
 })
@@ -114,7 +119,7 @@ publicRouter.post('/orders', validate(orderSchema), async (req, res) => {
   const order = await updateDb((db) => {
     const productIds = req.body.items.map((item) => item.productId)
     const orderItems = req.body.items.map((item) => {
-      const product = db.products.find((candidate) => candidate.id === item.productId)
+      const product = db.products.find((candidate) => candidate.id === item.productId && isNormalJsonProduct(candidate))
       if (!product || product.status !== 'Published') {
         throw Object.assign(new Error('One or more products are unavailable.'), { status: 400 })
       }
@@ -153,7 +158,7 @@ publicRouter.post('/orders', validate(orderSchema), async (req, res) => {
     const customer = upsertCustomer(db, req.body.contact, req.body.shipping, total)
 
     for (const item of req.body.items) {
-      const product = db.products.find((candidate) => candidate.id === item.productId)
+      const product = db.products.find((candidate) => candidate.id === item.productId && isNormalJsonProduct(candidate))
       product.stock = Math.max(0, Number(product.stock || 0) - item.quantity)
       product.stockStatus = product.stock === 0 ? 'Out of Stock' : product.stock < 6 ? 'Low Stock' : 'In Stock'
       product.updatedAt = nowIso()

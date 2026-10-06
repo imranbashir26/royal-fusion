@@ -37,6 +37,7 @@ export interface ProductVariant {
 }
 
 export interface Product {
+  commerceKind?: 'standard' | 'tester'
   id: string
   slug: string
   name: string

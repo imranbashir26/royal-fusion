@@ -22,7 +22,7 @@ export const input = (overrides = {}) => ({ idempotencyKey: randomUUID(), items:
   paymentMethod: 'Cash on Delivery', couponCode: '', ...overrides })
 export function fixtures() {
   return {
-    products: [{ id: productId, name: 'Baraan', active: true, status: 'Published' }],
+    products: [{ commerce_kind:'standard', id: productId, name: 'Baraan', active: true, status: 'Published' }],
     product_variants: [{ id: variantId, product_id: productId, option_value: '50 ml', sku: 'RF-BAR-001', regular_price: 2900, sale_price: null, stock_quantity: 12, active: true, available: true }],
     shipping_methods: [{ id: methodId, base_fee: 250, free_shipping_threshold: 7000, display_order: 0, created_at: '2026-01-01', active: true }],
     shipping_rates: [], site_settings: [{ id: 'site', payments: [{ name: 'Cash on Delivery', active: true }, { name: 'Bank Transfer', active: true }] }],

@@ -1,5 +1,5 @@
 const editableFields = [
-  'name', 'slug', 'sku', 'shortDescription', 'description', 'price', 'salePrice',
+  'commerceKind', 'sourceProductId', 'testerAvailable', 'name', 'slug', 'sku', 'shortDescription', 'description', 'price', 'salePrice',
   'oldPrice', 'stockQuantity', 'categoryId', 'collection', 'gender',
   'scentFamily', 'notes', 'bottleSize', 'concentration', 'longevity',
   'sillage', 'occasion', 'inspiredBy', 'image', 'gallery', 'imageAlt',
@@ -9,10 +9,13 @@ const editableFields = [
 ] as const
 
 export function toProductPayload(form: Record<string, unknown>): Record<string, unknown> {
+  if (form.commerceKind != null && !['standard','tester'].includes(String(form.commerceKind))) throw new Error('Packs require the Tester Packs editor.')
   const payload: Record<string, unknown> = {}
   for (const field of editableFields) {
     if (Object.hasOwn(form, field)) payload[field] = form[field]
   }
+  if (payload.sourceProductId === '') payload.sourceProductId = null
+  if (payload.commerceKind === 'tester') payload.bottleSize = '5 ml'
   if (payload.categoryId === '') payload.categoryId = null
   if (payload.salePrice === '') payload.salePrice = null
   if (payload.oldPrice === '') payload.oldPrice = null

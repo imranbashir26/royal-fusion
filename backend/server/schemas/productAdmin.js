@@ -32,6 +32,9 @@ const variationList = z.array(z.object({
 }).strict()).max(50)
 
 const fields = z.object({
+  commerceKind: z.enum(['standard','tester']),
+  sourceProductId: z.string().uuid().nullable(),
+  testerAvailable: z.boolean(),
   name: requiredText(),
   slug: requiredText().transform((value) => value.toLowerCase().replace(/\s+/g, '-')).pipe(z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(180)),
   sku: requiredText(80).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
@@ -76,6 +79,7 @@ const fields = z.object({
 export const createProductSchema = fields.required({
   name: true, slug: true, sku: true, price: true, scentFamily: true, image: true,
 }).partial({
+  commerceKind: true, sourceProductId: true, testerAvailable: true,
   shortDescription: true, description: true, salePrice: true, oldPrice: true,
   stockQuantity: true, categoryId: true, collection: true, gender: true,
   notes: true, bottleSize: true, concentration: true, longevity: true,
