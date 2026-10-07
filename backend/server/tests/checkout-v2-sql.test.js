@@ -195,6 +195,42 @@ test('historical rows survive without inferred identities; new historical spoofi
  await assert.rejects(()=>db.query("insert into public.order_items(order_id,product_name,size,quantity,unit_price,snapshot_version) values($1,'spoof','size',1,100,0)",[id]),/V2_HISTORICAL_SPOOF/)
 })
 
+test('semantic manifest keeps nullability, effective ACLs and constraint properties strict',async t=>{
+ const {db}=await baselineV2();t.after(()=>db.close())
+ const before=(await db.query(shapeSQL)).rows[0].shape
+ // The reviewed owner/service already have full view-lock capability through
+ // UPDATE/DELETE/TRUNCATE; the nondelegable MAINTAIN bit is redundant.
+ await db.exec('begin;revoke maintain on public.product_sales_rankings from postgres,service_role')
+ assert.equal((await db.query(shapeSQL)).rows[0].shape,before)
+ await db.exec('set local role service_role;lock table public.product_sales_rankings in access exclusive mode nowait;reset role')
+ await applyV2(db)
+ // The previous install committed; rebuild a baseline for independent drift cases.
+ const baseline=await baselineV2();t.after(()=>baseline.db.close())
+ for(const [name,mutation] of [
+  ['removed NOT NULL','alter table public.products alter column name drop not null'],
+  ['unexpected NOT NULL','alter table public.products alter column price set not null'],
+  ['column type','alter table public.products alter column name type varchar(240)'],
+  ['column default',"alter table public.products alter column short_description set default 'drift'"],
+  ['PUBLIC view SELECT','grant select on public.product_sales_rankings to public'],
+  ['anon view SELECT','grant select on public.product_sales_rankings to anon'],
+  ['authenticated view UPDATE','grant update on public.product_sales_rankings to authenticated'],
+  ['removed view SELECT','revoke select on public.product_sales_rankings from authenticated'],
+  ['unexpected view MAINTAIN grantee','grant maintain on public.product_sales_rankings to anon'],
+  ['delegable view MAINTAIN','grant maintain on public.product_sales_rankings to service_role with grant option'],
+  ['table MAINTAIN','grant maintain on public.tester_variants to anon'],
+  ['column ACL','grant select(name) on public.products to anon'],
+  ['function owner','alter function public.tester_catalog_assert_admin(uuid,text) owner to service_role'],
+  ['function search_path',"alter function public.tester_catalog_assert_admin(uuid,text) set search_path=public"],
+  ['function ACL','grant execute on function public.tester_catalog_assert_admin(uuid,text) to public'],
+  ['role inheritance','grant service_role to anon'],
+  ['NOT NULL inheritance flag','alter table public.products alter constraint products_name_not_null no inherit'],
+ ])await t.test(name,async()=>{
+  const prior=(await baseline.db.query(shapeSQL)).rows[0].shape
+  await baseline.db.exec('begin;'+mutation);await assert.rejects(()=>applyV2(baseline.db),/BASELINE_DRIFT/)
+  assert.equal((await baseline.db.query(shapeSQL)).rows[0].shape,prior)
+ })
+})
+
 test('target function, trigger, policy and ACL mutation are detected; populated rerun preserves data',async t=>{
  const f=await fixture(t),{db}=f;await orderV2(db,await requestV2(db,[fixedLine(f)]));const before=await state(db)
  await applyV2(db,'CRLF');assert.deepEqual(await state(db),before)

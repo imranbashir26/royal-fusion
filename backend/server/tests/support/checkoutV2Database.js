@@ -3,25 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { testerBaseline, applyTesterMigration, testerFixture, savePack, productPatch, testerSqlClient } from './testerCatalogDatabase.js'
 
 export const migrationURL = new URL('../../../supabase/migrations/013_tester_checkout_order_snapshots.sql', import.meta.url)
-// Catalog-only manifest: no row data, object OIDs, generated UUIDs or sequence state.
-// Normalizing CRLF in prosrc preserves exact-body recognition across file encodings.
-export const shapeSQL = `select encode(sha256(convert_to(jsonb_build_object(
- 'tables',(select jsonb_agg(jsonb_build_array(c.relname,c.relkind,c.relrowsecurity,c.relforcerowsecurity,r.rolname,
-  (select jsonb_agg(jsonb_build_array(a.attname,format_type(a.atttypid,a.atttypmod),a.attnotnull,a.attgenerated,pg_get_expr(d.adbin,d.adrelid),
-   (select jsonb_agg(jsonb_build_array(coalesce(ar.rolname,'PUBLIC'),ax.privilege_type,ax.is_grantable) order by coalesce(ar.rolname,'PUBLIC'),ax.privilege_type) from aclexplode(a.attacl) ax left join pg_roles ar on ar.oid=ax.grantee)) order by a.attnum) from pg_attribute a left join pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum where a.attrelid=c.oid and a.attnum>0 and not a.attisdropped),
-  (select jsonb_agg(jsonb_build_array(x.conname,pg_get_constraintdef(x.oid,false),x.convalidated) order by x.conname) from pg_constraint x where x.conrelid=c.oid),
-  (select jsonb_agg(jsonb_build_array(t.tgname,pg_get_triggerdef(t.oid,false),t.tgenabled) order by t.tgname) from pg_trigger t where t.tgrelid=c.oid and not t.tgisinternal),
-  (select jsonb_agg(jsonb_build_array(i.relname,pg_get_indexdef(i.oid)) order by i.relname) from pg_index ix join pg_class i on i.oid=ix.indexrelid where ix.indrelid=c.oid),
-  (select jsonb_agg(jsonb_build_array(p.polname,p.polcmd,p.polpermissive,pg_get_expr(p.polqual,p.polrelid),pg_get_expr(p.polwithcheck,p.polrelid),(select jsonb_agg(rr.rolname order by rr.rolname) from unnest(p.polroles) pr(id) join pg_roles rr on rr.oid=pr.id)) order by p.polname) from pg_policy p where p.polrelid=c.oid),
-  (select jsonb_agg(jsonb_build_array(coalesce(gr.rolname,'PUBLIC'),x.privilege_type,x.is_grantable) order by coalesce(gr.rolname,'PUBLIC'),x.privilege_type) from aclexplode(c.relacl) x left join pg_roles gr on gr.oid=x.grantee)) order by c.relname)
-  from pg_class c join pg_roles r on r.oid=c.relowner where c.relnamespace='public'::regnamespace and c.relkind in ('r','p','v')
-   and not exists(select 1 from pg_depend dep where dep.classid='pg_class'::regclass and dep.objid=c.oid and dep.deptype='e')),
- 'functions',(select jsonb_agg(jsonb_build_array(p.proname,pg_get_function_arguments(p.oid),pg_get_function_result(p.oid),r.rolname,l.lanname,p.prosecdef,p.provolatile,p.proisstrict,p.proleakproof,p.proparallel,p.proconfig,
-  replace(p.prosrc,E'\\r\\n',E'\\n'),
-  (select jsonb_agg(jsonb_build_array(coalesce(gr.rolname,'PUBLIC'),x.privilege_type,x.is_grantable) order by coalesce(gr.rolname,'PUBLIC'),x.privilege_type) from aclexplode(p.proacl) x left join pg_roles gr on gr.oid=x.grantee)) order by p.proname,pg_get_function_identity_arguments(p.oid))
-  from pg_proc p join pg_roles r on r.oid=p.proowner join pg_language l on l.oid=p.prolang where p.pronamespace='public'::regnamespace and p.prokind='f'
-   and not exists(select 1 from pg_depend dep where dep.classid='pg_proc'::regclass and dep.objid=p.oid and dep.deptype='e'))
- )::text,'UTF8')),'hex') as shape`
+export { shapeSQL } from './catalogManifest.js'
 
 export async function baselineV2() {
  const { db, admin } = await testerBaseline()
