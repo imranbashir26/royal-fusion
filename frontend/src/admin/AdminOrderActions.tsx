@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { AdminOrderDetail, AdminOrderAction, AdminOrderError } from '../types/adminOrders';
 import { useAdminAuth } from './AdminAuthProvider';
 import { adminOrdersApi } from '../services/adminOrdersApi';
-import { allowedOrderActions, createAdminOrderCommands } from '../services/adminOrderCommands';
+import { supportedOrderActions, createAdminOrderCommands } from '../services/adminOrderCommands';
 export function AdminOrderActions({ order, refresh }: {
     order: AdminOrderDetail;
     refresh: () => Promise<void>;
@@ -22,7 +22,7 @@ export function AdminOrderActions({ order, refresh }: {
         setCourier(order.courier);
         setTracking(order.trackingNumber);
     }, [order.courier, order.trackingNumber]);
-    const permitted = allowedOrderActions(order.status, order.paymentMethod, order.paymentStatus, can('orders.manage'), can('payments.manage'));
+    const permitted = supportedOrderActions(order, can('orders.manage'), can('payments.manage'));
     async function run(action?: AdminOrderAction, payload: Record<string, string> = {}) {
         if (inFlight.current || !controller.current)
             return;

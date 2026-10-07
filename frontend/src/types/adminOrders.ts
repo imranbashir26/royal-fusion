@@ -1,6 +1,8 @@
 export type OrderStatus = 'Pending' | 'Confirmed' | 'Processing' | 'Shipped' | 'Delivered' | 'Cancelled' | 'Returned' | 'Refunded';
 export type PaymentStatus = 'Unpaid' | 'Pending' | 'Paid' | 'Failed' | 'Refunded';
 export interface AdminOrderListItem {
+    checkoutVersion?: number;
+    fulfillmentSupported?: boolean;
     id: string;
     orderNumber: string;
     customerName: string;
@@ -27,6 +29,12 @@ export interface AdminOrderListResponse {
     totalPages: number;
 }
 export interface AdminOrderItem {
+    kind?: 'normal_variant' | 'fixed_tester_pack' | 'configurable_tester_pack';
+    snapshotVersion?: 2;
+    position?: number;
+    packId?: string | null;
+    definitionRevision?: string | null;
+    components?: AdminOrderComponent[];
     id: string;
     productId: string | null;
     variantId: string | null;
@@ -36,6 +44,11 @@ export interface AdminOrderItem {
     quantity: number;
     unitPrice: number;
     lineTotal: number;
+}
+export interface AdminOrderComponent {
+    id: string; testerVariantId: string; testerProductId: string; testerName: string;
+    sku: string; size: '5 ml'; volumeMl: 5; quantityPerPack: number;
+    totalPhysicalQuantity: number; referenceUnitPrice: number; position: number;
 }
 export interface AdminOrderPayment {
     id: string;
@@ -78,6 +91,9 @@ export interface AdminOrderAudit {
     } | null;
 }
 export interface AdminOrderDetail extends AdminOrderListItem {
+    snapshotVersion?: 2;
+    physicalQuantity?: number;
+    allowedActions?: string[];
     revision: string;
     updatedAt: string;
     subtotal: number;

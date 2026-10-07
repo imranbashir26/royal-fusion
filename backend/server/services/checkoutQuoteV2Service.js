@@ -11,6 +11,7 @@ const errors={
  V2_PACK_UNITS_INVALID:[400,'INVALID_PACK_QUANTITY','Check the tester quantity in your pack.'],
  V2_QUOTE_CHANGED:[409,'QUOTE_CHANGED','Checkout changed. Please refresh your quote.'],
  V2_IDEMPOTENCY_CONFLICT:[409,'IDEMPOTENCY_CONFLICT','This checkout token belongs to another request.'],
+ V2_IDEMPOTENCY_AMBIGUOUS:[409,'IDEMPOTENCY_AMBIGUOUS','This checkout cannot be matched safely. Contact support before starting another attempt.'],
  V2_CUSTOMER_UNAVAILABLE:[403,'CUSTOMER_UNAVAILABLE','Your customer account is unavailable.'],
 }
 export class CheckoutQuoteV2Service {

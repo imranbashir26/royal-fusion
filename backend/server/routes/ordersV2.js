@@ -5,8 +5,8 @@ import {AUTH_ERROR_CODES} from '../auth/contracts.js'
 import {CheckoutApiError} from '../services/checkoutQuoteService.js'
 import {CheckoutQuoteV2Service} from '../services/checkoutQuoteV2Service.js'
 import {OrdersV2Service} from '../services/ordersV2Service.js'
-export function createOrdersV2Router(runtime,{client=runtime.repository.client,logger=console,quoteLimit=60,orderLimit=20}={}){
- const router=Router(),quote=new CheckoutQuoteV2Service(client,{logger}),orders=new OrdersV2Service()
+export function createOrdersV2Router(runtime,{client=runtime.repository.client,logger=console,quoteLimit=60,orderLimit=20,allowNonProductionOrders=false}={}){
+ const router=Router(),quote=new CheckoutQuoteV2Service(client,{logger}),orders=new OrdersV2Service(client,{logger,environment:runtime.config.environment,allowNonProductionOrders})
  const limiter=(limit,windowMs)=>rateLimit({limit,windowMs,standardHeaders:true,legacyHeaders:false,
   handler:(req,res)=>res.status(429).json({error:{code:'CHECKOUT_RATE_LIMITED',message:'Please wait before trying checkout again.',requestId:req.requestId}})})
  router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next()})
@@ -21,12 +21,11 @@ export function createOrdersV2Router(runtime,{client=runtime.repository.client,l
  const run=fn=>(req,res,next)=>Promise.resolve(fn(req,res)).catch(next)
  router.post('/checkout/quote',limiter(quoteLimit,60000),run(async(req,res)=>{
   const data=await quote.withRequestId(req.requestId).quote(req.body,req.auth?.identity.id??null)
-  res.json({data:{...data,orderingEnabled:false},meta:{requestId:req.requestId}})
+  res.json({data:{...data,orderingEnabled:orders.policy.orderingEnabled},meta:{requestId:req.requestId}})
  }))
  router.post('/orders',limiter(orderLimit,900000),run(async(req,res)=>{
-  await orders.create(req.body)
-  // Always unavailable before 014, including development/test service configuration.
-  res.sendStatus(503)
+  const data=await orders.create(req.body,req.auth?.identity.id??null,req.requestId)
+  res.status(data.idempotent?200:201).json({data,meta:{requestId:req.requestId}})
  }))
  router.use((error,req,res,next)=>{
   if(Object.values(AUTH_ERROR_CODES).includes(error.code))return next(error)
