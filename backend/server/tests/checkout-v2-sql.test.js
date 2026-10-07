@@ -3,7 +3,9 @@ import test from 'node:test'
 import {randomUUID} from 'node:crypto'
 import {fixtureV2,normalLine,fixedLine,configuredLine,quoteRequest,quoteV2,requestV2,orderV2,baselineV2,applyV2,shapeSQL,clientV2} from './support/checkoutV2Database.js'
 import {OrdersV1Service} from '../services/ordersV1Service.js'
-import {savePack,saveTester,productPatch,variantPatch} from './support/testerCatalogDatabase.js'
+import {savePack,saveTester,productPatch,variantPatch,testerBaseline,applyTesterMigration} from './support/testerCatalogDatabase.js'
+import {installProductionCatalogMetadata,productionCatalogDriftCases,verifiedRlsAutoEnableBody,productionEventSnapshotSQL,verifiedPlatformEventTriggers} from './support/productionCatalogFixture.js'
+import {apply014} from './support/fulfillmentV2Database.js'
 
 async function fixture(t) {const f=await fixtureV2();t.after(()=>f.db.close());return f}
 async function state(db) {
@@ -570,4 +572,45 @@ test('actual V1 service receipt after tracking correction remains public-only an
  assert.equal((await db.query('select order_notes from public.orders where id=$1',[order.id])).rows[0].order_notes,'Customer note')
  assert.equal((await db.query("select count(*)::int n from public.admin_audit_logs where resource_id=$1 and metadata->'trackingCorrection'->>'reason'=$2",[order.id,reason])).rows[0].n,1)
  assert.deepEqual(await state(db),before)
+})
+
+
+for(const styles of [['LF','LF'],['CRLF','LF'],['LF','CRLF'],['CRLF','CRLF']])test('verified production catalog / defaults / enabled event trigger chain '+styles.join('/'),async t=>{
+ const {db}=await testerBaseline();t.after(()=>db.close());await installProductionCatalogMetadata(db)
+ const events=(await db.query(productionEventSnapshotSQL)).rows[0].state
+ assert.equal(events.length,7)
+ assert.deepEqual(events.map(row=>row[0]),['ensure_rls',...verifiedPlatformEventTriggers.map(row=>row[0])].sort())
+ // Probe CREATE-time defaults and event firing before the migration revokes them.
+ await db.exec('create table public.fixture_default_probe(id integer);create function public.fixture_default_probe() returns integer language sql as $$select 1$$')
+ assert.equal((await db.query("select relrowsecurity enabled from pg_class where oid='public.fixture_default_probe'::regclass")).rows[0].enabled,true)
+ for(const role of ['anon','authenticated','service_role'])for(const privilege of ['TRUNCATE','REFERENCES','TRIGGER','MAINTAIN'])assert.equal((await db.query('select has_table_privilege($1,$2,$3) allowed',[role,'public.fixture_default_probe',privilege])).rows[0].allowed,true)
+ assert.equal((await db.query("select has_function_privilege('anon','public.fixture_default_probe()','EXECUTE') allowed")).rows[0].allowed,true)
+ await db.exec('drop table public.fixture_default_probe;drop function public.fixture_default_probe()')
+ const original=(await db.query("select prosrc,proconfig,proacl::text acl,prosecdef from pg_proc where oid='public.rls_auto_enable()'::regprocedure")).rows[0]
+ assert.equal(original.prosrc,verifiedRlsAutoEnableBody)
+ for(const apply of [applyTesterMigration,applyV2,apply014]){
+  await apply(db,styles[0]);const prior=(await db.query(shapeSQL)).rows[0].shape
+  await apply(db,styles[1]);assert.equal((await db.query(shapeSQL)).rows[0].shape,prior)
+  assert.deepEqual((await db.query(productionEventSnapshotSQL)).rows[0].state,events)
+ }
+ for(const table of ['tester_variants','tester_packs','tester_pack_components','tester_pack_allowed_variants','order_item_components']){
+  assert.equal((await db.query('select relrowsecurity enabled from pg_class where oid=$1::regclass',['public.'+table])).rows[0].enabled,true)
+  for(const role of ['anon','authenticated','service_role'])for(const privilege of ['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','MAINTAIN'])assert.equal((await db.query('select has_table_privilege($1,$2,$3) allowed',[role,'public.'+table,privilege])).rows[0].allowed,role==='service_role'&&privilege==='SELECT')
+ }
+ assert.deepEqual((await db.query("select prosrc,proconfig,proacl::text acl,prosecdef from pg_proc where oid='public.rls_auto_enable()'::regprocedure")).rows[0],original)
+ assert.equal((await db.query("select evtenabled from pg_event_trigger where evtname='ensure_rls'")).rows[0].evtenabled,'O')
+ assert.equal((await db.query("select count(*)::int n from public.products where commerce_kind<>'standard'")).rows[0].n,0)
+})
+
+for(const stage of ['013 baseline','013 target','014 baseline','014 target'])test('verified production metadata drift rejects atomically at '+stage,async t=>{
+ const {db}=await testerBaseline();t.after(()=>db.close());await installProductionCatalogMetadata(db);await applyTesterMigration(db)
+ if(stage!=='013 baseline')await applyV2(db)
+ if(stage==='014 target')await apply014(db)
+ const apply=stage.startsWith('013')?applyV2:apply014
+ for(const [name,mutation] of productionCatalogDriftCases)await t.test(name,async()=>{
+  const original=(await db.query(shapeSQL)).rows[0].shape
+  await db.exec('begin;'+mutation)
+  await assert.rejects(()=>apply(db),/DRIFT/)
+  assert.equal((await db.query(shapeSQL)).rows[0].shape,original)
+ })
 })

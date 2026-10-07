@@ -2,6 +2,7 @@
 -- Semantic PG17/18 manifests: strict nullability/constraint flags and effective ACLs.
 -- Only generated NOT NULL names and redundant owner/service view MAINTAIN bits normalize.
 -- Function bodies normalize CRLF to LF; runtime DDL is unchanged.
+-- Exact disposable / verified production catalogs, including event-trigger metadata.
 begin;
 set local lock_timeout='5s';
 set local statement_timeout='60s';
@@ -55,12 +56,21 @@ begin
   (select jsonb_agg(jsonb_build_array(rr.rolname,has_function_privilege(rr.oid,p.oid,'EXECUTE')) order by rr.rolname) from pg_roles rr where rr.rolname in ('anon','authenticated','service_role')))
   order by p.proname,pg_get_function_identity_arguments(p.oid))
   from pg_proc p join pg_roles r on r.oid=p.proowner join pg_language l on l.oid=p.prolang where p.pronamespace='public'::regnamespace and p.prokind='f'
-   and not exists(select 1 from pg_depend dep where dep.classid='pg_proc'::regclass and dep.objid=p.oid and dep.deptype='e'))
+   and not exists(select 1 from pg_depend dep where dep.classid='pg_proc'::regclass and dep.objid=p.oid and dep.deptype='e')),
+ -- Event triggers are database-wide, including callbacks outside public. Pin every
+ -- attachment so deleting, disabling, redirecting, or duplicating ensure_rls fails.
+ 'eventTriggers',(select jsonb_agg(jsonb_build_array(e.evtname,e.evtevent,r.rolname,e.evtenabled,
+  n.nspname,p.proname,pg_get_function_identity_arguments(p.oid),fr.rolname,p.prosecdef,p.proconfig,
+  case when e.evttags is null then null else
+   coalesce((select jsonb_agg(tag order by tag) from unnest(e.evttags) tag),'[]'::jsonb) end) order by e.evtname)
+  from pg_event_trigger e join pg_roles r on r.oid=e.evtowner
+  join pg_proc p on p.oid=e.evtfoid join pg_namespace n on n.oid=p.pronamespace
+  join pg_roles fr on fr.oid=p.proowner)
  )::text,'UTF8')),'hex') into shape;
  if exists(select 1 from pg_attribute where attrelid='public.orders'::regclass and attname='checkout_version' and not attisdropped) then
-  if shape is distinct from '6ec806cbbfdaffd08435ea102b448aee72f5ba6c010ba82962b87889411d6ce1' then raise exception 'RF_CHECKOUT_013_TARGET_DRIFT'; end if;
+  if shape not in ('ed337222eb5fdd9c9b3809ea550f939b9914e2ad2034d42e3e6a648205726261','e195cbf3221767a490c8c340c128b3f4ea8bdf42711d4845e3629160aa366557') then raise exception 'RF_CHECKOUT_013_TARGET_DRIFT'; end if;
  else
-  if shape is distinct from 'b4a852b4bd34f53a9e8924390dab80f5b45697b6762696759d2b698689eb3392' then raise exception 'RF_CHECKOUT_013_BASELINE_DRIFT'; end if;
+  if shape not in ('b6ac24d547a5d1c27079fd6cb9cdb4efbb57fa6589797a1e7b2f662e5752c69e','a2ad954731059c790d88e4cdb49682979548a83a3a3fa52379551763a06464dc') then raise exception 'RF_CHECKOUT_013_BASELINE_DRIFT'; end if;
   execute $ddl013$
 -- @013-DDL-BEGIN
 alter table public.orders add column checkout_version smallint not null default 1;
@@ -805,9 +815,18 @@ $ddl013$;
   (select jsonb_agg(jsonb_build_array(rr.rolname,has_function_privilege(rr.oid,p.oid,'EXECUTE')) order by rr.rolname) from pg_roles rr where rr.rolname in ('anon','authenticated','service_role')))
   order by p.proname,pg_get_function_identity_arguments(p.oid))
   from pg_proc p join pg_roles r on r.oid=p.proowner join pg_language l on l.oid=p.prolang where p.pronamespace='public'::regnamespace and p.prokind='f'
-   and not exists(select 1 from pg_depend dep where dep.classid='pg_proc'::regclass and dep.objid=p.oid and dep.deptype='e'))
+   and not exists(select 1 from pg_depend dep where dep.classid='pg_proc'::regclass and dep.objid=p.oid and dep.deptype='e')),
+ -- Event triggers are database-wide, including callbacks outside public. Pin every
+ -- attachment so deleting, disabling, redirecting, or duplicating ensure_rls fails.
+ 'eventTriggers',(select jsonb_agg(jsonb_build_array(e.evtname,e.evtevent,r.rolname,e.evtenabled,
+  n.nspname,p.proname,pg_get_function_identity_arguments(p.oid),fr.rolname,p.prosecdef,p.proconfig,
+  case when e.evttags is null then null else
+   coalesce((select jsonb_agg(tag order by tag) from unnest(e.evttags) tag),'[]'::jsonb) end) order by e.evtname)
+  from pg_event_trigger e join pg_roles r on r.oid=e.evtowner
+  join pg_proc p on p.oid=e.evtfoid join pg_namespace n on n.oid=p.pronamespace
+  join pg_roles fr on fr.oid=p.proowner)
  )::text,'UTF8')),'hex') into shape;
-  if shape is distinct from '6ec806cbbfdaffd08435ea102b448aee72f5ba6c010ba82962b87889411d6ce1' then raise exception 'RF_CHECKOUT_013_INSTALL_DRIFT'; end if;
+  if shape not in ('ed337222eb5fdd9c9b3809ea550f939b9914e2ad2034d42e3e6a648205726261','e195cbf3221767a490c8c340c128b3f4ea8bdf42711d4845e3629160aa366557') then raise exception 'RF_CHECKOUT_013_INSTALL_DRIFT'; end if;
  end if;
 end; $install013$;
 commit;

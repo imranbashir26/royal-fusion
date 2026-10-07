@@ -52,5 +52,14 @@ export const shapeSQL = `select encode(sha256(convert_to(jsonb_build_object(
   (select jsonb_agg(jsonb_build_array(rr.rolname,has_function_privilege(rr.oid,p.oid,'EXECUTE')) order by rr.rolname) from pg_roles rr where rr.rolname in ${roles}))
   order by p.proname,pg_get_function_identity_arguments(p.oid))
   from pg_proc p join pg_roles r on r.oid=p.proowner join pg_language l on l.oid=p.prolang where p.pronamespace='public'::regnamespace and p.prokind='f'
-   and not exists(select 1 from pg_depend dep where dep.classid='pg_proc'::regclass and dep.objid=p.oid and dep.deptype='e'))
+   and not exists(select 1 from pg_depend dep where dep.classid='pg_proc'::regclass and dep.objid=p.oid and dep.deptype='e')),
+ -- Event triggers are database-wide, including callbacks outside public. Pin every
+ -- attachment so deleting, disabling, redirecting, or duplicating ensure_rls fails.
+ 'eventTriggers',(select jsonb_agg(jsonb_build_array(e.evtname,e.evtevent,r.rolname,e.evtenabled,
+  n.nspname,p.proname,pg_get_function_identity_arguments(p.oid),fr.rolname,p.prosecdef,p.proconfig,
+  case when e.evttags is null then null else
+   coalesce((select jsonb_agg(tag order by tag) from unnest(e.evttags) tag),'[]'::jsonb) end) order by e.evtname)
+  from pg_event_trigger e join pg_roles r on r.oid=e.evtowner
+  join pg_proc p on p.oid=e.evtfoid join pg_namespace n on n.oid=p.pronamespace
+  join pg_roles fr on fr.oid=p.proowner)
  )::text,'UTF8')),'hex') as shape`
