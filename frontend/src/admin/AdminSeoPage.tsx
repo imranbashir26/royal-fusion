@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { AdminResourceManager } from './AdminResourcePage'
 
-export function AdminSeoPage() {
-  const [mode, setMode] = useState<'seo' | 'editable-pages'>('seo')
+export function AdminSeoPage({ initialMode = 'seo' }: { initialMode?: 'seo' | 'editable-pages' }) {
+  const [mode, setMode] = useState(initialMode)
 
   return (
     <div className="space-y-5">
       <div className="flex gap-3">
         <button
+          aria-pressed={mode === 'seo'}
           className={mode === 'seo' ? activeClass : inactiveClass}
           onClick={() => setMode('seo')}
           type="button"
@@ -15,6 +16,7 @@ export function AdminSeoPage() {
           SEO Meta
         </button>
         <button
+          aria-pressed={mode === 'editable-pages'}
           className={mode === 'editable-pages' ? activeClass : inactiveClass}
           onClick={() => setMode('editable-pages')}
           type="button"

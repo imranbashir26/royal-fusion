@@ -21,6 +21,7 @@ export function AdminRoutes() {
         <Route path="tester-packs" element={<AdminTesterPacksPage />} />
         <Route path="products" element={<AdminResourceManager resource="products" />} />
         <Route path="categories" element={<AdminResourceManager resource="categories" />} />
+        <Route path="collections" element={<AdminResourceManager resource="collections" />} />
         <Route path="fragrance-finder" element={<AdminFragranceFinderPage />} />
         <Route path="orders" element={<AdminOrdersPage />} />
         <Route path="orders/:id" element={<AdminOrderDetailsPage />} />
@@ -33,7 +34,8 @@ export function AdminRoutes() {
         <Route path="newsletter" element={<AdminNewsletterPage />} />
         <Route path="contact-messages" element={<AdminResourceManager resource="contact-messages" />} />
         <Route path="settings" element={<AdminSettingsPage />} />
-        <Route path="seo" element={<AdminSeoPage />} />
+        <Route path="seo" element={<AdminSeoPage key="seo" initialMode="seo" />} />
+        <Route path="editable-pages" element={<AdminSeoPage key="editable-pages" initialMode="editable-pages" />} />
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="*" element={<Navigate replace to="dashboard" />} />
       </Route>
