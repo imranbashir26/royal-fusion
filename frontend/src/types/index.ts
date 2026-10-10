@@ -1,3 +1,5 @@
+import type { BlogIdentity } from '../../../shared/contracts/blogV1'
+
 export type Gender = 'Men' | 'Women' | 'Unisex'
 
 export type ScentFamily =
@@ -132,17 +134,13 @@ export interface Review {
   text: string
 }
 
-export interface BlogPost {
+/** Existing display model; versioned rich article DTOs live in shared/contracts/blogV1. */
+export interface BlogPost extends BlogIdentity {
   seoTitle?: string
   seoDescription?: string
-  id: string
-  slug: string
-  title: string
-  excerpt: string
   content: string[]
   category: string
   readTime: string
-  publishedAt: string
   image: string
   imageAlt?: string
 }
