@@ -1,0 +1,27 @@
+{
+  "name": "@royal-fusion/studio",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": { "node": ">=22.12" },
+  "scripts": {
+    "dev": "sanity dev --host 127.0.0.1 --port 3333",
+    "build": "sanity build --yes",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/studio.test.mjs"
+  },
+  "dependencies": {
+    "@sanity/icons": "5.2.3",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "sanity": "6.18.0",
+    "styled-components": "6.5.3"
+  },
+  "devDependencies": {
+    "@sanity/cli": "8.16.0",
+    "@types/node": "24.13.2",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "typescript": "6.0.3"
+  }
+}
