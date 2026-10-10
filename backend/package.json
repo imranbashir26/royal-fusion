@@ -38,7 +38,8 @@
     "test:phase3": "node --test --test-concurrency=1 server/tests/admin-phase3.test.js server/tests/admin-phase3-checkout.test.js",
     "test:blogs": "node --test --test-concurrency=1 server/tests/blog-activation.test.js server/tests/blog-domain.test.js server/tests/sanity-blog-v1.test.js",
     "test:dependency-security": "node --test server/tests/dependency-security.test.js",
-    "test:blog-adapter": "node --test server/tests/sanity-blog-v1.test.js"
+    "test:blog-adapter": "node --test server/tests/sanity-blog-v1.test.js",
+    "test:blog-html": "node --test server/tests/blog-html.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.8",
@@ -55,7 +56,9 @@
     "nanoid": "^5.1.16",
     "zod": "4.4.3",
     "@sanity/client": "7.23.0",
-    "groq": "6.18.0"
+    "groq": "6.18.0",
+    "@portabletext/to-html": "6.0.0",
+    "@sanity/image-url": "2.1.1"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
