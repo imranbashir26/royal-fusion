@@ -1,4 +1,7 @@
 import type { StorefrontData } from '../types/admin'
+import type { BlogRouteState } from '../blog/PublicBlogProvider'
+import { blogImageUrl } from './blogImages'
+import { isPublicBlogSlug, validatePublicBlogConfiguration, type PublicBlogConfiguration } from './publicBlogsApi'
 
 export const staticSeoPaths = ['/', '/shop', '/collections', '/attars', '/about', '/contact']
 function https(value: unknown) {
@@ -35,4 +38,20 @@ export function resolveStorefrontSeo(path: string, search: string, data: Pick<St
   return { title, description, canonical, robots: String(exact?.robots || 'index,follow'),
     ogTitle: domain?.seoTitle || String(base?.ogTitle || title), ogDescription: domain?.seoDescription || String(base?.ogDescription || description),
     ogImage: https(product?.image || blog?.image || base?.ogImage) }
+}
+
+/** Fixture-enabled editorial metadata uses only the explicitly approved origin. */
+export function resolvePublicBlogSeo(path: string, state: BlogRouteState, configuration: PublicBlogConfiguration) {
+  const approved = validatePublicBlogConfiguration(configuration)
+  let slug = ''
+  try { if (/^\/blogs\/[^/]+$/.test(path)) slug = decodeURIComponent(path.slice(7)) } catch { /* Invalid article path. */ }
+  const article = state.status === 'ready' && state.data?.slug === slug ? state.data : undefined
+  const canonical = new URL(isPublicBlogSlug(slug) ? `/blogs/${slug}` : '/blogs', approved.canonicalOrigin).href
+  if (article && article.seo.canonicalUrl !== canonical) throw new TypeError('Article metadata is invalid.')
+  const title = article ? article.seo.title || article.title : path === '/blogs' ? 'Royal Fusion Journal' : 'Royal Fusion Journal | Article'
+  const description = article ? article.seo.description || article.excerpt : ''
+  const image = article?.seo.ogImage ?? article?.featuredImage
+  return { title, description, canonical, robots: article ? article.seo.noIndex ? 'noindex,follow' : 'index,follow'
+    : path === '/blogs' && ['ready', 'empty'].includes(state.status) ? 'index,follow' : 'noindex,follow',
+    ogTitle: title, ogDescription: description, ogImage: image ? blogImageUrl(image, approved, 1200, 630) : '' }
 }

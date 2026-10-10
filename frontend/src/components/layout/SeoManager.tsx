@@ -1,14 +1,18 @@
 import { useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useStorefront } from '../../storefront/StorefrontProvider'
-import { resolveStorefrontSeo } from '../../services/storefrontSeo'
+import { resolveStorefrontSeo, resolvePublicBlogSeo } from '../../services/storefrontSeo'
+import { usePublicBlogIntegration } from '../../blog/PublicBlogProvider'
 
 export function SeoManager() {
   const location = useLocation()
   const { seo, products, categories, collections, blogs } = useStorefront()
+  const integration = usePublicBlogIntegration()
 
   useEffect(() => {
-    const metadata = resolveStorefrontSeo(location.pathname, location.search, { seo, products, categories, collections, blogs }, window.location.origin)
+    const metadata = integration.enabled && integration.client && /^\/blogs(?:\/|$)/.test(location.pathname)
+      ? resolvePublicBlogSeo(location.pathname, integration.metadata, integration.client.configuration)
+      : resolveStorefrontSeo(location.pathname, location.search, { seo, products, categories, collections, blogs }, window.location.origin)
     document.title = metadata.title
     setMeta('description', metadata.description)
     setMeta('og:title', metadata.ogTitle, 'property')
@@ -19,7 +23,7 @@ export function SeoManager() {
     let canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]')
     if (!canonical) { canonical = document.createElement('link'); canonical.rel = 'canonical'; document.head.appendChild(canonical) }
     canonical.href = metadata.canonical
-  }, [location.pathname, location.search, seo, products, categories, collections, blogs])
+  }, [location.pathname, location.search, seo, products, categories, collections, blogs, integration])
 
   return null
 }

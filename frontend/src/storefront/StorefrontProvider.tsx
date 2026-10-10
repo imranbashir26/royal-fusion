@@ -14,14 +14,14 @@ interface StorefrontContextValue extends StorefrontData {
 
 const StorefrontContext = createContext<StorefrontContextValue | null>(null)
 
-export function StorefrontProvider({ children }: { children: ReactNode }) {
+export function StorefrontProvider({ children, legacyBlogs = true }: { children: ReactNode; legacyBlogs?: boolean }) {
   const [data, setData] = useState<StorefrontData>(fallbackStorefrontData)
   const [isLoading, setIsLoading] = useState(true)
   const [catalogError, setCatalogError] = useState<string | null>(null)
 
   const refresh = async () => {
     setIsLoading(true)
-    const nextData = await storefrontService.getStorefrontData()
+    const nextData = await storefrontService.getStorefrontData({ legacyBlogs })
     // Reconciliation stays outside React's state updater (which may be replayed).
     if (nextData.catalogLoad.status === 'success') useCartStore.getState().reconcile(nextData.products)
     setData((previous) => applyCatalogRefresh(previous, nextData))

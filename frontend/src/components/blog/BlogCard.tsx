@@ -2,6 +2,21 @@ import { ArrowRight, Clock } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { BlogPost } from '../../types'
 import { ProductBottle } from '../products/ProductBottle'
+import type { BlogSummary } from '../../../../shared/contracts/blogV1'
+import { BlogImage } from './BlogImage'
+
+export function PublicBlogCard({ blog }: { blog: BlogSummary }) {
+  return <article className="overflow-hidden rounded-lg border border-champagne/25 bg-ivory/84 shadow-sm">
+    <Link aria-label={`Read ${blog.title}`} to={`/blogs/${blog.slug}`}><BlogImage image={blog.featuredImage} width={800} height={500} /></Link>
+    <div className="p-5">
+      <p className="mb-3 text-xs font-bold uppercase tracking-widest text-oldgold">{blog.category.title}</p>
+      <Link to={`/blogs/${blog.slug}`}><h3 className="font-serif text-2xl text-burgundy">{blog.title}</h3></Link>
+      <p className="mt-3 text-sm leading-6 text-brownroyal/72">{blog.excerpt}</p>
+      <p className="mt-3 text-sm text-brownroyal/65">By {blog.author.name}</p>
+      <Link className="mt-5 inline-flex items-center gap-2 font-bold text-burgundy" to={`/blogs/${blog.slug}`}>Read Journal<ArrowRight aria-hidden="true" className="h-4 w-4" /></Link>
+    </div>
+  </article>
+}
 
 interface BlogCardProps {
   blog: BlogPost

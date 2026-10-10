@@ -71,7 +71,7 @@ export const fallbackStorefrontData: StorefrontData = {
 }
 
 export const storefrontService = {
-  async getStorefrontData(): Promise<StorefrontLoad> {
+  async getStorefrontData({ legacyBlogs = true }: { legacyBlogs?: boolean } = {}): Promise<StorefrontLoad> {
     const productionConfigured = isSupabaseConfigured()
     let catalogLoad: CatalogLoad = { status: 'failed', error: 'Canonical catalog is not configured.' }
     const canonicalPromise = supabaseStorefrontService.getStorefrontData().then((data) => {
@@ -87,10 +87,11 @@ export const storefrontService = {
           return mapPublicSettingsRows([])
         })
       : null
-    const sanityBlogsPromise = sanityContentService.getBlogs().catch((error) => {
+    // Only an explicitly injected blog integration suppresses the historical blog loader.
+    const sanityBlogsPromise = legacyBlogs ? sanityContentService.getBlogs().catch((error) => {
       console.warn('Published Sanity blogs unavailable.', error)
       return null
-    })
+    }) : Promise.resolve(null)
     const finderPreferencesPromise = getPublicFinderPreferences().catch(() => [])
     const reviewsPromise = getPublicReviews().catch(() => [])
     const publicSeo = await supabaseStorefrontService.getSeo().catch(() => [])

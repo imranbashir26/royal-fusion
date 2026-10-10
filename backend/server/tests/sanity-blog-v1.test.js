@@ -4,6 +4,9 @@ import { readFile } from 'node:fs/promises'
 import { once } from 'node:events'
 import express from 'express'
 import helmet from 'helmet'
+import cors from 'cors'
+import rateLimit from 'express-rate-limit'
+import { isAllowedCorsOrigin } from '../auth/config.js'
 import { createClient } from '@sanity/client'
 import { createBlogSanityConfig } from '../config/blogSanity.js'
 import { requestContext } from '../middleware/authSecurity.js'
@@ -345,4 +348,47 @@ test('production entry point, current authority and frontend integration remain 
   const entry = await readFile(new URL('../index.js', import.meta.url), 'utf8')
   assert.equal(/blogsV1|sanityBlogSource|createPublicBlogsV1Router|createSanityBlogV1Service/.test(entry), false)
   assert.ok(entry.includes("app.use('/api/public', publicRouter)"))
+})
+
+async function startComposed(t, { limit = 400 } = {}) {
+  const app = express(), config = { allowedOrigins: [canonicalOrigin], environment: 'test', allowDevelopmentLoopback: true }
+  app.use(helmet(), requestContext, cors({ origin(origin, callback) {
+    callback(isAllowedCorsOrigin(origin, config) ? null : Object.assign(new Error('Origin denied.'), { status: 403 }), true)
+  }, credentials: true, allowedHeaders: ['Content-Type', 'X-Request-ID'], methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] }),
+  rateLimit({ windowMs: 15 * 60 * 1000, limit, standardHeaders: true, legacyHeaders: false }))
+  app.use('/api/v1/public/blogs', createPublicBlogsV1Router(fixture().service))
+  app.use(express.json())
+  app.get('/api/v1/public/unrelated-fixture', (_req, res) => res.json({ data: 'unrelated fixture' }))
+  app.get('/api/public/blogs', (_req, res) => res.json({ data: 'historical fixture' }))
+  app.use((error, _req, res, _next) => res.status(error.status ?? 503).json({ error: { message: 'Request denied.' } }))
+  const server = app.listen(0, '127.0.0.1'); await once(server, 'listening')
+  t.after(() => new Promise(resolve => server.close(resolve)))
+  return `http://127.0.0.1:${server.address().port}`
+}
+test('composed public middleware preserves exact-origin CORS and request-context headers', async t => {
+  const base = await startComposed(t), id = '00000000-0000-4000-8000-000000000002'
+  const response = await fetch(`${base}/api/v1/public/blogs`, { headers: { Origin: canonicalOrigin, 'X-Request-ID': id } })
+  assert.equal(response.status, 200); assert.equal(response.headers.get('access-control-allow-origin'), canonicalOrigin)
+  assert.equal(response.headers.get('x-request-id'), id); assert.equal(response.headers.get('cache-control'), 'no-store')
+  const denied = await fetch(`${base}/api/v1/public/blogs`, { headers: { Origin: 'https://foreign.invalid' } })
+  assert.equal(denied.status, 403); assert.equal(denied.headers.get('access-control-allow-origin'), null)
+})
+test('composed middleware retains global rate limiting with its safe non-blog envelope', async t => {
+  const base = await startComposed(t, { limit: 1 })
+  assert.equal((await fetch(`${base}/api/v1/public/blogs`)).status, 200)
+  const limited = await fetch(`${base}/api/v1/public/blogs`)
+  assert.equal(limited.status, 429); assert.ok(limited.headers.get('retry-after')); assert.ok(limited.headers.get('x-request-id'))
+})
+test('blog method denial precedes JSON parsing while HEAD and CORS preflight remain read-only', async t => {
+  const base = await startComposed(t)
+  const denied = await fetch(`${base}/api/v1/public/blogs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{' })
+  assert.equal(denied.status, 405); assert.equal((await denied.json()).error.code, 'INVALID_BLOG_REQUEST')
+  const head = await fetch(`${base}/api/v1/public/blogs`, { method: 'HEAD' }); assert.equal(head.status, 200); assert.equal(await head.text(), '')
+  const options = await fetch(`${base}/api/v1/public/blogs`, { method: 'OPTIONS', headers: { Origin: canonicalOrigin, 'Access-Control-Request-Method': 'GET' } })
+  assert.equal(options.status, 204); assert.equal(options.headers.get('access-control-allow-origin'), canonicalOrigin)
+})
+test('scoped blog mounting cannot capture sibling or historical public routes', async t => {
+  const base = await startComposed(t)
+  assert.deepEqual(await (await fetch(`${base}/api/v1/public/unrelated-fixture`)).json(), { data: 'unrelated fixture' })
+  assert.deepEqual(await (await fetch(`${base}/api/public/blogs`)).json(), { data: 'historical fixture' })
 })

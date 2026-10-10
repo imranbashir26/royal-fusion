@@ -3,6 +3,10 @@ import { ArrowRight, BookOpen } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { BlogPost } from '../../types'
 import { useStorefront } from '../../storefront/StorefrontProvider'
+import type { BlogSummary } from '../../../../shared/contracts/blogV1'
+import { usePublicBlogIntegration, usePublicBlogList } from '../../blog/PublicBlogProvider'
+import { BlogImage } from '../blog/BlogImage'
+import { BlogState } from '../blog/BlogState'
 
 function sanityImageUrl(source: string, width: number) {
   try {
@@ -16,10 +20,13 @@ function sanityImageUrl(source: string, width: number) {
   }
 }
 
-function JournalCard({ blog, index }: { blog: BlogPost; index: number }) {
+function JournalCard({ blog, index }: { blog: BlogPost | BlogSummary; index: number }) {
   const reduceMotion = useReducedMotion()
   const articleUrl = `/blogs/${blog.slug}`
-  const hasSanityImage = blog.image.includes('cdn.sanity.io/images/')
+  const editorial = 'featuredImage' in blog
+  const image = editorial ? blog.featuredImage.asset.url : blog.image
+  const category = editorial ? blog.category.title : blog.category
+  const hasSanityImage = image.includes('cdn.sanity.io/images/')
 
   return (
     <motion.article
@@ -34,7 +41,7 @@ function JournalCard({ blog, index }: { blog: BlogPost; index: number }) {
         className="group block overflow-hidden focus-visible:outline-2 focus-visible:outline-offset-[-4px] focus-visible:outline-royal-burgundy"
         to={articleUrl}
       >
-        {blog.image ? (
+        {editorial ? <BlogImage image={blog.featuredImage} width={800} height={500} /> : blog.image ? (
           <img
             alt={blog.imageAlt || `Featured image for ${blog.title}`}
             className="aspect-[8/5] w-full object-cover transition-transform duration-300 motion-safe:group-hover:scale-[1.02] motion-reduce:transition-none"
@@ -54,9 +61,9 @@ function JournalCard({ blog, index }: { blog: BlogPost; index: number }) {
       </Link>
 
       <div className="flex flex-1 flex-col p-6 sm:p-7">
-        {blog.category && (
+        {category && (
           <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#805b1e]">
-            {blog.category}
+            {category}
           </p>
         )}
         <h3 className="font-serif text-[clamp(1.625rem,2.2vw,1.9375rem)] font-semibold leading-[1.12] text-royal-burgundy">
@@ -83,6 +90,24 @@ function JournalCard({ blog, index }: { blog: BlogPost; index: number }) {
 }
 
 export function BlogsPreview() {
+  const integration = usePublicBlogIntegration()
+  return integration.enabled ? <PublicBlogsPreview /> : <LegacyBlogsPreview />
+}
+function PublicBlogsPreview() {
+  const { state, revalidate } = usePublicBlogList({ pageSize: 3 }, 'preview')
+  return <section aria-labelledby="fragrance-journal-heading" className="section-spacing bg-soft-cream"><div className="container-lux">
+    <div className="mx-auto mb-10 max-w-[760px] text-center">
+      <p className="mb-4 text-xs font-semibold uppercase tracking-widest text-oldgold">FRAGRANCE JOURNAL</p>
+      <h2 id="fragrance-journal-heading" className="font-serif text-4xl text-royal-burgundy">Stories, Inspiration &amp; Fragrance Insights</h2>
+      <p className="mt-5 text-muted-taupe">Explore the world of fragrance through curated stories, guides, and inspiration.</p>
+    </div>
+    {state.status === 'ready' ? <><div className="mx-auto grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+      {state.data?.data.map((blog, index) => <JournalCard blog={blog} index={index} key={blog.id} />)}
+    </div><div className="mt-10 text-center"><Link className="font-semibold text-burgundy underline" to="/blogs">Explore All Articles</Link></div></>
+      : <BlogState status={state.status} retry={revalidate} />}
+  </div></section>
+}
+function LegacyBlogsPreview() {
   const { blogs, isLoading } = useStorefront()
   const articles = blogs.filter((blog) => blog.title && blog.slug).slice(0, 3)
 
