@@ -93,6 +93,7 @@ export const storefrontService = {
     })
     const finderPreferencesPromise = getPublicFinderPreferences().catch(() => [])
     const reviewsPromise = getPublicReviews().catch(() => [])
+    const publicSeo = await supabaseStorefrontService.getSeo().catch(() => [])
 
     try {
       const [supabaseData, sanityHomepage, sanityBlogs, sanityBanners, finderPreferences, publicReviews] = await Promise.all([
@@ -109,6 +110,7 @@ export const storefrontService = {
           ...(supabaseData ?? {}),
           finderPreferences,
           reviews: publicReviews,
+          seo: publicSeo,
           testimonials: [],
           ...(productionSettings ?? {}),
           homepage: { ...(sanityHomepage ?? {}), ...(productionSettings?.homepage ?? {}) },
@@ -138,6 +140,7 @@ export const storefrontService = {
         collections: prototypeCollectionFallback(import.meta.env.PROD, prototype.collections, collections),
         finderPreferences,
         reviews: publicReviews,
+        seo: publicSeo,
         testimonials: [],
         ...(productionSettings ?? fallbackSettings),
         homepage: { ...prototype.homepage, ...(productionSettings?.homepage ?? {}) },
@@ -151,6 +154,7 @@ export const storefrontService = {
         homepage: { ...fallbackStorefrontData.homepage, ...(productionSettings?.homepage ?? {}) },
         finderPreferences,
         reviews: publicReviews,
+        seo: publicSeo,
         testimonials: [],
         blogs: sanityBlogs ?? [],
       })

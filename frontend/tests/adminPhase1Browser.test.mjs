@@ -56,6 +56,7 @@ async function setup(t, admin, path) {
     admin.paths.push(url.pathname)
     admin.requests.push({ path: url.pathname, method, body, headers: request.headers(), rawBody: request.postData() })
     const reply = data => route.fulfill({ json: { data } })
+    if (url.pathname === '/api/v1/admin/seo' && method === 'GET') return reply([])
     if (url.pathname === '/api/v1/admin/media') return reply({
       secureUrl: uploadedImage, url: uploadedImage, mediaType: 'gallery', productId,
     })
@@ -158,9 +159,9 @@ test('a new Collection without a banner submits the schema-approved empty string
 })
 
 const pendingModules = [
-  ['customers', 'Customers'], ['coupons', 'Coupons & Offers'], ['banners', 'Banners & Campaigns'],
+  ['banners', 'Banners & Campaigns'],
   ['blogs', 'Blogs'], ['testimonials', 'Testimonials'],
-  ['seo', 'SEO Settings'], ['editable-pages', 'Editable Pages'],
+  ['editable-pages', 'Editable Pages'],
 ]
 for (const [resource, title] of pendingModules) {
   test(`${resource} keeps its direct route and shows pending integration without resource or upload requests`, async t => {
@@ -190,7 +191,7 @@ test('SEO and Editable Pages choose their initial mode on direct and sidebar nav
   await page.getByRole('link', { name: 'SEO Settings', exact: true }).click()
   await page.getByRole('heading', { name: 'SEO Settings', exact: true, level: 1 }).waitFor()
   assert.equal(await seo.getAttribute('aria-pressed'), 'true')
-  assert.deepEqual(admin.paths.filter(path => path.includes('/admin/')), [])
+  assert.ok(admin.requests.filter(request => request.path.includes('/admin/')).every(request => request.path === '/api/v1/admin/seo' && request.method === 'GET'))
 })
 
 test('Products retain their modern API and approved product-media callback with CSRF', async t => {

@@ -73,16 +73,16 @@ export const adminNav: AdminNavItem[] = [
   { label: 'Fragrance Finder', to: '/admin/fragrance-finder', icon: Sparkles, permission: 'homepage.manage', group: 'Perfume Catalog' },
   { label: 'Customer Reviews', to: '/admin/reviews', icon: Star, permission: 'reviews:manage', group: 'Perfume Catalog' },
   { label: 'Orders & Deliveries', to: '/admin/orders', icon: ShoppingBag, permission: 'orders.read', group: 'Sales & Orders' },
-  { label: 'Customer Database', to: '/admin/customers', icon: Users, permission: 'customers:read', group: 'Sales & Orders' },
+  { label: 'Customer Database', to: '/admin/customers', icon: Users, permission: 'customers.read', group: 'Sales & Orders' },
   { label: 'Newsletter List', to: '/admin/newsletter', icon: Mail, permission: 'newsletter:manage', group: 'Sales & Orders' },
   { label: 'Contact Messages', to: '/admin/contact-messages', icon: MessageSquare, permission: 'contact_messages.manage', group: 'Sales & Orders' },
-  { label: 'Coupons & Discounts', to: '/admin/coupons', icon: BadgePercent, permission: 'coupons:manage', group: 'Marketing & Offers' },
+  { label: 'Coupons & Discounts', to: '/admin/coupons', icon: BadgePercent, permission: 'coupons.manage', group: 'Marketing & Offers' },
   { label: 'Banners & Campaigns', to: '/admin/banners', icon: Image, permission: 'banners:manage', group: 'Marketing & Offers' },
   { label: 'Blogs & Scent Journal', to: '/admin/blogs', icon: FileText, permission: 'blogs:manage', group: 'Content & Journal' },
   { label: 'Testimonials', to: '/admin/testimonials', icon: Quote, permission: 'testimonials:manage', group: 'Content & Journal' },
   { label: 'Custom Policy Pages', to: '/admin/editable-pages', icon: FileText, permission: 'editablePages:manage', group: 'Content & Journal' },
   { label: 'Store Settings', to: '/admin/settings', icon: Boxes, permission: 'settings:manage', group: 'Store Control' },
-  { label: 'SEO Settings', to: '/admin/seo', icon: Search, permission: 'seo:manage', group: 'Store Control' },
+  { label: 'SEO Settings', to: '/admin/seo', icon: Search, permission: 'seo.manage', group: 'Store Control' },
 ]
 
 const statusOptions = ['Published', 'Draft', 'Unpublished', 'Archived']
@@ -181,7 +181,7 @@ export const resourceConfigs: Record<string, AdminResourceConfig> = {
     label: 'Coupons & Offers',
     singular: 'Coupon',
     endpoint: 'coupons',
-    permission: 'coupons:manage',
+    permission: 'coupons.manage',
     icon: BadgePercent,
     columns: ['code', 'type', 'discountValue', 'minimumOrderAmount', 'status'],
     fields: [
@@ -279,7 +279,7 @@ export const resourceConfigs: Record<string, AdminResourceConfig> = {
     label: 'Customers',
     singular: 'Customer',
     endpoint: 'customers',
-    permission: 'customers:read',
+    permission: 'customers.read',
     icon: Users,
     columns: ['name', 'email', 'phone', 'totalOrders', 'totalSpending', 'lastOrderDate'],
     readOnly: true,
@@ -314,7 +314,7 @@ export const resourceConfigs: Record<string, AdminResourceConfig> = {
     label: 'SEO Settings',
     singular: 'SEO Entry',
     endpoint: 'seo',
-    permission: 'seo:manage',
+    permission: 'seo.manage',
     icon: Search,
     columns: ['page', 'slug', 'seoTitle', 'metaDescription'],
     fields: [

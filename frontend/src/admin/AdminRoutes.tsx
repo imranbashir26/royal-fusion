@@ -12,6 +12,7 @@ import { AdminSeoPage } from './AdminSeoPage'
 import { AdminSettingsPage } from './AdminSettingsPage'
 import { AdminUsersPage } from './AdminUsersPage'
 import { AdminContactMessagesPage } from './AdminContactMessagesPage'
+import { AdminCustomersPage, AdminCouponsPage } from './AdminPhase3Pages'
 
 export function AdminRoutes() {
   return (
@@ -26,8 +27,8 @@ export function AdminRoutes() {
         <Route path="fragrance-finder" element={<AdminFragranceFinderPage />} />
         <Route path="orders" element={<AdminOrdersPage />} />
         <Route path="orders/:id" element={<AdminOrderDetailsPage />} />
-        <Route path="customers" element={<AdminResourceManager resource="customers" />} />
-        <Route path="coupons" element={<AdminResourceManager resource="coupons" />} />
+        <Route path="customers" element={<AdminCustomersPage />} />
+        <Route path="coupons" element={<AdminCouponsPage />} />
         <Route path="banners" element={<AdminResourceManager resource="banners" />} />
         <Route path="blogs" element={<AdminResourceManager resource="blogs" />} />
         <Route path="testimonials" element={<AdminResourceManager resource="testimonials" />} />

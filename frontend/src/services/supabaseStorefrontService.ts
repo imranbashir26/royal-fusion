@@ -12,8 +12,18 @@ import { mapPublicSettingsRows, type PublicSettingsRow } from './publicSettingsM
 import { getSupabaseClient } from './supabaseClient'
 import { loadNormalProductRows } from './normalCatalog'
 import { loadPublicVariants } from './storefrontVariants'
+import { mapPublicSeoRows, staticSeoPaths } from './storefrontSeo'
 
 export const supabaseStorefrontService = {
+  async getSeo() {
+    const client = getSupabaseClient()
+    if (!client) return []
+    const { data, error } = await client.from('seo_settings')
+      .select('route_path,title,description,canonical_url,robots,og_title,og_description,og_image_secure_url,active')
+      .eq('active', true).in('route_path', staticSeoPaths).order('route_path', { ascending: true }).range(0, 19)
+    if (error) throw new Error('Public metadata unavailable.')
+    return mapPublicSeoRows(data ?? [])
+  },
   async getProducts(): Promise<Product[] | null> {
     const client = getSupabaseClient()
     if (!client) return null

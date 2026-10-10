@@ -37,6 +37,8 @@ export interface ProductVariant {
 }
 
 export interface Product {
+  seoTitle?: string
+  seoDescription?: string
   commerceKind?: 'standard' | 'tester'
   id: string
   slug: string
@@ -75,6 +77,8 @@ export interface Product {
 }
 
 export interface Category {
+  seoTitle?: string
+  seoDescription?: string
   id: string
   name: string
   slug: string
@@ -83,6 +87,8 @@ export interface Category {
 }
 
 export interface Collection {
+  seoTitle?: string
+  seoDescription?: string
   id: string
   name: string
   slug: string
@@ -127,6 +133,8 @@ export interface Review {
 }
 
 export interface BlogPost {
+  seoTitle?: string
+  seoDescription?: string
   id: string
   slug: string
   title: string

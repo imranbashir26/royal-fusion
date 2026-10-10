@@ -2,6 +2,8 @@ import type { BlogPost, Category, Collection, Product, ProductVariant, Review } 
 import type { Banner, StorefrontData, Testimonial } from '../types/admin'
 
 export interface SupabaseProductRow {
+  seo_title?: string
+  seo_description?: string
   id: string
   name: string
   slug: string
@@ -63,6 +65,8 @@ export function mapProductVariant(row: SupabaseVariantRow): ProductVariant {
 }
 
 export interface SupabaseCategoryRow {
+  seo_title?: string
+  seo_description?: string
   id: string
   name: string
   slug: string
@@ -127,6 +131,8 @@ export function mapCollection(row: SupabaseCollectionRow): Collection {
     featured: Boolean(row.featured),
     active: row.active ?? true,
     productIds: [],
+    seoTitle: row.seo_title ?? '',
+    seoDescription: row.seo_description ?? '',
   }
 }
 
@@ -188,6 +194,8 @@ export function mapProduct(row: SupabaseProductRow): Product {
   return {
     id: row.id,
     commerceKind: row.commerce_kind as 'standard' | 'tester',
+    seoTitle: row.seo_title ?? '',
+    seoDescription: row.seo_description ?? '',
     slug: row.slug,
     name: row.name,
     category: categoryName,
@@ -231,6 +239,8 @@ export function mapCategory(row: SupabaseCategoryRow): Category {
     slug: row.slug,
     description: row.description || '',
     icon: row.image_url || 'Crown',
+    seoTitle: row.seo_title ?? '',
+    seoDescription: row.seo_description ?? '',
   }
 }
 
@@ -295,6 +305,8 @@ export function mapSanityBlog(document: Record<string, unknown>): BlogPost {
     publishedAt: String(document.publishedAt ?? ''),
     image: String(document.image ?? ''),
     imageAlt: String(document.imageAlt ?? ''),
+    seoTitle: String(document.seoTitle ?? ''),
+    seoDescription: String(document.seoDescription ?? ''),
   }
 }
 

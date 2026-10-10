@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { AdminResourceManager } from './AdminResourcePage'
+import { AdminSeoSettingsPage } from './AdminPhase3Pages'
 
 export function AdminSeoPage({ initialMode = 'seo' }: { initialMode?: 'seo' | 'editable-pages' }) {
   const [mode, setMode] = useState(initialMode)
@@ -24,7 +25,7 @@ export function AdminSeoPage({ initialMode = 'seo' }: { initialMode?: 'seo' | 'e
           Editable Pages
         </button>
       </div>
-      <AdminResourceManager resource={mode} />
+      {mode === 'seo' ? <AdminSeoSettingsPage /> : <AdminResourceManager resource="editable-pages" />}
     </div>
   )
 }

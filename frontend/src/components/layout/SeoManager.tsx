@@ -1,27 +1,25 @@
 import { useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useStorefront } from '../../storefront/StorefrontProvider'
+import { resolveStorefrontSeo } from '../../services/storefrontSeo'
 
 export function SeoManager() {
   const location = useLocation()
-  const { seo } = useStorefront()
+  const { seo, products, categories, collections, blogs } = useStorefront()
 
   useEffect(() => {
-    const current =
-      seo.find((entry) => entry.slug === location.pathname) ??
-      seo.find((entry) => entry.slug === '/')
-
-    if (!current) return
-
-    const title = String(current.seoTitle ?? current.ogTitle ?? 'Royal Fusion')
-    const description = String(current.metaDescription ?? current.ogDescription ?? '')
-
-    document.title = title
-    setMeta('description', description)
-    setMeta('og:title', String(current.ogTitle ?? title), 'property')
-    setMeta('og:description', String(current.ogDescription ?? description), 'property')
-    if (current.ogImage) setMeta('og:image', String(current.ogImage), 'property')
-  }, [location.pathname, seo])
+    const metadata = resolveStorefrontSeo(location.pathname, location.search, { seo, products, categories, collections, blogs }, window.location.origin)
+    document.title = metadata.title
+    setMeta('description', metadata.description)
+    setMeta('og:title', metadata.ogTitle, 'property')
+    setMeta('og:description', metadata.ogDescription, 'property')
+    setMeta('robots', metadata.robots)
+    if (metadata.ogImage) setMeta('og:image', metadata.ogImage, 'property')
+    else document.head.querySelector('meta[property="og:image"]')?.remove()
+    let canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]')
+    if (!canonical) { canonical = document.createElement('link'); canonical.rel = 'canonical'; document.head.appendChild(canonical) }
+    canonical.href = metadata.canonical
+  }, [location.pathname, location.search, seo, products, categories, collections, blogs])
 
   return null
 }
