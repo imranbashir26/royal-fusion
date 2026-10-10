@@ -11,6 +11,7 @@ import { AdminNewsletterPage } from './AdminNewsletterPage'
 import { AdminSeoPage } from './AdminSeoPage'
 import { AdminSettingsPage } from './AdminSettingsPage'
 import { AdminUsersPage } from './AdminUsersPage'
+import { AdminContactMessagesPage } from './AdminContactMessagesPage'
 
 export function AdminRoutes() {
   return (
@@ -32,7 +33,7 @@ export function AdminRoutes() {
         <Route path="testimonials" element={<AdminResourceManager resource="testimonials" />} />
         <Route path="reviews" element={<AdminReviewsPage />} />
         <Route path="newsletter" element={<AdminNewsletterPage />} />
-        <Route path="contact-messages" element={<AdminResourceManager resource="contact-messages" />} />
+        <Route path="contact-messages" element={<AdminContactMessagesPage />} />
         <Route path="settings" element={<AdminSettingsPage />} />
         <Route path="seo" element={<AdminSeoPage key="seo" initialMode="seo" />} />
         <Route path="editable-pages" element={<AdminSeoPage key="editable-pages" initialMode="editable-pages" />} />

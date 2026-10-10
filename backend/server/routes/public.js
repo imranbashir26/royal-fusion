@@ -81,7 +81,14 @@ publicRouter.get('/blogs/:slug', async (req, res) => {
   res.json(blog)
 })
 
-publicRouter.post('/contact', validate(contactSchema), async (req, res) => {
+publicRouter.post('/contact', (req, res, next) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(410).set('Cache-Control', 'no-store').json({ error: {
+      code: 'LEGACY_CONTACT_DISABLED', message: 'Please use the current contact form.', requestId: req.requestId,
+    } })
+  }
+  next()
+}, validate(contactSchema), async (req, res) => {
   const message = await updateDb((db) => {
     const next = {
       id: `msg-${nanoid(8)}`,

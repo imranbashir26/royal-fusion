@@ -75,7 +75,7 @@ export const adminNav: AdminNavItem[] = [
   { label: 'Orders & Deliveries', to: '/admin/orders', icon: ShoppingBag, permission: 'orders.read', group: 'Sales & Orders' },
   { label: 'Customer Database', to: '/admin/customers', icon: Users, permission: 'customers:read', group: 'Sales & Orders' },
   { label: 'Newsletter List', to: '/admin/newsletter', icon: Mail, permission: 'newsletter:manage', group: 'Sales & Orders' },
-  { label: 'Contact Messages', to: '/admin/contact-messages', icon: MessageSquare, permission: 'contactMessages:manage', group: 'Sales & Orders' },
+  { label: 'Contact Messages', to: '/admin/contact-messages', icon: MessageSquare, permission: 'contact_messages.manage', group: 'Sales & Orders' },
   { label: 'Coupons & Discounts', to: '/admin/coupons', icon: BadgePercent, permission: 'coupons:manage', group: 'Marketing & Offers' },
   { label: 'Banners & Campaigns', to: '/admin/banners', icon: Image, permission: 'banners:manage', group: 'Marketing & Offers' },
   { label: 'Blogs & Scent Journal', to: '/admin/blogs', icon: FileText, permission: 'blogs:manage', group: 'Content & Journal' },
@@ -298,7 +298,7 @@ export const resourceConfigs: Record<string, AdminResourceConfig> = {
     label: 'Contact Messages',
     singular: 'Message',
     endpoint: 'contact-messages',
-    permission: 'contactMessages:manage',
+    permission: 'contact_messages.manage',
     icon: MessageSquare,
     columns: ['name', 'email', 'phone', 'subject', 'status', 'createdAt'],
     fields: [

@@ -19,6 +19,7 @@ import { createAdminFragranceFinderV1Router, createPublicFragranceFinderV1Router
 import { createAdminReviewsV1Router, createPublicReviewsV1Router } from './routes/reviewsV1.js'
 import { createAdminNewsletterV1Router, createPublicNewsletterV1Router } from './routes/newsletterV1.js'
 import { createAdminSettingsV1Router } from './routes/settingsV1.js'
+import { createAdminContactV1Router, createPublicContactV1Router } from './routes/contactV1.js'
 import { createOrdersV1Router } from './routes/ordersV1.js'
 import { createOrdersV2Router } from './routes/ordersV2.js'
 import { createAdminOrdersV1Router } from './routes/adminOrdersV1.js'
@@ -73,6 +74,8 @@ app.use(rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 }))
+app.use('/api/v1/public/contact', cookieParser(), createPublicContactV1Router(authRuntime))
+app.use('/api/v1/admin/contact-messages', cookieParser(), createAdminContactV1Router(authRuntime))
 app.use('/api/v2/admin/tester-packs', express.json({ limit: '32kb' }))
 app.use('/api/v2/public/checkout/quote', express.json({ limit: '32kb' }))
 app.use('/api/v2/public/orders', express.json({ limit: '32kb' }))

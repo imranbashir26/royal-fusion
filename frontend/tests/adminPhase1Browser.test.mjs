@@ -159,7 +159,7 @@ test('a new Collection without a banner submits the schema-approved empty string
 
 const pendingModules = [
   ['customers', 'Customers'], ['coupons', 'Coupons & Offers'], ['banners', 'Banners & Campaigns'],
-  ['blogs', 'Blogs'], ['testimonials', 'Testimonials'], ['contact-messages', 'Contact Messages'],
+  ['blogs', 'Blogs'], ['testimonials', 'Testimonials'],
   ['seo', 'SEO Settings'], ['editable-pages', 'Editable Pages'],
 ]
 for (const [resource, title] of pendingModules) {
