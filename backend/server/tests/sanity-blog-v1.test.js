@@ -344,9 +344,10 @@ test('mutation methods are denied, OPTIONS is read-only and no write-capable rou
   assert.deepEqual(state.calls, [])
 })
 
-test('production entry point, current authority and frontend integration remain unmounted', async () => {
+test('entry point delegates only default-disabled activation and preserves historical authority', async () => {
   const entry = await readFile(new URL('../index.js', import.meta.url), 'utf8')
   assert.equal(/blogsV1|sanityBlogSource|createPublicBlogsV1Router|createSanityBlogV1Service/.test(entry), false)
+  assert.ok(entry.includes('mountSanityBlogApi(app)'))
   assert.ok(entry.includes("app.use('/api/public', publicRouter)"))
 })
 

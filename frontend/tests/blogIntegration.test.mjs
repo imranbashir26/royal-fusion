@@ -7,7 +7,7 @@ import { createServer } from 'vite'
 import { blogFixture, fixtureFetch, configuration, canonicalOrigin, legacyBlog } from './support/blogFixtures.mjs'
 import { blockExternalBlogTestNetwork } from '../../backend/server/tests/support/sanityBlogFixtures.js'
 
-let server, api, images, seo, network
+let server, api, images, seo, activation, network
 before(async () => {
   network = blockExternalBlogTestNetwork()
   server = await createServer({ root: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), configFile: false,
@@ -15,14 +15,17 @@ before(async () => {
   api = await server.ssrLoadModule('/src/services/publicBlogsApi.ts')
   images = await server.ssrLoadModule('/src/services/blogImages.ts')
   seo = await server.ssrLoadModule('/src/services/storefrontSeo.ts')
+  activation = await server.ssrLoadModule('/src/services/blogIntegrationConfig.ts')
 })
 after(async () => { await server?.close(); network.restore(); assert.deepEqual(network.attempts, []) })
 const client = (fetcher = fixtureFetch(blogFixture().service), options = {}) => api.createPublicBlogClient({ configuration, fetcher, baseUrl: '/api', ...options })
 const failure = kind => error => error instanceof api.PublicBlogError && error.kind === kind && !/PRIVATE|stack|credential/.test(error.message)
 
-test('fixture-only activation is absent from main and existing default blog behavior remains wired', async () => {
+test('entry point constructs activation once outside React and existing default blog behavior remains wired', async () => {
   const main = await readFile(new URL('../src/main.tsx', import.meta.url), 'utf8')
-  assert.ok(main.includes('<App />')); assert.equal(main.includes('blogIntegration'), false)
+  assert.ok(main.includes('<App blogIntegration={blogIntegration} />'))
+  assert.equal(main.match(/createBlogIntegration\(import.meta.env\)/g).length, 1)
+  assert.ok(main.indexOf('createBlogIntegration(import.meta.env)') < main.indexOf('createRoot('))
   const load = await server.ssrLoadModule('/src/services/storefrontService.ts')
   const sanity = await server.ssrLoadModule('/src/services/sanityContentService.ts')
   const transport = await server.ssrLoadModule('/src/services/apiClient.ts')
@@ -36,6 +39,37 @@ test('fixture-only activation is absent from main and existing default blog beha
     assert.deepEqual((await load.storefrontService.getStorefrontData({ legacyBlogs: false })).blogs, [])
     assert.equal(legacyReads, 1)
   } finally { sanity.sanityContentService.getBlogs = originalBlogs; transport.apiClient.request = originalRequest }
+})
+test('default-disabled and non-exact build flags do not construct a client or read invalid canonical configuration', () => {
+  let constructions = 0
+  for (const flag of [undefined, 'false', 'TRUE', ' true ', '1', true]) {
+    assert.equal(activation.createBlogIntegration({ VITE_ENABLE_SANITY_BLOGS: flag, VITE_BLOG_CANONICAL_ORIGIN: 'PRIVATE_INVALID' },
+      { clientFactory() { constructions++; throw new Error('Unexpected construction') }, report() { assert.fail('Unexpected diagnostic') } }), undefined)
+  }
+  assert.equal(constructions, 0)
+})
+test('explicit frontend activation creates one stable token-free client without fetching at construction', async () => {
+  let constructions = 0; const calls = []
+  const integration = activation.createBlogIntegration({ VITE_ENABLE_SANITY_BLOGS: 'true', VITE_BLOG_CANONICAL_ORIGIN: canonicalOrigin }, {
+    clientFactory({ configuration: approved }) { constructions++; assert.deepEqual(approved, configuration); return client(fixtureFetch(blogFixture().service, calls)) },
+  })
+  assert.equal(integration.enabled, true); assert.ok(Object.isFrozen(integration)); assert.equal(constructions, 1); assert.equal(calls.length, 0)
+  await integration.client.list(); await integration.client.getBySlug('fragrance-journal')
+  assert.equal(constructions, 1); assert.equal(calls.length, 2)
+})
+test('invalid enabled origins and construction failures remain explicitly unavailable without inventing an origin', () => {
+  let constructions = 0; const diagnostics = []
+  for (const canonicalOrigin of [undefined, '', 'http://localhost:5173', 'https://user:PRIVATE_TOKEN@shop.example.invalid',
+    'https://shop.example.invalid/path', 'https://shop.example.invalid?query=1', 'https://shop.example.invalid#hash', 'malformed', 42]) {
+    const result = activation.createBlogIntegration({ VITE_ENABLE_SANITY_BLOGS: 'true', VITE_BLOG_CANONICAL_ORIGIN: canonicalOrigin }, {
+      clientFactory() { constructions++; throw new Error('Unexpected construction') }, report: value => diagnostics.push(value),
+    })
+    assert.deepEqual(result, { enabled: true, unavailable: true }); assert.ok(Object.isFrozen(result))
+  }
+  assert.equal(constructions, 0); assert.equal(/PRIVATE|localhost|stack/.test(JSON.stringify(diagnostics)), false)
+  assert.deepEqual(activation.createBlogIntegration({ VITE_ENABLE_SANITY_BLOGS: 'true', VITE_BLOG_CANONICAL_ORIGIN: canonicalOrigin }, {
+    clientFactory() { throw new Error('PRIVATE_CONSTRUCTION_TOKEN') }, report() { throw new Error('Diagnostic failure') },
+  }), { enabled: true, unavailable: true })
 })
 test('real Phase 4D fixture API returns bounded summary pages without bodies or private metadata', async () => {
   const calls = [], source = blogFixture(), service = client(fixtureFetch(source.service, calls))

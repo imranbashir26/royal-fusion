@@ -27,6 +27,7 @@ import { createAdminOrdersV1Router } from './routes/adminOrdersV1.js'
 import { mediaRouter } from './routes/media.js'
 import { createTesterPacksV2Router } from './routes/testerPacksV2.js'
 import { publicRouter } from './routes/public.js'
+import { mountSanityBlogApi } from './services/blogActivation.js'
 import { updateDb, nowIso } from './utils/database.js'
 import { validateRuntimeEnv } from './utils/env.js'
 import { sanitizeBody } from './utils/sanitize.js'
@@ -75,6 +76,7 @@ app.use(rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 }))
+await mountSanityBlogApi(app)
 app.use('/api/v1/public/contact', cookieParser(), createPublicContactV1Router(authRuntime))
 app.use('/api/v1/admin/contact-messages', cookieParser(), createAdminContactV1Router(authRuntime))
 for (const resource of ['customers', 'coupons', 'seo']) {

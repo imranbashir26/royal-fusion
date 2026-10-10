@@ -10,8 +10,10 @@ export function SeoManager() {
   const integration = usePublicBlogIntegration()
 
   useEffect(() => {
-    const metadata = integration.enabled && integration.client && /^\/blogs(?:\/|$)/.test(location.pathname)
-      ? resolvePublicBlogSeo(location.pathname, integration.metadata, integration.client.configuration)
+    const metadata = integration.enabled && /^\/blogs(?:\/|$)/.test(location.pathname)
+      ? integration.client ? resolvePublicBlogSeo(location.pathname, integration.metadata, integration.client.configuration)
+        : { title: 'Royal Fusion Journal', description: '', ogTitle: 'Royal Fusion Journal', ogDescription: '',
+          robots: 'noindex,follow', ogImage: '', canonical: '' }
       : resolveStorefrontSeo(location.pathname, location.search, { seo, products, categories, collections, blogs }, window.location.origin)
     document.title = metadata.title
     setMeta('description', metadata.description)
@@ -21,8 +23,10 @@ export function SeoManager() {
     if (metadata.ogImage) setMeta('og:image', metadata.ogImage, 'property')
     else document.head.querySelector('meta[property="og:image"]')?.remove()
     let canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]')
-    if (!canonical) { canonical = document.createElement('link'); canonical.rel = 'canonical'; document.head.appendChild(canonical) }
-    canonical.href = metadata.canonical
+    if (metadata.canonical) {
+      if (!canonical) { canonical = document.createElement('link'); canonical.rel = 'canonical'; document.head.appendChild(canonical) }
+      canonical.href = metadata.canonical
+    } else canonical?.remove()
   }, [location.pathname, location.search, seo, products, categories, collections, blogs, integration])
 
   return null

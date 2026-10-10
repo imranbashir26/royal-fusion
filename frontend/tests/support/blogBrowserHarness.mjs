@@ -61,24 +61,30 @@ before(async () => {
           import React, {StrictMode, useState} from 'react'; import {createRoot} from 'react-dom/client';
           import {BrowserRouter, Link} from 'react-router-dom'; import App from '/src/App.tsx';
           import {createPublicBlogClient} from '/src/services/publicBlogsApi.ts';
+          import {createBlogIntegration} from '/src/services/blogIntegrationConfig.ts';
           import {sanityContentService} from '/src/services/sanityContentService.ts';
           const h = React.createElement;
           sanityContentService.getBlogs = async () => {window.__legacyBlogReads = (window.__legacyBlogReads || 0) + 1; return [${JSON.stringify(legacyBlog)}]};
-          function Harness() {
-            const [client] = useState(() => {
-              if (!window.__enableBlogFixture) return undefined;
-              const base = createPublicBlogClient({configuration:${JSON.stringify(configuration)}, baseUrl:'/api'});
+          const integration = createBlogIntegration({
+            VITE_ENABLE_SANITY_BLOGS: window.__enableBlogFixture ? 'true' : 'false',
+            VITE_BLOG_CANONICAL_ORIGIN: window.__blogCanonicalFixture,
+          }, {report:diagnostic => (window.__blogConfigurationDiagnostics ||= []).push(diagnostic), clientFactory:({configuration}) => {
+              window.__blogClientConstructions = (window.__blogClientConstructions || 0) + 1;
+              const base = createPublicBlogClient({configuration, baseUrl:'/api'});
               if (!window.__ignoreBlogCancellation) return base;
               return {configuration:base.configuration,list:input=>base.list(input),getBySlug:async slug=>{
                 const result = await base.getBySlug(slug); (window.__deliveredBlogSlugs ||= []).push(slug); return result;
               }};
-            });
+          }});
+          function Harness() {
+            const [revision, setRevision] = useState(0);
             return h(React.Fragment, null,
               h('nav', {'aria-label':'Fixture navigation'},
                 h(Link,{to:'/blogs/fragrance-journal'},'Fixture first article'),
                 h(Link,{to:'/blogs/second-article'},'Fixture second article'),
-                h(Link,{to:'/blogs'},'Fixture journal'),h(Link,{to:'/shop'},'Fixture shop'),h(Link,{to:'/product/baraan'},'Fixture product')),
-              h(App, {blogIntegration:client ? {enabled:true,client} : undefined}));
+                h(Link,{to:'/blogs'},'Fixture journal'),h(Link,{to:'/shop'},'Fixture shop'),h(Link,{to:'/product/baraan'},'Fixture product'),
+                h('button',{onClick:()=>setRevision(value=>value+1),'data-revision':revision},'Fixture rerender')),
+              h(App, {blogIntegration:integration}));
           }
           createRoot(document.getElementById('root')).render(h(StrictMode,null,h(BrowserRouter,null,h(Harness))));
         `
@@ -95,7 +101,7 @@ before(async () => {
 }, { timeout: 60000 })
 after(async () => { await browser?.close(); await server?.close(); network.restore(); assert.deepEqual(network.attempts, []) })
 
-export async function blogPage(t, { enabled = true, mode = 'normal', documents, ignoreCancellation = false } = {}) {
+export async function blogPage(t, { enabled = true, mode = 'normal', documents, ignoreCancellation = false, canonicalOrigin = configuration.canonicalOrigin } = {}) {
   const state = { fixture: blogFixture(documents), mode, requests: [], cancelled: [], gates: new Map() }
   current = state
   state.hold = suffix => {
@@ -113,7 +119,7 @@ export async function blogPage(t, { enabled = true, mode = 'normal', documents, 
     assert.deepEqual(errors, []); assert.deepEqual(unexpected, []); assert.deepEqual(writes, [])
     if (enabled) assert.equal(await state.legacyReads, 0)
   })
-  await context.addInitScript(({ enabled, ignoreCancellation }) => { window.__enableBlogFixture = enabled; window.__ignoreBlogCancellation = ignoreCancellation; sessionStorage.setItem('royal-fusion-intro-played', 'true'); document.cookie = 'fixture-private-cookie=must-not-be-sent; path=/' }, { enabled, ignoreCancellation })
+  await context.addInitScript(({ enabled, ignoreCancellation, canonicalOrigin }) => { window.__enableBlogFixture = enabled; window.__ignoreBlogCancellation = ignoreCancellation; window.__blogCanonicalFixture = canonicalOrigin; sessionStorage.setItem('royal-fusion-intro-played', 'true'); document.cookie = 'fixture-private-cookie=must-not-be-sent; path=/' }, { enabled, ignoreCancellation, canonicalOrigin })
   await context.route('**/*', async route => {
     const req = route.request(), url = new URL(req.url()); attempts.push({ path: url.pathname, method: req.method() })
     if (req.method() !== 'GET' && req.method() !== 'HEAD' && req.method() !== 'OPTIONS') { writes.push(url.pathname); return route.abort() }
