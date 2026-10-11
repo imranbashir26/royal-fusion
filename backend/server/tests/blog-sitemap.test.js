@@ -268,8 +268,11 @@ test('invalid canonical configuration is rejected before any service invocation'
   }
 })
 
-test('production startup, activation and existing injected delivery do not import or mount sitemap support', async () => {
-  for (const path of ['../index.js', '../services/blogActivation.js', '../services/blogDelivery.js']) {
-    assert.doesNotMatch(await readFile(new URL(path, import.meta.url), 'utf8'), /blogSitemap|blog-sitemap\.xml|SANITY_BLOG_SNAPSHOT_QUERY/)
-  }
+test('production entry point delegates sitemap activation without directly importing its router or query', async () => {
+  const entry = await readFile(new URL('../index.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(entry, /blogSitemap|blog-sitemap\.xml|SANITY_BLOG_SNAPSHOT_QUERY/)
+  assert.match(entry, /await mountSanityBlogApi\(app\)/)
+  const activation = await readFile(new URL('../services/blogActivation.js', import.meta.url), 'utf8')
+  assert.match(activation, /environment\.ENABLE_BLOG_SITEMAP === 'true'/)
+  assert.doesNotMatch(activation, /SANITY_BLOG_SNAPSHOT_QUERY/)
 })

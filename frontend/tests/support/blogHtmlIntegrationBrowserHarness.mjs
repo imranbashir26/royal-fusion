@@ -106,10 +106,13 @@ before(async () => {
         return `import React,{StrictMode} from 'react'; import {createRoot} from 'react-dom/client';
           import {BrowserRouter} from 'react-router-dom'; import App from '/src/App.tsx'; import '/src/index.css';
           import {createPublicBlogClient} from '/src/services/publicBlogsApi.ts';
+          import {createBlogIntegration} from '/src/services/blogIntegrationConfig.ts';
           import {sanityContentService} from '/src/services/sanityContentService.ts';
           sanityContentService.getBlogs=async()=>{window.__legacyBlogReads=(window.__legacyBlogReads||0)+1;return [${JSON.stringify(legacyBlog)}]};
           const configuration=${JSON.stringify(configuration)};
-          const integration=window.__nativeBlogs ? {enabled:true,documentMode:window.__documentMode===true,client:createPublicBlogClient({configuration,baseUrl:'/api'})} : undefined;
+          const integration=createBlogIntegration({VITE_ENABLE_SANITY_BLOGS:window.__nativeBlogs?'true':'false',
+            VITE_ENABLE_BLOG_HTML:window.__documentMode?'true':'false',VITE_BLOG_CANONICAL_ORIGIN:configuration.canonicalOrigin},
+            {clientFactory:({configuration})=>createPublicBlogClient({configuration,baseUrl:'/api'})});
           window.__reactDocument=crypto.randomUUID();
           createRoot(document.getElementById('root')).render(React.createElement(StrictMode,null,React.createElement(BrowserRouter,null,React.createElement(App,{blogIntegration:integration}))));`
       },

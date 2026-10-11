@@ -517,3 +517,136 @@ No production connections, live Sanity operations, SQL, environment edits, order
 enablement, staging, commit, push, deployment or Belmo startup occurred in this phase.
 This final documentation correction changes only this file, preserves the protected
 working-tree exclusions, and executes no tests, SQL, services or activation operations.
+
+## Phase 4G-4 — local default-disabled activation wiring (2026-10-11)
+
+Starting checkpoint: `phase2-canonical-variants`,
+`60e57eda71d9307fb767498b6fa0ed6a356178e6`, empty index. Earlier sections record
+their historical checkpoints. This phase adds code-level wiring only; no live flags,
+environment values, hosting rewrites or production services were changed.
+
+### Controls and composition
+
+| Control | Scope when its value is exactly the string `true` |
+| --- | --- |
+| `ENABLE_SANITY_BLOG_API` | Existing `/api/v1/public/blogs` JSON API |
+| `ENABLE_BLOG_HTML` | `/blogs`, `/blogs/`, `/blogs/:slug`, `/blogs/_assets/journal.css` |
+| `ENABLE_BLOG_SITEMAP` | `/blog-sitemap.xml` |
+| `VITE_ENABLE_BLOG_HTML` | Frontend document navigation, additionally requiring exact-`true` `VITE_ENABLE_SANITY_BLOGS` and a valid `VITE_BLOG_CANONICAL_ORIGIN` |
+
+Absent, empty, false and non-exact values disable their capability. All eight
+backend combinations are valid: none, JSON only, HTML only, sitemap only, each
+pair and all three. A capability never implicitly enables another. Every enabled
+backend combination requires the existing validated `CLIENT_ORIGIN` HTTPS origin
+and native source configuration. All enabled routers share one source/service and
+one Sanity client; initialization fetches no content. The existing awaited activation
+call in `index.js` is unchanged, after security/rate middleware and before parsers.
+The shared delivery factory retains its existing injected JSON default for fixtures;
+the startup boundary explicitly passes all three resolved flag values.
+
+With all backend flags disabled, there are no registrations, configuration reads,
+SDK imports, client construction or upstream requests. HTML/sitemap modules are
+loaded lazily only for requested capabilities. The existing factories retain CSS
+precedence, GET/HEAD/OPTIONS, validation, 404/405, global 429, no-store, script-free
+CSP, publication rules, sanitized 503 errors and complete sitemap enumeration.
+The existing 50-article ceiling, duplicate detection and noIndex filtering are unchanged.
+
+Blog configuration, SDK imports, client construction and document-module failures
+are caught inside the blog activation boundary. With a valid canonical origin,
+unavailable sources use existing router error responses. If document composition
+cannot initialize (including a missing/invalid origin), only requested scopes are
+registered: JSON retains its validated unavailable contract, while document scopes
+return fixed plain-text 503, no-store/noindex, Retry-After and a restrictive CSP
+retaining inherited HTTPS upgrade. HEAD sends no body; unsupported methods return
+405 before parsing and OPTIONS returns 204. No origin is guessed and no partial
+HTML/XML is sent. Composition failure closes all requested blog scopes; unrelated
+services remain available. Fixed diagnostics contain no provider messages or secrets.
+Pre-existing global `validateRuntimeEnv()` checks remain outside this boundary and
+retain their startup failures.
+
+Frontend React navigation remains the default. The HTML build flag alone cannot
+enable native blogs: missing native activation produces a fixed dependency diagnostic,
+no client and no document mode. Invalid native configuration retains the existing
+explicit unavailable authority boundary with document mode absent. Successful
+configuration enables the existing blog-only document links; no cart/auth/checkout
+logic changes. A future frontend HTML rollout needs separately approved backend
+JSON **and** HTML availability and hosting routing; the build flag cannot verify it.
+Tests inject only `https://shop.example.invalid`; no final business domain is assumed.
+
+### Exact files changed
+
+- `backend/server/services/blogActivation.js`: independent flags, shared composition and isolated failures.
+- `backend/server/services/blogDelivery.js`: optional JSON, HTML and sitemap routers sharing the injected service.
+- `backend/server/tests/blog-activation.test.js`: actual startup-boundary routing, all flag combinations, import isolation, security and failure coverage.
+- `backend/server/tests/blog-sitemap.test.js`: replace the historical unmounted-source assertion with the guarded startup contract.
+- `frontend/src/services/blogIntegrationConfig.ts`: validated, default-disabled document mode.
+- `frontend/src/vite-env.d.ts`: declaration of the new nonsecret Vite flag.
+- `frontend/tests/blogIntegration.test.mjs`: exact flag/dependency/origin regressions.
+- `frontend/tests/support/blogHtmlIntegrationBrowserHarness.mjs`: use the actual configuration resolver with injected fixture values.
+- `docs/BLOG_HTML_PHASE4G.md`: this phase's controls, results and remaining gates.
+
+No renderer, queries, source adapter, publication contracts, application middleware,
+SQL, dependencies, environment files or deployment configuration changed.
+
+### Verification and retained first-run failures
+
+| Gate | Final passes |
+| --- | --- |
+| Backend activation | 26/26 |
+| Backend domain / Sanity adapter / HTML renderer | 20/20, 30/30, 25/25 |
+| Backend sitemap | 28/28 |
+| SQL-free backend security / protected source | 47/47 |
+| Full frontend default regression selection | 147/147 |
+| HTML integration / HTML / React blog browsers | 17/17, 8/8, 13/13 |
+| Checkout / variant / customer authentication browsers | 10/10, 10/10, 1/1 |
+| Admin Phase 1 / Phase 3 / orders / contact browsers | 12/12, 10/10, 9/9, 9/9 |
+| Distinct test total | **422/422** |
+
+Final results have zero failures, skips or cancellations. Successful suites were not
+repeated without a new change; focused runs are excluded from the distinct total.
+All browser suites ran sequentially without source edits. The corrected controlled
+response-loss fixture and its exactly-one application submission checks are retained.
+Fresh-process import tests include a positive evaluation control, rejected SDK
+imports and a separate rejected document import. Local socket/browser guards block
+unexpected external requests; no SQL fixtures or database migrations were executed.
+
+Two first-run failures are retained rather than hidden:
+
+- A combined backend run passed 100/101. The new document-import probe also rejected
+  SDK imports, so it observed zero constructions instead of the asserted one.
+  Narrowing the injected fault to document modules corrected the fixture, preserving
+  the assertion. The focused probe passed 1/1; the complete activation suite then
+  passed 26/26. Application code was unchanged by this fixture correction.
+- The first HTML integration browser attempt had 0/17 passes with 17 setup-hook
+  failures: Chrome exceeded the existing 15-second launch timeout before application
+  assertions. The process exited. An unchanged retry passed 17/17; no timeout,
+  assertion or application code was changed to obtain that result.
+
+Frontend TypeScript (`tsc -b`) and production build, backend `checkJs` (`strict` with
+`noImplicitAny=false` for existing untyped Express callbacks), targeted and frontend
+lint, `npm ls --all`, and Git whitespace checks passed. Frontend lint retains the
+two existing StorefrontProvider hook warnings. The build retains a chunk-size warning
+(main chunk 681.72 kB). No new dependency audit or advisory resolution is claimed.
+Logs are outside Git at
+`C:/Users/DCS/.codex/outputs/royal-fusion-phase4g4-20261011/`.
+
+### Remaining gates and rollback
+
+This local implementation remains uncommitted and requires independent review.
+Canonical business origin, actual Vercel-to-Belmo status/header/query/cookie forwarding,
+runtime compatibility, native-published Sanity content/assets, security advisories,
+capacity/monitoring, database-level idempotency, sitemap discovery and production
+activation still require separate approval. Local fixture success establishes none
+of those production gates. No live Sanity or production access occurred.
+
+For a future approved rollback, first rebuild/redeploy the frontend with document
+mode disabled and remove document-routing consumers before disabling backend HTML.
+If rolling back native blogs entirely, also coordinate the native frontend flag and
+its historical-publication boundary before disabling JSON. Stop sitemap consumers/
+discovery before disabling the sitemap flag. Restart the backend after its approved
+flag changes; avoid clients pointing to unmounted routes. No rollback, deployment,
+environment change or activation is performed by this phase.
+
+The protected checkoutIntegration modification, root vercel.json deletion and
+frontend/vercel.json bytes are preserved; the index remains empty. No staging,
+commit, push, SQL, Belmo startup or ordering enablement occurred.

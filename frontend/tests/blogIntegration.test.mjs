@@ -57,6 +57,34 @@ test('explicit frontend activation creates one stable token-free client without 
   await integration.client.list(); await integration.client.getBySlug('fragrance-journal')
   assert.equal(constructions, 1); assert.equal(calls.length, 2)
 })
+
+test('HTML document navigation requires an exact build flag plus valid native integration and canonical origin', () => {
+  let constructions = 0; const diagnostics = []
+  const options = { clientFactory() { constructions++; return client() }, report: value => diagnostics.push(value) }
+  for (const flag of [undefined, '', 'false', 'TRUE', ' true ', '1', true]) {
+    const integration = activation.createBlogIntegration({ VITE_ENABLE_SANITY_BLOGS: 'true',
+      VITE_ENABLE_BLOG_HTML: flag, VITE_BLOG_CANONICAL_ORIGIN: canonicalOrigin }, options)
+    assert.equal(integration.enabled, true); assert.equal(integration.documentMode, undefined)
+  }
+  const before = constructions
+  for (const flag of [undefined, '', 'false', 'TRUE', ' true ', true]) {
+    assert.equal(activation.createBlogIntegration({ VITE_ENABLE_SANITY_BLOGS: flag,
+      VITE_ENABLE_BLOG_HTML: 'true', VITE_BLOG_CANONICAL_ORIGIN: canonicalOrigin }, options), undefined)
+  }
+  assert.equal(constructions, before)
+  assert.deepEqual(diagnostics, Array.from({ length: 6 }, () => ({ event: 'blog.document.dependency.invalid' })))
+  const integration = activation.createBlogIntegration({ VITE_ENABLE_SANITY_BLOGS: 'true',
+    VITE_ENABLE_BLOG_HTML: 'true', VITE_BLOG_CANONICAL_ORIGIN: canonicalOrigin }, options)
+  assert.equal(integration.documentMode, true); assert.ok(Object.isFrozen(integration))
+  assert.equal(constructions, before + 1)
+  for (const canonicalOrigin of [undefined, 'http://shop.example.invalid', 'https://user:PRIVATE@shop.example.invalid',
+    'https://shop.example.invalid/path', 'https://shop.example.invalid?query=1', 'https://shop.example.invalid#hash']) {
+    assert.deepEqual(activation.createBlogIntegration({ VITE_ENABLE_SANITY_BLOGS: 'true', VITE_ENABLE_BLOG_HTML: 'true',
+      VITE_BLOG_CANONICAL_ORIGIN: canonicalOrigin }, options), { enabled: true, unavailable: true })
+  }
+  assert.equal(constructions, before + 1)
+  assert.doesNotMatch(JSON.stringify(diagnostics), /PRIVATE|stack|https:/)
+})
 test('invalid enabled origins and construction failures remain explicitly unavailable without inventing an origin', () => {
   let constructions = 0; const diagnostics = []
   for (const canonicalOrigin of [undefined, '', 'http://localhost:5173', 'https://user:PRIVATE_TOKEN@shop.example.invalid',
