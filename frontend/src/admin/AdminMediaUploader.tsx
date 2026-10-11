@@ -1,7 +1,6 @@
 import { ImagePlus, Loader2, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '../components/common/Button'
-import { adminApi } from '../services/adminApi'
 
 interface AdminMediaUploaderProps {
   value: string[]
@@ -27,24 +26,17 @@ export function AdminMediaUploader({
   const [url, setUrl] = useState('')
 
   const upload = async (files: FileList | null) => {
-    if (!files?.length) return
+    if (!files?.length || !allowUpload || !onUpload) return
     setError('')
     setIsUploading(true)
     try {
-      if (onUpload) {
-        let nextValue = value
-        for (const file of Array.from(files)) {
-          const uploadedUrl = await onUpload(file)
-          if (uploadedUrl) {
-            nextValue = multiple ? [...nextValue, uploadedUrl] : [uploadedUrl]
-            onChange(nextValue)
-          }
+      let nextValue = value
+      for (const file of Array.from(files)) {
+        const uploadedUrl = await onUpload(file)
+        if (uploadedUrl) {
+          nextValue = multiple ? [...nextValue, uploadedUrl] : [uploadedUrl]
+          onChange(nextValue)
         }
-      } else {
-        // Fallback for prototype non-product resources if any
-        const response = await adminApi.uploadImages(Array.from(files))
-        const urls = response.files.map((file) => file.url)
-        onChange(multiple ? [...value, ...urls] : [urls[urls.length - 1]])
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed.')
@@ -77,7 +69,7 @@ export function AdminMediaUploader({
 
   return (
     <div className="rounded-lg border border-champagne/30 bg-marble p-4">
-      {allowUpload ? (
+      {allowUpload && onUpload ? (
         <div className="space-y-3">
           <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-champagne/50 bg-ivory px-4 py-5 text-sm font-bold text-burgundy transition hover:bg-champagne/10">
             {isUploading ? (
@@ -123,27 +115,30 @@ export function AdminMediaUploader({
           </div>
         </div>
       ) : (
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <input
-            aria-label="Image URL or path"
-            className="h-11 min-w-0 flex-1 rounded-lg border border-champagne/35 bg-ivory px-3 text-sm outline-none focus:border-burgundy"
-            onChange={(event) => setUrl(event.target.value)}
-            placeholder="HTTPS image URL or /path/to/image.webp"
-            type="text"
-            value={url}
-          />
-          <Button
-            onClick={() => {
-              const next = url.trim()
-              if (!next) return
-              onChange([...value, next])
-              setUrl('')
-            }}
-            type="button"
-            variant="outline"
-          >
-            Add URL
-          </Button>
+        <div className="space-y-3">
+          <p className="text-sm text-brownroyal/65">Image uploads are pending integration. You can use an existing image URL.</p>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input
+              aria-label="Image URL or path"
+              className="h-11 min-w-0 flex-1 rounded-lg border border-champagne/35 bg-ivory px-3 text-sm outline-none focus:border-burgundy"
+              onChange={(event) => setUrl(event.target.value)}
+              placeholder="HTTPS image URL or /path/to/image.webp"
+              type="text"
+              value={url}
+            />
+            <Button
+              onClick={() => {
+                const next = url.trim()
+                if (!next) return
+                onChange(multiple ? [...value, next] : [next])
+                setUrl('')
+              }}
+              type="button"
+              variant="outline"
+            >
+              Add URL
+            </Button>
+          </div>
         </div>
       )}
 
@@ -177,7 +172,7 @@ export function AdminMediaUploader({
                     </Button>
                   </>
                 )}
-                <Button size="sm" variant="ghost" onClick={() => void remove(image)}>
+                <Button aria-label={`Remove image ${index + 1}`} size="sm" variant="ghost" onClick={() => void remove(image)}>
                   <Trash2 className="h-4 w-4 text-burgundy" />
                 </Button>
               </div>

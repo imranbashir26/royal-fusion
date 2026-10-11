@@ -137,7 +137,7 @@ test('rendered second tab cannot erase completion protection or let an old succe
     const { useCartStore } = await import('/src/store/cartStore.ts')
     const { mapProduct, mapProductVariant } = await import('/src/services/productionMappers.ts')
     const productId = '45852db8-8b83-425e-8d1f-4112958ed505', variantId = 'b35b3be7-a7dd-4c70-9c14-d1a9394d4711'
-    const product = { ...mapProduct({ id: productId, name: 'Baraan', slug: 'baraan', price: 2900, active: true, status: 'Published' }), variants: [mapProductVariant({ id: variantId, product_id: productId, option_value: '50 ml', regular_price: 2900, sale_price: null, stock_quantity: 12, active: true, available: true })] }
+    const product = { ...mapProduct({ id: productId, name: 'Baraan', slug: 'baraan', commerce_kind: 'standard', price: 2900, active: true, status: 'Published' }), variants: [mapProductVariant({ id: variantId, product_id: productId, option_value: '50 ml', regular_price: 2900, sale_price: null, stock_quantity: 12, active: true, available: true })] }
     useCartStore.getState().clearCart(); useCartStore.getState().addItem(product, variantId, 3)
   })
   const before = (await storedCart(second)).state.items

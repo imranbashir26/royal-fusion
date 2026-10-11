@@ -22,7 +22,7 @@ export class ProductAdminService {
 
   async list({ page, pageSize, search, status }) {
     const client = this.requireClient()
-    let query = client.from('products').select('*', { count: 'exact' })
+    let query = client.from('products').select('*', { count: 'exact' }).in('commerce_kind', ['standard','tester'])
     if (status) query = query.eq('status', status)
     if (search) {
       if (!/^[\p{L}\p{N} _-]+$/u.test(search)) {
@@ -40,17 +40,25 @@ export class ProductAdminService {
   }
 
   async get(id) {
-    const { data, error } = await this.requireClient().from('products').select('*').eq('id', id).maybeSingle()
+    const { data, error } = await this.requireClient().from('products').select('*').eq('id', id).in('commerce_kind', ['standard','tester']).maybeSingle()
     if (error) throw databaseError(error)
     if (!data) throw notFound()
     const { data: variants, error: variantError } = await this.requireClient().from('product_variants')
       .select('*').eq('product_id', id).order('display_order', { ascending: true }).order('id', { ascending: true })
     if (variantError) throw databaseError(variantError)
-    return catalogDto({ product: data, variants: variants ?? [] })
+    const result = catalogDto({ product: data, variants: variants ?? [] })
+    if (data.commerce_kind === 'tester') {
+      const { data: registry, error: registryError } = await this.requireClient().from('tester_variants').select('*').eq('tester_product_id', id).maybeSingle()
+      if (registryError || !registry) throw databaseError(registryError)
+      result.sourceProductId = registry.source_product_id
+      result.testerAvailable = registry.manual_available
+    }
+    return result
   }
 
   async create(input, actor) {
     const client = this.requireClient()
+    if (input.commerceKind === 'tester') return this.saveTester(null, input, actor)
     let operation = 'product.map'
     try {
       const columns = toProductColumns(input)
@@ -86,6 +94,8 @@ export class ProductAdminService {
   async update(id, input, actor) {
     const client = this.requireClient()
     const existing = await this.get(id)
+    if (input.commerceKind && input.commerceKind !== existing.commerceKind) throw new ProductApiError(400, 'INVALID_REQUEST', 'Product kind is immutable.')
+    if (existing.commerceKind === 'tester') return this.saveTester(id, input, actor, existing)
     const columns = toProductColumns(input)
     if (Object.hasOwn(input, 'categoryId')) {
       await this.assignCategory(columns, input.categoryId, existing.categoryId)
@@ -119,11 +129,33 @@ export class ProductAdminService {
     const client = this.requireClient()
     await this.get(id)
     const { data, error } = await client.from('products')
-      .update({ status: 'Archived', active: false }).eq('id', id).select('*').maybeSingle()
+      .update({ status: 'Archived', active: false }).eq('id', id).in('commerce_kind', ['standard','tester']).select('*').maybeSingle()
     if (error) throw databaseError(error)
     if (!data) throw notFound()
     await this.audit('product.archive', id, actor)
     return toProductDto(data)
+  }
+
+  async saveTester(id, input, actor, existing = null) {
+    if (Buffer.byteLength(JSON.stringify(input),'utf8')>32768) throw new ProductApiError(413,'REQUEST_TOO_LARGE','Tester catalog request exceeds 32 KiB.')
+    const columns = toProductColumns(input)
+    await this.assignCategory(columns, Object.hasOwn(input, 'categoryId') ? input.categoryId : existing?.categoryId ?? null, existing?.categoryId ?? null)
+    columns.bottle_size = '5 ml'
+    if (columns.status === 'Published') columns.active = true
+    if (columns.status === 'Archived') columns.active = false
+    if (input.variations?.length || input.variants?.length > 1 || input.bottleSize && input.bottleSize !== '5 ml') throw new ProductApiError(400,'INVALID_REQUEST','Testers require one structured 5 ml variant.')
+    const prior = existing?.variants?.[0]
+    const variant = input.variants?.[0] ?? { ...(prior?.id ? { id: prior.id } : {}), optionName:'Size', optionValue:'5 ml',
+      sku:input.sku ?? prior?.sku, regularPrice:input.price ?? prior?.regularPrice, salePrice:Object.hasOwn(input,'salePrice') ? input.salePrice || null : prior?.salePrice ?? null,
+      stockQuantity:input.stockQuantity ?? prior?.stockQuantity ?? 0, active:prior?.active ?? true,
+      displayOrder:0 }
+    // Tester merchandising intent is independent of the variant's derived stock flag.
+    const manualAvailable = input.testerAvailable ?? input.variants?.[0]?.available ?? existing?.testerAvailable ?? true
+    const {data,error} = await this.requireClient().rpc('save_tester_product', { p_product_id:id,p_patch:columns,p_variant:{...variant,available:manualAvailable},
+      p_source_product_id:Object.hasOwn(input,'sourceProductId') ? input.sourceProductId : existing?.sourceProductId ?? null,
+      p_expected_revision:input.expectedRevision ?? null,p_actor_id:actor.userId,p_request_id:actor.requestId })
+    if(error) throw databaseError(error)
+    return { ...catalogDto(data), sourceProductId:data.tester.source_product_id }
   }
 
   async assignCategory(columns, categoryId, currentCategoryId = null, createActor = null) {
@@ -188,7 +220,8 @@ function normalizedVariants(input) {
 }
 
 function catalogDto(data) {
-  return { ...toProductDto(data.product), variants: data.variants.map((row) => ({
+  const tester = data.product.commerce_kind === 'tester' ? data.variants[0] : null
+  return { ...toProductDto(data.product), ...(tester ? { stockQuantity:tester.stock_quantity, ...(data.tester ? {testerAvailable:data.tester.manual_available} : {}) } : {}), variants: data.variants.map((row) => ({
     id: row.id, optionName: row.option_name, optionValue: row.option_value,
     sku: row.sku, regularPrice: Number(row.regular_price),
     salePrice: row.sale_price == null ? null : Number(row.sale_price),
@@ -198,6 +231,9 @@ function catalogDto(data) {
 }
 
 function databaseError(error) {
+  if (!error) return new ProductApiError(503,'PRODUCT_SERVICE_UNAVAILABLE','Product service is unavailable.')
+  if (error.code === '42501' && error.message === 'TESTER_PERMISSION_DENIED') return new ProductApiError(403,'PERMISSION_DENIED','Product access denied.')
+  if (error.message?.startsWith('TESTER_')) return new ProductApiError(400,'INVALID_REQUEST','Tester catalog fields are invalid.')
   if (error.message === 'CATALOG_STALE') return new ProductApiError(409, 'CATALOG_STALE', 'Catalog changed. Reload the product before saving stock.')
   if (error.code === 'P0002') return notFound()
   if (error.code === '22023') {

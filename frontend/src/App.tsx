@@ -8,6 +8,7 @@ import { Preloader } from './components/animations/Preloader'
 import { Layout } from './components/layout/Layout'
 import { SeoManager } from './components/layout/SeoManager'
 import { StorefrontProvider } from './storefront/StorefrontProvider'
+import { PublicBlogProvider, type BlogIntegration } from './blog/PublicBlogProvider'
 
 const AdminLoginPage = lazy(() => import('./admin/AdminLoginPage').then((module) => ({ default: module.AdminLoginPage })))
 const AdminRoutes = lazy(() => import('./admin/AdminRoutes').then((module) => ({ default: module.AdminRoutes })))
@@ -26,9 +27,9 @@ const ProductDetailsPage = lazy(() => import('./pages/ProductDetailsPage').then(
 const ShopPage = lazy(() => import('./pages/ShopPage').then((module) => ({ default: module.ShopPage })))
 const WishlistPage = lazy(() => import('./pages/WishlistPage').then((module) => ({ default: module.WishlistPage })))
 
-function App() {
+function App({ blogIntegration }: { blogIntegration?: BlogIntegration } = {}) {
   return (
-    <StorefrontProvider>
+    <StorefrontProvider legacyBlogs={blogIntegration?.enabled !== true}>
       <AdminAuthProvider>
         <Routes>
           <Route
@@ -49,14 +50,14 @@ function App() {
               </ProtectedAdminRoute>
             }
           />
-          <Route path="/*" element={<PublicApp />} />
+          <Route path="/*" element={<PublicApp blogIntegration={blogIntegration} />} />
         </Routes>
       </AdminAuthProvider>
     </StorefrontProvider>
   )
 }
 
-function PublicApp() {
+function PublicApp({ blogIntegration }: { blogIntegration?: BlogIntegration }) {
   const [isIntroVisible, setIsIntroVisible] = useState(() => {
     return !window.sessionStorage.getItem('royal-fusion-intro-played')
   })
@@ -67,13 +68,13 @@ function PublicApp() {
   }, [])
 
   return (
-    <Layout>
+    <PublicBlogProvider integration={blogIntegration}><Layout>
       <SeoManager />
       <AnimatedRoutes />
       <AnimatePresence>
         {isIntroVisible && <Preloader onComplete={handleIntroComplete} />}
       </AnimatePresence>
-    </Layout>
+    </Layout></PublicBlogProvider>
   )
 }
 

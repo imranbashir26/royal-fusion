@@ -1,19 +1,9 @@
-import author from './author'
-import banner from './banner'
-import blogCategory from './blogCategory'
-import blogPost from './blogPost'
-import faq from './faq'
-import fragranceGuide from './fragranceGuide'
-import homepage from './homepage'
-import policyPage from './policyPage'
+import author from './author.ts'
+import blogCategory from './blogCategory.ts'
+import blogPost from './blogPost.ts'
 
 export const schemaTypes = [
   author,
-  banner,
   blogCategory,
   blogPost,
-  faq,
-  fragranceGuide,
-  homepage,
-  policyPage,
 ]

@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AdminDashboardPage } from './AdminDashboardPage'
 import { AdminFragranceFinderPage } from './AdminFragranceFinderPage'
+import { AdminTesterPacksPage } from './AdminTesterPacksPage'
 import { AdminLayout } from './AdminLayout'
 import { AdminOrdersPage } from './AdminOrdersPage'
 import { AdminOrderDetailsPage } from './AdminOrderDetailsPage'
@@ -10,6 +11,8 @@ import { AdminNewsletterPage } from './AdminNewsletterPage'
 import { AdminSeoPage } from './AdminSeoPage'
 import { AdminSettingsPage } from './AdminSettingsPage'
 import { AdminUsersPage } from './AdminUsersPage'
+import { AdminContactMessagesPage } from './AdminContactMessagesPage'
+import { AdminCustomersPage, AdminCouponsPage } from './AdminPhase3Pages'
 
 export function AdminRoutes() {
   return (
@@ -17,21 +20,24 @@ export function AdminRoutes() {
       <Route element={<AdminLayout />}>
         <Route index element={<Navigate replace to="dashboard" />} />
         <Route path="dashboard" element={<AdminDashboardPage />} />
+        <Route path="tester-packs" element={<AdminTesterPacksPage />} />
         <Route path="products" element={<AdminResourceManager resource="products" />} />
         <Route path="categories" element={<AdminResourceManager resource="categories" />} />
+        <Route path="collections" element={<AdminResourceManager resource="collections" />} />
         <Route path="fragrance-finder" element={<AdminFragranceFinderPage />} />
         <Route path="orders" element={<AdminOrdersPage />} />
         <Route path="orders/:id" element={<AdminOrderDetailsPage />} />
-        <Route path="customers" element={<AdminResourceManager resource="customers" />} />
-        <Route path="coupons" element={<AdminResourceManager resource="coupons" />} />
+        <Route path="customers" element={<AdminCustomersPage />} />
+        <Route path="coupons" element={<AdminCouponsPage />} />
         <Route path="banners" element={<AdminResourceManager resource="banners" />} />
         <Route path="blogs" element={<AdminResourceManager resource="blogs" />} />
         <Route path="testimonials" element={<AdminResourceManager resource="testimonials" />} />
         <Route path="reviews" element={<AdminReviewsPage />} />
         <Route path="newsletter" element={<AdminNewsletterPage />} />
-        <Route path="contact-messages" element={<AdminResourceManager resource="contact-messages" />} />
+        <Route path="contact-messages" element={<AdminContactMessagesPage />} />
         <Route path="settings" element={<AdminSettingsPage />} />
-        <Route path="seo" element={<AdminSeoPage />} />
+        <Route path="seo" element={<AdminSeoPage key="seo" initialMode="seo" />} />
+        <Route path="editable-pages" element={<AdminSeoPage key="editable-pages" initialMode="editable-pages" />} />
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="*" element={<Navigate replace to="dashboard" />} />
       </Route>

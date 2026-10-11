@@ -9,7 +9,7 @@ import { mapProduct, normalizeProductType } from '../src/services/productionMapp
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const row = {
-  id: 'p1', slug: 'known', name: 'Known', price: 3990, main_image_url: '/known.webp',
+  commerce_kind: 'standard', id: 'p1', slug: 'known', name: 'Known', price: 3990, main_image_url: '/known.webp',
   gender: 'Women', scent_family: 'Floral', category_name: 'For Her', concentration: 'Eau de Parfum',
   is_best_seller: false, is_new_arrival: true, is_featured: true, is_premium: false,
   collection: 'Wrong legacy collection',

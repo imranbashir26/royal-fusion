@@ -72,7 +72,7 @@ export class CheckoutQuoteService {
   }
   async variants(items) {
     const variants = await this.read('product_variants', 'id,product_id,option_value,sku,regular_price,sale_price,stock_quantity,active,available', [['in', 'id', items.map((item) => item.variantId)]])
-    const products = await this.read('products', 'id,status,active', [['in', 'id', [...new Set(variants.map((row) => row.product_id))]]])
+    const products = await this.read('products', 'id,status,active', [['in', 'id', [...new Set(variants.map((row) => row.product_id))]], ['in','commerce_kind',['standard','tester']]])
     return items.map((item) => {
       const variant = variants.find((row) => row.id === item.variantId)
       if (!variant) throw new CheckoutApiError(404, 'VARIANT_NOT_FOUND', 'A selected variant no longer exists.')

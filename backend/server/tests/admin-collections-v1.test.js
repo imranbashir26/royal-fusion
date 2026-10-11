@@ -344,8 +344,8 @@ test('product membership: list products and assign products to collection', asyn
   const p1Id = randomUUID()
   const p2Id = randomUUID()
   api.db.products.push(
-    { id: p1Id, name: 'Perfume 1', slug: 'perfume-1', price: 3990, main_image_url: 'img1.webp', active: true, status: 'Published' },
-    { id: p2Id, name: 'Perfume 2', slug: 'perfume-2', price: 4990, main_image_url: 'img2.webp', active: true, status: 'Published' },
+    { commerce_kind:'standard', id: p1Id, name: 'Perfume 1', slug: 'perfume-1', price: 3990, main_image_url: 'img1.webp', active: true, status: 'Published' },
+    { commerce_kind:'standard', id: p2Id, name: 'Perfume 2', slug: 'perfume-2', price: 4990, main_image_url: 'img2.webp', active: true, status: 'Published' },
   )
 
   // Assign products
@@ -373,7 +373,7 @@ test('one product can belong to multiple collections without a legacy text assig
   const first = await request(api, '', { method: 'POST', actor: 'manager', body: sampleCollection({ name: 'First Edit', slug: 'first-edit' }) })
   const second = await request(api, '', { method: 'POST', actor: 'manager', body: sampleCollection({ name: 'Second Edit', slug: 'second-edit' }) })
   const productId = randomUUID()
-  api.db.products.push({ id: productId, name: 'Shared Scent', slug: 'shared-scent', price: 3990, main_image_url: 'image.webp', active: true, status: 'Published', collection: 'Legacy Label' })
+  api.db.products.push({ commerce_kind:'standard', id: productId, name: 'Shared Scent', slug: 'shared-scent', price: 3990, main_image_url: 'image.webp', active: true, status: 'Published', collection: 'Legacy Label' })
 
   for (const collectionId of [first.body.data.id, second.body.data.id]) {
     const response = await request(api, `/${collectionId}/products`, { method: 'PUT', actor: 'manager', body: { productIds: [productId] } })
@@ -398,6 +398,14 @@ test('collection architecture maintains isolation from prototype files', () => {
 function mockClient(db) {
   return {
     from: (table) => new MockQuery(db, table),
+    async rpc(name,args) {
+      assert.equal(name,'save_normal_collection_products')
+      if(args.p_product_ids.some(id=>!db.products.some(p=>p.id===id&&['standard','tester'].includes(p.commerce_kind))))return {error:{code:'23514'}}
+      db.product_collections=db.product_collections.filter(pc=>pc.collection_id!==args.p_collection_id||!db.products.some(p=>p.id===pc.product_id&&['standard','tester'].includes(p.commerce_kind)))
+      db.product_collections.push(...args.p_product_ids.map((product_id,i)=>({product_id,collection_id:args.p_collection_id,display_order:i+1})))
+      db.audits.push({action:'collection.assign_products',resource_id:args.p_collection_id})
+      return {data:{success:true,count:args.p_product_ids.length},error:null}
+    },
   }
 }
 
@@ -415,6 +423,7 @@ class MockQuery {
     if (opts.count) this.count = opts.count
     return this
   }
+  in(key, values) { this.filters.push(row => key==='products.commerce_kind' ? values.includes(this.db.products.find(p=>p.id===row.product_id)?.commerce_kind) : values.includes(row[key])); return this }
   eq(key, value) {
     this.filters.push((row) => row[key] === value)
     return this

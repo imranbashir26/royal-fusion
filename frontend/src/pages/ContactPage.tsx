@@ -1,6 +1,6 @@
 import { Mail, MapPin, MessageCircle, Phone, Send } from 'lucide-react'
 import type { FormEvent, ReactElement } from 'react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Button } from '../components/common/Button'
 import { PageHeader } from '../components/common/PageHeader'
 import { contactService } from '../services/contactService'
@@ -21,9 +21,15 @@ export function ContactPage() {
   })
   const [status, setStatus] = useState('')
   const [hasError, setHasError] = useState(false)
+  const [sending, setSending] = useState(false)
+  const submissionPending = useRef(false)
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (submissionPending.current) return
+    submissionPending.current = true
+    setSending(true)
+    setStatus('')
     try {
       const response = await contactService.sendMessage(form)
       setStatus(response.message)
@@ -32,6 +38,9 @@ export function ContactPage() {
     } catch {
       setStatus('Your message could not be sent. Please try again later.')
       setHasError(true)
+    } finally {
+      submissionPending.current = false
+      setSending(false)
     }
   }
 
@@ -67,15 +76,21 @@ export function ContactPage() {
         <form
           className="rounded-lg border border-champagne/25 bg-ivory/88 p-6 shadow-xl shadow-brownroyal/10"
           onSubmit={handleSubmit}
+          aria-busy={sending}
         >
           <div className="grid gap-4 md:grid-cols-2">
             <Field
               label="Name"
+              maxLength={80}
+              minLength={2}
+              disabled={sending}
               onChange={(value) => setForm((current) => ({ ...current, name: value }))}
               value={form.name}
             />
             <Field
               label="Phone"
+              maxLength={32}
+              disabled={sending}
               onChange={(value) => setForm((current) => ({ ...current, phone: value }))}
               type="tel"
               value={form.phone}
@@ -84,6 +99,8 @@ export function ContactPage() {
           <Field
             className="mt-4"
             label="Email"
+            maxLength={254}
+            disabled={sending}
             onChange={(value) => setForm((current) => ({ ...current, email: value }))}
             type="email"
             value={form.email}
@@ -94,12 +111,15 @@ export function ContactPage() {
               className="min-h-36 w-full resize-y rounded-lg border border-champagne/35 bg-marble px-4 py-3 text-brownroyal outline-none focus:border-burgundy"
               onChange={(event) => setForm((current) => ({ ...current, message: event.target.value }))}
               required
+              minLength={10}
+              maxLength={4000}
+              disabled={sending}
               value={form.message}
             />
           </label>
-          <Button className="mt-5 w-full sm:w-auto" type="submit">
+          <Button className="mt-5 w-full sm:w-auto" type="submit" disabled={sending}>
             <Send className="h-4 w-4" aria-hidden="true" />
-            Send Message
+            {sending ? 'Sending…' : 'Send Message'}
           </Button>
           {status && <p className={`mt-4 font-semibold ${hasError ? 'text-burgundy' : 'text-oldgold'}`} role={hasError ? 'alert' : 'status'}>{status}</p>}
         </form>
@@ -128,12 +148,18 @@ function Field({
   onChange,
   type = 'text',
   className,
+  maxLength,
+  minLength,
+  disabled,
 }: {
   label: string
   value: string
   onChange: (value: string) => void
   type?: string
   className?: string
+  maxLength: number
+  minLength?: number
+  disabled: boolean
 }) {
   return (
     <label className={className}>
@@ -142,6 +168,9 @@ function Field({
         className="h-12 w-full rounded-full border border-champagne/35 bg-marble px-4 text-brownroyal outline-none focus:border-burgundy"
         onChange={(event) => onChange(event.target.value)}
         required
+        maxLength={maxLength}
+        minLength={minLength}
+        disabled={disabled}
         type={type}
         value={value}
       />

@@ -20,6 +20,15 @@ export function toCollectionPayload(form: Record<string, unknown>): Record<strin
   for (const field of editableCollectionFields) {
     if (Object.hasOwn(form, field)) payload[field] = form[field]
   }
+  for (const field of ['bannerSecureUrl', 'image', 'imageUrl']) {
+    const value = payload[field]
+    if (Array.isArray(value)) {
+      if (value.length > 1 || (value.length === 1 && typeof value[0] !== 'string')) {
+        throw new Error('Select one collection banner image before saving.')
+      }
+      payload[field] = value[0] ?? ''
+    }
+  }
   if (payload.displayOrder !== undefined && payload.displayOrder !== '') {
     payload.displayOrder = Number(payload.displayOrder)
   }
@@ -29,10 +38,13 @@ export function toCollectionPayload(form: Record<string, unknown>): Record<strin
   if (payload.active !== undefined) {
     payload.active = Boolean(payload.active)
   }
-  if (typeof payload.image === 'string' && !payload.bannerSecureUrl) {
+  // The canonical field, including an explicit clear, takes precedence over DTO aliases.
+  if (payload.bannerSecureUrl !== undefined) {
+    delete payload.image
+    delete payload.imageUrl
+  } else if (typeof payload.image === 'string' && payload.image) {
     payload.bannerSecureUrl = payload.image
-  }
-  if (typeof payload.imageUrl === 'string' && !payload.bannerSecureUrl) {
+  } else if (typeof payload.imageUrl === 'string') {
     payload.bannerSecureUrl = payload.imageUrl
   }
   return payload

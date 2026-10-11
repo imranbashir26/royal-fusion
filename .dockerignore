@@ -1,0 +1,47 @@
+# Workspace manifests, package-lock.json, backend source/assets and shared contracts remain included.
+# This file excludes source files only; Belmo must separately withhold runtime secrets from builds.
+.git
+
+# Environment files, credentials and package-registry authentication.
+**/.env
+**/.env.*
+**/.envrc
+**/.npmrc
+**/.netrc
+**/.ssh
+**/.aws
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/credentials.json
+**/service-account*.json
+**/id_rsa*
+**/id_ed25519*
+
+# Install from the root lockfile inside the image, not from local dependencies.
+**/node_modules
+
+# Local build output, caches, logs and test artifacts.
+**/dist
+**/dist-ssr
+**/coverage
+**/.cache
+**/.vite
+**/.turbo
+**/.sanity
+**/.vercel
+**/*.tsbuildinfo
+**/*.log
+**/logs
+**/playwright-report
+**/test-results
+
+# Editor metadata and disposable local backend data.
+.vscode
+.idea
+**/.DS_Store
+**/Thumbs.db
+backend/server/data/db.json
+backend/server/uploads/*
+!backend/server/uploads/.gitkeep

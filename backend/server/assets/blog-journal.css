@@ -1,0 +1,35 @@
+:root { color-scheme: light; font-family: system-ui, sans-serif; color: #30231e; background: #fbf6ec; line-height: 1.7; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+a { color: #7a1632; text-underline-offset: .2em; overflow-wrap: anywhere; }
+a:hover { color: #551326; }
+a:focus-visible { outline: 3px solid #7a1632; outline-offset: 4px; border-radius: 2px; }
+.skip-link { position: absolute; top: -10rem; left: 1rem; z-index: 1; padding: .75rem 1rem; background: #fbf6ec; }
+.skip-link:focus { top: .5rem; }
+.site-header { background: #551326; border-bottom: 3px solid #c89a3d; }
+.site-header nav, .site-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem 2rem; padding: 1rem max(1.25rem, calc((100% - 76rem) / 2)); }
+.site-header a { color: #fbf6ec; padding: .4rem 0; min-height: 44px; }
+.site-header a:first-child { margin-right: auto; font-family: Georgia, serif; font-size: 1.75rem; text-decoration: none; }
+.site-header a:focus-visible { outline-color: #fbf6ec; }
+main { width: min(100% - 2.5rem, 76rem); margin: 3rem auto; min-height: 60vh; }
+h1, h2, h3 { font-family: Georgia, serif; color: #7a1632; line-height: 1.2; overflow-wrap: anywhere; }
+h1 { font-size: clamp(2rem, 6vw, 3.5rem); margin-top: 0; }
+h2 { font-size: 1.75rem; }
+h3 { font-size: 1.4rem; }
+p, li { overflow-wrap: anywhere; }
+main > article { max-width: 52rem; margin-inline: auto; }
+article header > p:first-of-type { font-size: 1.15rem; }
+figure { margin: 1.5rem 0; }
+img { display: block; max-width: 100%; height: auto; border-radius: .5rem; }
+figcaption { padding-top: .5rem; font-size: .9rem; color: #5c4b40; }
+blockquote { margin-inline: 0; padding: .75rem 1.25rem; border-left: 4px solid #c89a3d; background: #f5ead8; }
+pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
+aside { margin-top: 2.5rem; padding: 1.25rem; border: 1px solid #e7d5b9; border-radius: .5rem; }
+section[aria-label="Articles"] { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); gap: 1.5rem; }
+section > article { padding: 1.5rem; border: 1px solid #e7d5b9; border-radius: .5rem; background: #fff; }
+section > article figure { max-width: 40rem; }
+nav[aria-label="Journal pagination"] { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin-block: 2rem; }
+nav[aria-label="Journal pagination"] a { padding: .5rem 1rem; border: 1px solid #7a1632; border-radius: .3rem; min-height: 44px; }
+.site-footer { border-top: 1px solid #e7d5b9; background: #f5ead8; }
+.site-footer a { min-height: 44px; padding: .4rem 0; }
+@media (max-width: 35rem) { main { margin-block: 2rem; } .site-header nav { gap: .5rem 1.25rem; } .site-header a:first-child { flex-basis: 100%; } section > article { padding: 1rem; } }

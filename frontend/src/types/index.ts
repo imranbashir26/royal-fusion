@@ -1,3 +1,5 @@
+import type { BlogIdentity } from '../../../shared/contracts/blogV1'
+
 export type Gender = 'Men' | 'Women' | 'Unisex'
 
 export type ScentFamily =
@@ -37,6 +39,9 @@ export interface ProductVariant {
 }
 
 export interface Product {
+  seoTitle?: string
+  seoDescription?: string
+  commerceKind?: 'standard' | 'tester'
   id: string
   slug: string
   name: string
@@ -74,6 +79,8 @@ export interface Product {
 }
 
 export interface Category {
+  seoTitle?: string
+  seoDescription?: string
   id: string
   name: string
   slug: string
@@ -82,6 +89,8 @@ export interface Category {
 }
 
 export interface Collection {
+  seoTitle?: string
+  seoDescription?: string
   id: string
   name: string
   slug: string
@@ -125,15 +134,13 @@ export interface Review {
   text: string
 }
 
-export interface BlogPost {
-  id: string
-  slug: string
-  title: string
-  excerpt: string
+/** Existing display model; versioned rich article DTOs live in shared/contracts/blogV1. */
+export interface BlogPost extends BlogIdentity {
+  seoTitle?: string
+  seoDescription?: string
   content: string[]
   category: string
   readTime: string
-  publishedAt: string
   image: string
   imageAlt?: string
 }

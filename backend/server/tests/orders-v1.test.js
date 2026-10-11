@@ -22,7 +22,7 @@ export const input = (overrides = {}) => ({ idempotencyKey: randomUUID(), items:
   paymentMethod: 'Cash on Delivery', couponCode: '', ...overrides })
 export function fixtures() {
   return {
-    products: [{ id: productId, name: 'Baraan', active: true, status: 'Published' }],
+    products: [{ commerce_kind:'standard', id: productId, name: 'Baraan', active: true, status: 'Published' }],
     product_variants: [{ id: variantId, product_id: productId, option_value: '50 ml', sku: 'RF-BAR-001', regular_price: 2900, sale_price: null, stock_quantity: 12, active: true, available: true }],
     shipping_methods: [{ id: methodId, base_fee: 250, free_shipping_threshold: 7000, display_order: 0, created_at: '2026-01-01', active: true }],
     shipping_rates: [], site_settings: [{ id: 'site', payments: [{ name: 'Cash on Delivery', active: true }, { name: 'Bank Transfer', active: true }] }],
@@ -56,9 +56,27 @@ export function memoryClient(db = fixtures()) {
   const client = { db, calls, from: (table) => new Query(table), async rpc(name, args) {
     calls.push({ name, args: structuredClone(args) })
     if (client.rpcFailure) return { error: client.rpcFailure }
+    const failure = (message, code = 'P0001') => ({ error: { code, message } })
+    if (args.p_customer_id && db.profiles.find(p => p.id === args.p_customer_id)?.status !== 'Active') return failure('Customer account is unavailable.', '23503')
     let order = db.orders.find((row) => row.idempotency_key === args.p_idempotency_key)
-    if (order) return { data: { id: order.id, idempotent: true } }
-    const quote = await new CheckoutQuoteService(client).quote({ items: args.p_items, shipping: { city: args.p_shipping.city, province: args.p_shipping.province }, email: args.p_contact.email, couponCode: args.p_coupon_code ?? '' }, args.p_customer_id)
+    if (order) {
+      const items = db.order_items.filter(i => i.order_id === order.id).map(i => ({ variantId: i.variant_id, quantity: i.quantity }))
+      if ((order.checkout_version ?? 1) !== 1 || JSON.stringify(items) !== JSON.stringify(args.p_items)
+          || order.customer_id !== args.p_customer_id || order.customer_name !== args.p_contact.name || order.customer_email !== args.p_contact.email
+          || order.customer_phone !== args.p_contact.phone || order.shipping_address !== args.p_shipping.address || order.shipping_city !== args.p_shipping.city
+          || order.shipping_province !== args.p_shipping.province || order.order_notes !== args.p_shipping.notes
+          || order.payment_method !== args.p_payment_method || order.coupon_code !== (args.p_coupon_code ?? '')) return failure('V2_IDEMPOTENCY_CONFLICT')
+      return { data: rpcReceipt(order, true), error: null }
+    }
+    let quote
+    try {
+      quote = await new CheckoutQuoteService(client).quote({ items: args.p_items, shipping: { city: args.p_shipping.city, province: args.p_shipping.province }, email: args.p_contact.email, couponCode: args.p_coupon_code ?? '' }, args.p_customer_id)
+      if (!quote.paymentMethods.includes(args.p_payment_method)) return failure('V1_PAYMENT_UNAVAILABLE')
+    } catch (error) {
+      if (['VARIANT_NOT_FOUND','VARIANT_UNAVAILABLE','OUT_OF_STOCK','INSUFFICIENT_STOCK'].includes(error.code)) return failure('One or more product variants are unavailable.')
+      if (error.code === 'INVALID_COUPON') return failure('Coupon is unavailable.')
+      return failure('V1_CONFIGURATION_UNAVAILABLE')
+    }
     order = { id: randomUUID(), order_number: 'RF-20261002-1234ABCD', customer_id: args.p_customer_id,
       customer_name: args.p_contact.name, customer_email: args.p_contact.email, customer_phone: args.p_contact.phone,
       shipping_address: args.p_shipping.address, shipping_city: args.p_shipping.city, shipping_province: args.p_shipping.province, order_notes: args.p_shipping.notes,
@@ -67,7 +85,7 @@ export function memoryClient(db = fixtures()) {
     db.orders.push(order)
     args.p_items.forEach((item) => { db.order_items.push({ order_id: order.id, variant_id: item.variantId, quantity: item.quantity }); db.product_variants.find((row) => row.id === item.variantId).stock_quantity -= item.quantity })
     if (client.loseResponse) { client.loseResponse = false; throw new Error('Transport failure after commit') }
-    return { data: { id: order.id, idempotent: false }, error: null }
+    return { data: rpcReceipt(order, false), error: null }
   } }
   // Simulate the RPC's advisory serialization; real locking is verified separately.
   const execute = client.rpc.bind(client)
@@ -79,6 +97,11 @@ export function memoryClient(db = fixtures()) {
   }
   return client
 }
+function rpcReceipt(order, idempotent) {
+  return { id:order.id,idempotencyKey:order.idempotency_key.slice(9),orderNumber:order.order_number,status:order.status,
+    paymentStatus:order.payment_status,paymentMethod:order.payment_method,subtotal:order.subtotal,discount:order.discount,
+    shippingFee:order.shipping_fee,total:order.total,currency:order.currency,idempotent }
+}
 const logger = { warn() {} }
 
 test('Baraan request uses exact eight privileged RPC arguments; guest, Bank Transfer and replay', async () => {
@@ -89,10 +112,10 @@ test('Baraan request uses exact eight privileged RPC arguments; guest, Bank Tran
   assert.notEqual(result.id, result.orderNumber)
   assert.deepEqual(client.calls[0], { name: 'create_order_transaction', args: {
     p_idempotency_key: `checkout:${body.idempotencyKey}`, p_items: body.items, p_contact: body.contact, p_shipping: body.shipping,
-    p_payment_method: 'Cash on Delivery', p_coupon_code: null, p_shipping_method_id: methodId, p_customer_id: null,
+    p_payment_method: 'Cash on Delivery', p_coupon_code: null, p_shipping_method_id: null, p_customer_id: null,
   } })
   client.db.product_variants[0].active = false; client.db.product_variants[0].regular_price = 9000
-  assert.equal((await service.create(body)).idempotent, true); assert.equal(client.calls.length, 1)
+  assert.equal((await service.create(body)).idempotent, true); assert.equal(client.calls.length, 2)
   await assert.rejects(service.create({ ...body, shipping: { ...body.shipping, notes: 'changed' } }), { code: 'IDEMPOTENCY_CONFLICT' })
   await assert.rejects(service.create(body, customerId), { code: 'IDEMPOTENCY_CONFLICT' })
   const bank = memoryClient()
@@ -113,6 +136,34 @@ test('strict schema rejects injection, invalid UUID, quantities, methods and agg
   const parsed = parseCheckout(orderRequestSchema, input({ contact: { ...input().contact, email: ' CHECKOUT@EXAMPLE.INVALID ' }, items: [{ variantId, quantity: 2 }, { variantId, quantity: 3 }] }))
   assert.equal(parsed.contact.email, 'checkout@example.invalid'); assert.equal(parsed.items[0].quantity, 5)
 })
+
+test('authoritative receipt is allowlisted; missing, malformed or wrong-token RPC results fail closed', async () => {
+  const body=input(),client=memoryClient(),service=new OrdersV1Service(client,{logger}),receipt=await service.create(body)
+  client.rpc=async()=>({data:{...receipt,idempotent:true,customer_email:'private@example.invalid',quote_snapshot:{secret:'private'}}})
+  const replay=await service.create(body);assert.deepEqual(replay,{...receipt,idempotent:true})
+  // Historical monetary values belong to SQL; the service does not re-price them.
+  client.rpc=async()=>({data:{...receipt,idempotent:true,subtotal:0,discount:0,shippingFee:0,total:0}})
+  assert.equal((await service.create(body)).total,0)
+  for(const change of [()=>null,()=>({id:receipt.id,idempotent:true}),r=>({...r,idempotencyKey:randomUUID()}),
+    r=>({...r,idempotent:'true'}),r=>({...r,total:'NaN'}),r=>({...r,total:-1}),r=>({...r,id:'not-a-uuid'})]){
+    client.rpc=async()=>({data:change(receipt)});await assert.rejects(()=>service.create(body),{code:'CHECKOUT_UNAVAILABLE'})
+  }
+})
+
+test('SQL domain errors are deterministic and redacted; order-number retries retain the same token',async()=>{
+  const body=input(),entries=[],client=memoryClient(),service=new OrdersV1Service(client,{logger:{warn:e=>entries.push(e)}})
+  for(const [message,code,status] of [['V2_IDEMPOTENCY_CONFLICT','IDEMPOTENCY_CONFLICT',409],['V2_IDEMPOTENCY_AMBIGUOUS','IDEMPOTENCY_AMBIGUOUS',409],
+    ['V2_INVALID_REQUEST','INVALID_CHECKOUT_REQUEST',400],['V1_PAYMENT_UNAVAILABLE','INVALID_PAYMENT_METHOD',422],['V1_CONFIGURATION_UNAVAILABLE','CHECKOUT_UNAVAILABLE',503]]){
+    client.rpcFailure={code:'P0001',message};await assert.rejects(()=>service.create(body,null,'domain-request-id'),{code,status})
+  }
+  for(const sqlCode of ['22023','22P02']){client.rpcFailure={code:sqlCode,message:'SECRET SQL Authorization customer@example.invalid'}
+    await assert.rejects(()=>service.create(body,null,'domain-request-id'),e=>e.code==='INVALID_CHECKOUT_REQUEST'&&!/SECRET|Authorization|customer@/.test(e.message))}
+  assert.ok(entries.every(e=>e.requestId==='domain-request-id'));assert.doesNotMatch(JSON.stringify(entries),/SECRET|Authorization|customer@/)
+  const retry=memoryClient(),rpc=retry.rpc.bind(retry),keys=[];let attempts=0
+  retry.rpc=async(name,args)=>{keys.push(args.p_idempotency_key);if(attempts++<2)return {error:{code:'23505',message:'orders_order_number_key'}};return rpc(name,args)}
+  assert.equal((await new OrdersV1Service(retry,{logger}).create(body)).idempotent,false)
+  assert.equal(keys.length,3);assert.equal(new Set(keys).size,1)
+})
 test('lost response, concurrent conflict and safe RPC error mapping', async () => {
   const client = memoryClient(), service = new OrdersV1Service(client, { logger }), body = input()
   client.loseResponse = true
@@ -127,7 +178,7 @@ test('lost response, concurrent conflict and safe RPC error mapping', async () =
     await assert.rejects(new OrdersV1Service(failed, { logger }).create(input()), (error) => error.code === code && !error.message.includes('SECRET'))
   }
 })
-test('variant and operational preflight errors make zero RPC calls', async () => {
+test('new-order commerce rejection comes from RPC; diagnostics preserve public errors', async () => {
   for (const [change, code] of [
     [(db) => { db.product_variants = [] }, 'VARIANT_NOT_FOUND'],
     [(db) => { db.product_variants[0].active = false }, 'VARIANT_UNAVAILABLE'],
@@ -139,7 +190,7 @@ test('variant and operational preflight errors make zero RPC calls', async () =>
     [(db) => { db.site_settings[0].payments[0].active = false }, 'INVALID_PAYMENT_METHOD'],
   ]) {
     const client = memoryClient(); change(client.db)
-    await assert.rejects(new OrdersV1Service(client).create(input()), { code }); assert.equal(client.calls.length, 0)
+    await assert.rejects(new OrdersV1Service(client).create(input()), { code }); assert.equal(client.calls.length, 1)
   }
 })
 
@@ -249,24 +300,20 @@ test('committed replay precedes disabled payment configuration; new token fails 
   assert.equal(replay.id, first.id); assert.equal(replay.idempotent, true); assert.equal(replay.idempotencyKey, body.idempotencyKey)
   await assert.rejects(service.create({ ...body, shipping: { ...body.shipping, notes: 'changed' } }), { code: 'IDEMPOTENCY_CONFLICT' })
   await assert.rejects(service.create({ ...body, idempotencyKey: randomUUID() }), { code: 'INVALID_PAYMENT_METHOD' })
-  assert.equal(client.calls.length, 1)
+  assert.equal(client.calls.length, 4)
 })
-test('payment rejection race rechecks a competing commit and compares matching/conflicting intent', async () => {
+test('SQL decides replay/conflict without service quote or textual read optimizations', async () => {
   for (const changed of [false, true]) {
     const client = memoryClient(), body = input(), first = new OrdersV1Service(client, { logger })
     const quote = new CheckoutQuoteService(client, { logger })
     quote.withRequestId = () => quote
-    const original = quote.quote.bind(quote)
-    quote.quote = async (...args) => {
-      const result = await original(...args)
-      await first.create(body)
-      return { ...result, paymentMethods: ['Bank Transfer'] }
-    }
+    await first.create(body)
+    quote.quote = quote.read = () => assert.fail('Service preflight must not override SQL replay')
     const second = new OrdersV1Service(client, { logger, quoteService: quote })
     const racing = changed ? { ...body, shipping: { ...body.shipping, notes: 'changed' } } : body
     if (changed) await assert.rejects(second.create(racing), { code: 'IDEMPOTENCY_CONFLICT' })
     else assert.equal((await second.create(racing)).idempotent, true)
-    assert.equal(client.calls.length, 1); assert.equal(client.db.orders.length, 1)
+    assert.equal(client.calls.length, 2); assert.equal(client.db.orders.length, 1)
   }
 })
 test('read diagnostics retain only request/operation/subsystem/normalized category', async () => {

@@ -7,9 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node --test tests/adminProductContract.test.mjs tests/adminMediaContract.test.mjs tests/adminCategoryContract.test.mjs tests/adminCollectionContract.test.mjs tests/collectionConsistency.test.mjs tests/catalogNormalization.test.mjs tests/fragranceFinder.test.mjs tests/reviewsIntegration.test.mjs tests/newsletterIntegration.test.mjs tests/settingsIntegration.test.mjs tests/productVariants.test.mjs tests/checkoutIntegration.test.mjs tests/adminOrders.test.mjs tests/customerAuth.test.mjs",
+    "test": "node --test tests/adminProductContract.test.mjs tests/adminMediaContract.test.mjs tests/adminCategoryContract.test.mjs tests/adminCollectionContract.test.mjs tests/collectionConsistency.test.mjs tests/catalogNormalization.test.mjs tests/fragranceFinder.test.mjs tests/reviewsIntegration.test.mjs tests/newsletterIntegration.test.mjs tests/contactIntegration.test.mjs tests/adminPhase3Integration.test.mjs tests/settingsIntegration.test.mjs tests/productVariants.test.mjs tests/checkoutIntegration.test.mjs tests/adminOrders.test.mjs tests/customerAuth.test.mjs tests/testerCatalog.test.mjs tests/checkoutV2Contract.test.mjs tests/blogIntegration.test.mjs",
     "test:settings": "node --test tests/settingsIntegration.test.mjs",
     "test:newsletter": "node --test tests/newsletterIntegration.test.mjs",
+    "test:contact": "node --test tests/contactIntegration.test.mjs",
+    "test:contact:browser": "node --test tests/contactBrowser.test.mjs",
     "test:reviews": "node --test tests/reviewsIntegration.test.mjs",
     "test:admin-categories": "node --test tests/adminCategoryContract.test.mjs",
     "test:admin-collections": "node --test tests/adminCollectionContract.test.mjs",
@@ -23,29 +25,37 @@
     "test:fulfillment": "node --test tests/adminOrders.test.mjs",
     "test:fulfillment:browser": "node --test tests/adminOrdersBrowser.test.mjs",
     "test:auth-transition": "node --test tests/customerAuth.test.mjs",
-    "test:auth:browser": "node --test tests/customerAuthBrowser.test.mjs"
+    "test:auth:browser": "node --test tests/customerAuthBrowser.test.mjs",
+    "test:tester-catalog": "node --test tests/testerCatalog.test.mjs",
+    "test:checkout-v2": "node --test tests/checkoutV2Contract.test.mjs",
+    "test:phase3": "node --test tests/adminPhase3Integration.test.mjs",
+    "test:phase3:browser": "node --test tests/adminPhase3Browser.test.mjs",
+    "test:blogs": "node --test tests/blogIntegration.test.mjs",
+    "test:blogs:browser": "node --test tests/blogBrowser.test.mjs"
   },
   "dependencies": {
+    "@portabletext/react": "8.0.1",
+    "@sanity/image-url": "2.1.1",
     "@sanity/client": "^7.23.0",
     "@supabase/supabase-js": "^2.110.0",
     "@tailwindcss/vite": "^4.3.1",
     "clsx": "^2.1.1",
     "framer-motion": "^12.42.0",
     "lucide-react": "^1.22.0",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "react-router-dom": "^7.18.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-router-dom": "7.18.4",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.1",
-    "zustand": "^5.0.14"
+    "zustand": "5.0.14"
   },
   "devDependencies": {
     "@types/node": "^24.13.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.2",
+    "@vitejs/plugin-react": "6.0.3",
     "oxlint": "^1.69.0",
     "typescript": "~6.0.2",
-    "vite": "^8.1.0"
+    "vite": "8.1.0"
   }
 }

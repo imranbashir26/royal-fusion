@@ -86,7 +86,7 @@ test('mapProduct derives isAttar from category and uses Uncategorized for missin
   assert.equal(isAttarCategory(undefined), false)
 
   // 1. Missing category -> Uncategorized, not Eau de Parfum
-  const uncategorized = mapProduct({
+  const uncategorized = mapProduct({ commerce_kind: 'standard',
     id: 'p1',
     name: 'Mystery Scent',
     slug: 'mystery-scent',
@@ -97,7 +97,7 @@ test('mapProduct derives isAttar from category and uses Uncategorized for missin
   assert.equal(uncategorized.isAttar, false)
 
   // 2. Attar category -> isAttar true even if is_attar was omitted/false
-  const attarProd = mapProduct({
+  const attarProd = mapProduct({ commerce_kind: 'standard',
     id: 'p2',
     name: 'Royal Musk',
     slug: 'royal-musk',
@@ -110,7 +110,7 @@ test('mapProduct derives isAttar from category and uses Uncategorized for missin
   assert.equal(attarProd.isAttar, true)
 
   // 3. Eau de Parfum category -> isAttar false even if is_attar was true
-  const edpProd = mapProduct({
+  const edpProd = mapProduct({ commerce_kind: 'standard',
     id: 'p3',
     name: 'Royal Oud EDP',
     slug: 'royal-oud-edp',
@@ -123,7 +123,7 @@ test('mapProduct derives isAttar from category and uses Uncategorized for missin
   assert.equal(edpProd.isAttar, false)
 
   // 4. Backward compatibility: if category_name is missing, fallback to is_attar
-  const compatAttar = mapProduct({
+  const compatAttar = mapProduct({ commerce_kind: 'standard',
     id: 'p4',
     name: 'Legacy Attar',
     slug: 'legacy-attar',
