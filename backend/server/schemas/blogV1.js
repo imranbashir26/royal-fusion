@@ -2,6 +2,9 @@ import { z } from 'zod'
 
 export const BLOG_MAX_PAGE_SIZE = 50
 export const BLOG_MAX_PAGE = 1000
+// One complete query-sized collection. Larger collections fail, never truncate.
+export const BLOG_SITEMAP_MAX_ARTICLES = BLOG_MAX_PAGE_SIZE
+export const BLOG_SITEMAP_MAX_SOURCE_BYTES = 8 * 1024 * 1024
 /** @type {readonly ['publishedAt desc', '_id asc']} */
 export const BLOG_ORDER = Object.freeze(['publishedAt desc', '_id asc'])
 export const blogSlugSchema = z.string().min(1).max(96).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
@@ -84,3 +87,7 @@ export const blogSourceSummarySchema = z.object({
 }).refine(value => Boolean(value.featuredImage.alt || value.imageAlt))
 export const blogSourceArticleSchema = blogSourceSummarySchema.safeExtend({ body })
 export const blogSourceListSchema = z.object({ documents: z.array(z.unknown()).max(BLOG_MAX_PAGE_SIZE), total: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) })
+export const blogSourceSnapshotSchema = z.object({
+  documents: z.array(z.unknown()).max(BLOG_SITEMAP_MAX_ARTICLES),
+  total: z.number().int().min(0).max(BLOG_SITEMAP_MAX_ARTICLES),
+}).refine(value => value.documents.length === value.total)

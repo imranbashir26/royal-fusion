@@ -5,6 +5,15 @@ export class BlogV1Service {
   /** @param {import('../../../shared/contracts/blogV1.js').BlogRepository} repository */
   constructor(repository) { this.repository = repository }
 
+  /** Complete published collection for isolated sitemap generation only.
+   * @returns {Promise<import('../../../shared/contracts/blogV1.js').BlogArticle[]>} */
+  async snapshotArticles() {
+    try {
+      if (!this.repository.snapshotArticles) throw new BlogApiError('BLOGS_UNAVAILABLE')
+      return await this.repository.snapshotArticles()
+    } catch (error) { throw safeError(error) }
+  }
+
   /** @param {import('../../../shared/contracts/blogV1.js').BlogListInput} [input]
    * @returns {Promise<import('../../../shared/contracts/blogV1.js').BlogListResponse>} */
   async list(input = {}) {

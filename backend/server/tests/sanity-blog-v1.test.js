@@ -223,9 +223,9 @@ test('private raw fields and SDK metadata never enter summary/detail responses',
   post.body[0].children[0].secret = 'PRIVATE_FIXTURE_SPAN_TOKEN'
   post.body[2].markDefs[0].token = 'PRIVATE_FIXTURE_MARK_TOKEN'
   const state = fixture(documents)
-  const text = JSON.stringify([await state.service.list(), await state.service.getBySlug('fragrance-journal')])
+  const text = JSON.stringify([await state.service.list(), await state.service.getBySlug('fragrance-journal'), await state.service.snapshotArticles()])
   assert.equal(/PRIVATE_FIXTURE|private@example|_slugMatchCount|"status"/.test(text), false)
-  assert.deepEqual(Object.keys(state.source).sort(), ['getPublishedBySlug', 'listPublished'])
+  assert.deepEqual(Object.keys(state.source).sort(), ['getPublishedBySlug', 'listPublished', 'snapshotPublished'])
 })
 
 test('malformed content is unavailable rather than repaired, flattened or silently omitted', async () => {

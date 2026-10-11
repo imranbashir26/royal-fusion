@@ -1,9 +1,9 @@
 import { createClient } from '@sanity/client'
 import { createBlogSanityConfig } from '../config/blogSanity.js'
-import { BLOG_MAX_PAGE, BLOG_MAX_PAGE_SIZE, BLOG_ORDER, blogSlugSchema, blogSourceListSchema } from '../schemas/blogV1.js'
+import { BLOG_MAX_PAGE, BLOG_MAX_PAGE_SIZE, BLOG_ORDER, blogSlugSchema, blogSourceListSchema, blogSourceSnapshotSchema } from '../schemas/blogV1.js'
 import { BlogApiError, BlogRepository } from './blogRepository.js'
 import { BlogV1Service } from './blogV1Service.js'
-import { SANITY_BLOG_DETAIL_QUERY, SANITY_BLOG_LIST_QUERY } from './sanityBlogQueries.js'
+import { SANITY_BLOG_DETAIL_QUERY, SANITY_BLOG_LIST_QUERY, SANITY_BLOG_SNAPSHOT_QUERY } from './sanityBlogQueries.js'
 
 /** @typedef {{fetch(query: string, params: Record<string, string | number>, options: {perspective: 'published', useCdn: false, signal: AbortSignal, stega: false, resultSourceMap: false}): Promise<unknown>}} BlogReadClient */
 
@@ -35,6 +35,11 @@ export function createSanityBlogSource({ client, timeoutMs = 5000 }) {
     finally { clearTimeout(timer) }
   }
   return Object.freeze({
+    async snapshotPublished() {
+      try {
+        return blogSourceSnapshotSchema.parse(await fetchPublished(SANITY_BLOG_SNAPSHOT_QUERY, {}))
+      } catch { throw new BlogApiError('BLOGS_UNAVAILABLE') }
+    },
     /** @param {Parameters<import('../../../shared/contracts/blogV1.js').BlogSource['listPublished']>[0]} input */
     async listPublished({ offset, limit, order }) {
       if (!Number.isInteger(offset) || offset < 0 || offset > (BLOG_MAX_PAGE - 1) * BLOG_MAX_PAGE_SIZE

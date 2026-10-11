@@ -51,11 +51,15 @@ export interface BlogListResult { items: BlogSummary[]; pagination: BlogPaginati
 export interface BlogRepository {
   list(input?: BlogListInput): Promise<BlogListResult>
   getBySlug(slug: string): Promise<BlogArticle | null>
+  /** Complete bounded published read; absence means sitemap enumeration is unavailable. */
+  snapshotArticles?(): Promise<BlogArticle[]>
 }
 /** An eventual published-perspective adapter must page and count before returning results. */
 export interface BlogSource {
   listPublished(input: { offset: number; limit: number; order: readonly ['publishedAt desc', '_id asc'] }): Promise<{ documents: unknown[]; total: number }>
   getPublishedBySlug(slug: string): Promise<unknown | null>
+  /** Count and full documents from one query, never a stitched set of mutable pages. */
+  snapshotPublished?(): Promise<{ documents: unknown[]; total: number }>
 }
 export interface BlogListResponse { data: BlogSummary[]; pagination: BlogPagination }
 export interface BlogDetailResponse { data: BlogArticle }

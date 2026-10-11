@@ -1,4 +1,4 @@
-import { BLOG_ORDER, blogListInputSchema, blogSlugSchema, blogSourceArticleSchema, blogSourceListSchema, blogSourceSummarySchema } from '../schemas/blogV1.js'
+import { BLOG_ORDER, BLOG_SITEMAP_MAX_SOURCE_BYTES, blogListInputSchema, blogSlugSchema, blogSourceArticleSchema, blogSourceListSchema, blogSourceSnapshotSchema, blogSourceSummarySchema } from '../schemas/blogV1.js'
 
 /** @typedef {import('zod').infer<typeof blogSourceSummarySchema>} SourceSummary */
 
@@ -59,12 +59,31 @@ export class BlogRepository {
       if (value === null) return null
       const document = blogSourceArticleSchema.parse(value)
       if (document.slug.current !== slug) throw new Error()
-      return {
-        ...this.#summary(document),
-        body: document.body.map(node => node._type === 'image'
-          ? { _type: 'image', _key: node._key, ...image(node) } : node),
-      }
+      return this.#article(document)
     } catch { throw new BlogApiError('BLOGS_UNAVAILABLE') }
+  }
+
+  /** No listing/detail fan-out: validate one complete published snapshot.
+   * @returns {Promise<import('../../../shared/contracts/blogV1.js').BlogArticle[]>} */
+  async snapshotArticles() {
+    try {
+      if (!this.source?.snapshotPublished) throw new Error()
+      const raw = await this.source.snapshotPublished()
+      if (Buffer.byteLength(JSON.stringify(raw)) > BLOG_SITEMAP_MAX_SOURCE_BYTES) throw new Error()
+      const snapshot = blogSourceSnapshotSchema.parse(raw)
+      const documents = snapshot.documents.map(value => blogSourceArticleSchema.parse(value))
+      if (new Set(documents.map(row => row._id)).size !== documents.length
+        || new Set(documents.map(row => row.slug.current)).size !== documents.length
+        || documents.some((row, index) => index > 0 && compareArticles(documents[index - 1], row) > 0)) throw new Error()
+      return documents.map(document => this.#article(document))
+    } catch { throw new BlogApiError('BLOGS_UNAVAILABLE') }
+  }
+
+  /** @param {import('zod').infer<typeof blogSourceArticleSchema>} document
+   * @returns {import('../../../shared/contracts/blogV1.js').BlogArticle} */
+  #article(document) {
+    return { ...this.#summary(document), body: document.body.map(node => node._type === 'image'
+      ? { _type: 'image', _key: node._key, ...image(node) } : node) }
   }
 
   /** @param {SourceSummary} document

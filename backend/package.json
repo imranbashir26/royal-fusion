@@ -39,7 +39,8 @@
     "test:blogs": "node --test --test-concurrency=1 server/tests/blog-activation.test.js server/tests/blog-domain.test.js server/tests/sanity-blog-v1.test.js",
     "test:dependency-security": "node --test server/tests/dependency-security.test.js",
     "test:blog-adapter": "node --test server/tests/sanity-blog-v1.test.js",
-    "test:blog-html": "node --test server/tests/blog-html.test.js"
+    "test:blog-html": "node --test server/tests/blog-html.test.js",
+    "test:blog-sitemap": "node --test server/tests/blog-sitemap.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.8",
