@@ -58,11 +58,13 @@ function canonical(value: unknown, slug: string, configuration: PublicBlogConfig
 }
 function summary(value: unknown, configuration: PublicBlogConfiguration): BlogSummary {
   const row = record(value), author = record(row.author), category = record(row.category), seo = record(row.seo)
+  const readTime = row.readTime == null ? undefined : text(row.readTime, 80, true).trim()
   if (!isPublicBlogSlug(row.slug) || !isPublicBlogSlug(category.slug) || typeof seo.noIndex !== 'boolean'
     || !Array.isArray(row.tags) || row.tags.length > 30) throw new PublicBlogError('unavailable')
   return {
     id: identity(row.id), slug: row.slug, title: text(row.title, 120), excerpt: text(row.excerpt, 240),
     publishedAt: date(row.publishedAt), updatedAt: date(row.updatedAt),
+    ...(readTime ? { readTime } : {}),
     author: { id: identity(author.id), name: text(author.name, 100), bio: nullableText(author.bio, 1000) },
     category: { id: identity(category.id), title: text(category.title, 80), slug: category.slug, description: nullableText(category.description, 1000) },
     featuredImage: projectBlogImage(row.featuredImage, configuration), tags: row.tags.map(tag => text(tag, 80)),

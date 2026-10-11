@@ -38,6 +38,8 @@ export interface BlogSeo {
 }
 export interface BlogSummary extends BlogIdentity {
   updatedAt: string
+  /** Optional editorial text; never an estimated duration. */
+  readTime?: string
   author: BlogAuthor
   category: BlogCategory
   featuredImage: BlogImage

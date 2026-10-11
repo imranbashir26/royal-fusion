@@ -78,6 +78,7 @@ const canonical = z.url().max(2048).refine(value => {
 export const blogSourceSummarySchema = z.object({
   _id: publishedId, _type: z.literal('blogPost'), title: text(120), slug: z.object({ current: blogSlugSchema }),
   excerpt: text(240), publishedAt: date, _updatedAt: date,
+  readTime: z.string().max(80).trim().nullish(),
   author: z.object({ _id: publishedId, _type: z.literal('author'), name: text(100), bio: z.string().max(1000).nullish() }),
   category: z.object({ _id: publishedId, _type: z.literal('blogCategory'), title: text(80), slug: z.object({ current: blogSlugSchema }), description: z.string().max(1000).nullish() }),
   featuredImage: sourceImage, imageAlt: text(160).optional(),

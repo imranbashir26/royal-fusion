@@ -161,6 +161,52 @@ test('real missing optional fields map into existing defaults and historical fea
   assert.deepEqual(data.body[0].markDefs, [])
 })
 
+test('editorial reading time survives native queries, JSON list/detail and complete snapshots without estimation', async t => {
+  const documents = makeSanityBlogDocuments()
+  documents.find(row => row._id === 'post-a').readTime = '4 Minutes'
+  const state = fixture(documents), base = await start(t, state.service)
+  const list = await (await fetch(base)).json(), detail = await (await fetch(`${base}/fragrance-journal`)).json()
+  assert.equal(list.data.find(row => row.id === 'post-a').readTime, '4 Minutes')
+  assert.equal(detail.data.readTime, '4 Minutes')
+  assert.equal((await state.service.snapshotArticles()).find(row => row.id === 'post-a').readTime, '4 Minutes')
+  assert.equal(detail.data.publishedAt, '2026-10-08T12:00:00.000Z')
+  assert.equal(list.data.some(row => 'body' in row), false)
+  assert.ok(state.calls.every(call => call.options.perspective === 'published'))
+})
+
+test('missing, null and blank reading time keep old DTOs unchanged; editorial text is bounded and trimmed', async () => {
+  const baseline = (await fixture().service.getBySlug('fragrance-journal')).data
+  for (const value of [undefined, null, '', '   ']) {
+    const documents = makeSanityBlogDocuments()
+    documents.find(row => row._id === 'post-a').readTime = value
+    const state = fixture(documents), detail = (await state.service.getBySlug('fragrance-journal')).data
+    assert.deepEqual(detail, baseline)
+    assert.equal('readTime' in (await state.service.list()).data.find(row => row.id === 'post-a'), false)
+  }
+  for (const [value, expected] of [[' 4 Minutes ', '4 Minutes'], ['x'.repeat(80), 'x'.repeat(80)]]) {
+    const documents = makeSanityBlogDocuments()
+    documents.find(row => row._id === 'post-a').readTime = value
+    assert.equal((await fixture(documents).service.getBySlug('fragrance-journal')).data.readTime, expected)
+  }
+})
+
+test('malformed and overlong reading time fail safely in native list/detail/snapshot and HTTP responses', async t => {
+  for (const value of [4, false, [], { text: 'PRIVATE_READING_TIME' }, 'x'.repeat(81)]) {
+    const documents = makeSanityBlogDocuments()
+    documents.find(row => row._id === 'post-a').readTime = value
+    const state = fixture(documents)
+    await assert.rejects(state.service.list(), unavailable)
+    await assert.rejects(state.service.getBySlug('fragrance-journal'), unavailable)
+    await assert.rejects(state.service.snapshotArticles(), unavailable)
+  }
+  const documents = makeSanityBlogDocuments()
+  documents.find(row => row._id === 'post-a').readTime = { secret: 'PRIVATE_READING_TIME' }
+  const base = await start(t, fixture(documents).service)
+  const response = await fetch(`${base}/fragrance-journal`)
+  assert.equal(response.status, 503)
+  assert.doesNotMatch(await response.text(), /PRIVATE_READING_TIME|secret|stack/)
+})
+
 test('OG image geometry/alt and canonical/noIndex metadata survive their approved projections', async () => {
   const documents = makeSanityBlogDocuments(), post = documents.find(value => value._id === 'post-a')
   post.ogImage = structuredClone(post.featuredImage)

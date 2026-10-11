@@ -33,6 +33,7 @@ function PublicBlogDetailsPage() {
       <div className="mt-6 flex flex-wrap items-center gap-4 text-sm text-brownroyal/65">
         <span className="inline-flex items-center gap-2"><CalendarDays aria-hidden="true" className="h-4 w-4" /><time dateTime={blog.publishedAt}>{new Date(blog.publishedAt).toLocaleDateString('en-PK', { month: 'long', day: 'numeric', year: 'numeric' })}</time></span>
         <span>By {blog.author.name}</span>
+        {blog.readTime && <span>{blog.readTime}</span>}
       </div>
     </PageHeader>
     <article className="container-lux grid gap-10 py-12 md:py-16 lg:grid-cols-[1fr_320px]">

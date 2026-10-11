@@ -57,7 +57,7 @@ export function createBlogHtmlRenderer({ canonicalOrigin, projectId = '6n1y88j4'
     for (const value of rows) {
       const row = record(value), author = record(row.author), category = record(row.category), seo = record(row.seo)
       for (const field of [row.title, row.excerpt, author.name, author.bio, category.title, category.description,
-        seo.title, seo.description, seo.canonicalUrl]) count(field)
+        seo.title, seo.description, seo.canonicalUrl, row.readTime]) count(field)
       if (Array.isArray(row.tags)) {
         if (row.tags.length > 30) throw invalid()
         for (const tag of row.tags) count(tag)
@@ -90,7 +90,7 @@ export function createBlogHtmlRenderer({ canonicalOrigin, projectId = '6n1y88j4'
     const ogImage = seo.ogImage === null ? null : projectBlogHtmlImage(seo.ogImage, configuration)
     // Reuse the existing source contract for field validation, not a second publication model.
     const source = blogSourceSummarySchema.parse({ _id: row.id, _type: 'blogPost', title: row.title, slug: { current: row.slug },
-      excerpt: row.excerpt, publishedAt: row.publishedAt, _updatedAt: row.updatedAt,
+      excerpt: row.excerpt, publishedAt: row.publishedAt, _updatedAt: row.updatedAt, readTime: row.readTime,
       author: { _id: author.id, _type: 'author', name: author.name, bio: author.bio },
       category: { _id: category.id, _type: 'blogCategory', title: category.title, slug: { current: category.slug }, description: category.description },
       featuredImage: sourceImage(featuredImage), tags: row.tags, seoTitle: seo.title, seoDescription: seo.description,
@@ -185,7 +185,7 @@ export function createBlogHtmlRenderer({ canonicalOrigin, projectId = '6n1y88j4'
       return bounded(document({ title: source.seoTitle || source.title, description: source.seoDescription || source.excerpt,
         canonical: projected.canonical, robots: source.noIndex ? 'noindex,follow' : 'index,follow', ogType: 'article',
         ogImage: projected.ogImage || projected.featuredImage, publishedAt: source.publishedAt, updatedAt: source._updatedAt },
-      `<article><header><h1>${escapeText(source.title)}</h1><p>${escapeText(source.excerpt)}</p><p>By ${escapeText(source.author.name)} · ${escapeText(source.category.title)}</p>${dates(source)}</header>${image(projected.featuredImage, 1200, undefined, true)}<div>${content}</div>${source.author.bio ? `<aside aria-label="About the author"><h2>About ${escapeText(source.author.name)}</h2><p>${escapeText(source.author.bio)}</p></aside>` : ''}</article>`))
+      `<article><header><h1>${escapeText(source.title)}</h1><p>${escapeText(source.excerpt)}</p><p>By ${escapeText(source.author.name)} · ${escapeText(source.category.title)}</p>${dates(source)}${source.readTime ? `<p>${escapeText(source.readTime)}</p>` : ''}</header>${image(projected.featuredImage, 1200, undefined, true)}<div>${content}</div>${source.author.bio ? `<aside aria-label="About the author"><h2>About ${escapeText(source.author.name)}</h2><p>${escapeText(source.author.bio)}</p></aside>` : ''}</article>`))
     },
     /** @param {number} status */
     renderError(status) {

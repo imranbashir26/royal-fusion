@@ -121,6 +121,42 @@ test('article metadata uses approved canonicals, SEO overrides, OG fallback and 
   assert.doesNotMatch(html, /evil.example|PRIVATE_FIXTURE/)
 })
 
+test('article HTML displays editorial reading time once and leaves dates, SEO and absent-value documents unchanged', async t => {
+  const baseline = await fixture().service.getBySlug('fragrance-journal')
+  const renderer = createBlogHtmlRenderer({ canonicalOrigin })
+  for (const value of [undefined, null, '', '   ']) {
+    const article = structuredClone(baseline)
+    article.data.readTime = value
+    assert.deepEqual(renderer.renderArticle(article), renderer.renderArticle(baseline))
+  }
+  const state = fixture(documents => { documents.find(row => row._id === 'post-a').readTime = '4 Minutes' })
+  const { base } = await start(t, { state })
+  const response = await fetch(`${base}/blogs/fragrance-journal`), html = await response.text()
+  assert.equal(response.status, 200)
+  assert.match(html, /<header>[\s\S]*<p>4 Minutes<\/p><\/header>/)
+  assert.equal((html.match(/4 Minutes/g) || []).length, 1)
+  assert.doesNotMatch(html, /4 Minutes min read/)
+  assert.match(html, /<title>Fragrance advice<\/title>/)
+  assert.match(html, /datetime="2026-10-08T12:00:00\.000Z"/)
+  assert.match(html, /rel="canonical" href="https:\/\/shop\.example\.invalid\/blogs\/fragrance-journal"/)
+})
+
+test('reading time is escaped plain text and invalid DTO values cannot reach successful article HTML', async t => {
+  const payload = '<img src=x onerror=alert(1)>'
+  const state = fixture(documents => { documents.find(row => row._id === 'post-a').readTime = payload })
+  const { base } = await start(t, { state })
+  const response = await fetch(`${base}/blogs/fragrance-journal`), html = await response.text()
+  assert.equal(response.status, 200)
+  assert.match(html, /<p>&lt;img src=x onerror=alert\(1\)&gt;<\/p>/)
+  assert.doesNotMatch(html, /<img src=x/)
+  const baseline = await fixture().service.getBySlug('fragrance-journal')
+  for (const readTime of [4, false, [], {}, 'x'.repeat(81)]) {
+    const article = structuredClone(baseline)
+    article.data.readTime = readTime
+    assert.throws(() => createBlogHtmlRenderer({ canonicalOrigin }).renderArticle(article))
+  }
+})
+
 test('SEO fallbacks, editorial noindex and distinct OG image are preserved', async t => {
   const state = fixture(documents => {
     const post = documents.find(row => row._id === 'post-a')

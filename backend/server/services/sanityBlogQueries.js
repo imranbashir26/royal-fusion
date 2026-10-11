@@ -10,7 +10,7 @@ const image = /* groq */ `
   crop{top, bottom, left, right}, hotspot{x, y, width, height}, caption
 `
 const summary = /* groq */ `
-  _id, _type, title, slug{current}, excerpt, publishedAt, _updatedAt,
+  _id, _type, title, slug{current}, excerpt, publishedAt, _updatedAt, readTime,
   author->{_type == "author" && ${published} => {_id, _type, name, bio}},
   category->{_type == "blogCategory" && ${published} => {_id, _type, title, slug{current}, description}},
   featuredImage{${image}}, defined(imageAlt) => {imageAlt}, tags,

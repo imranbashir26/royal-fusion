@@ -118,6 +118,40 @@ test('detail retrieval is independent of listings and preserves editorial struct
   assert.equal(output.data.featuredImage.alt, 'Fragrance journal editorial photograph')
   assert.equal(/PRIVATE|private@example/.test(JSON.stringify(output)), false)
 })
+
+test('public list/detail projection preserves optional editorial reading time without changing old DTOs or SEO', async () => {
+  const state = blogFixture()
+  state.records.find(row => row._id === 'post-a').readTime = '4 Minutes'
+  const source = client(fixtureFetch(state.service)), detail = await source.getBySlug('fragrance-journal')
+  assert.equal(detail.data.readTime, '4 Minutes')
+  assert.equal((await source.list()).data.find(row => row.id === 'post-a').readTime, '4 Minutes')
+  const baseline = await client().getBySlug('fragrance-journal')
+  assert.deepEqual(detail.data.seo, baseline.data.seo)
+  assert.equal(detail.data.publishedAt, baseline.data.publishedAt)
+  for (const value of [undefined, null, '', '   ']) {
+    const response = structuredClone(baseline)
+    response.data.readTime = value
+    assert.deepEqual(await client(async () => Response.json(response)).getBySlug('fragrance-journal'), baseline)
+  }
+  const response = structuredClone(baseline)
+  response.data.readTime = ' 4 Minutes '
+  assert.equal((await client(async () => Response.json(response)).getBySlug('fragrance-journal')).data.readTime, '4 Minutes')
+})
+
+test('malformed or excessively long reading time is unavailable rather than coerced, while markup remains plain text', async () => {
+  const detail = await blogFixture().service.getBySlug('fragrance-journal'), list = await blogFixture().service.list()
+  for (const readTime of [4, false, [], { secret: 'PRIVATE_READING_TIME' }, 'x'.repeat(81)]) {
+    const badDetail = structuredClone(detail), badList = structuredClone(list)
+    badDetail.data.readTime = readTime; badList.data[0].readTime = readTime
+    await assert.rejects(client(async () => Response.json(badDetail)).getBySlug('fragrance-journal'), failure('unavailable'))
+    await assert.rejects(client(async () => Response.json(badList)).list(), failure('unavailable'))
+  }
+  for (const readTime of ['x'.repeat(80), '<script>alert(1)</script>']) {
+    const response = structuredClone(detail)
+    response.data.readTime = readTime
+    assert.equal((await client(async () => Response.json(response)).getBySlug('fragrance-journal')).data.readTime, readTime)
+  }
+})
 test('invalid pagination, unknown/duplicate queries and slugs are rejected before fetching', async () => {
   let calls = 0; const source = client(async () => { calls++; throw new Error('Unexpected request') })
   for (const input of [null, [], { page: null }, { pageSize: null }, { page: 0 }, { page: 1001 }, { pageSize: 51 }, { page: '01' }, { page: '1e2' }, { page: 1.5 }, { extra: true }]) await assert.rejects(source.list(input), failure('invalid'))

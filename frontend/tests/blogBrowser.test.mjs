@@ -14,6 +14,34 @@ test('disabled-by-default storefront retains historical pages and sends no new A
   assert.ok(await page.evaluate(() => window.__legacyBlogReads > 0))
 })
 
+test('native React article preserves editorial reading time and omits it after navigation to an older article', async t => {
+  const { page, state } = await blogPage(t)
+  state.fixture.records.find(row => row._id === 'post-a').readTime = '4 Minutes'
+  await page.goto(`${origin}/blogs/fragrance-journal`)
+  await page.getByRole('heading', { name: 'Fragrance journal', exact: true, level: 1 }).waitFor()
+  assert.equal(await page.getByText('4 Minutes', { exact: true }).count(), 1)
+  assert.equal(await page.getByText('4 Minutes min read', { exact: true }).count(), 0)
+  assert.equal(await page.locator('main time').getAttribute('datetime'), '2026-10-08T12:00:00.000Z')
+  await page.waitForFunction(() => document.title === 'Fragrance advice')
+  assert.equal(await page.title(), 'Fragrance advice')
+  assert.equal(await page.locator('link[rel="canonical"]').getAttribute('href'), `${canonicalOrigin}/blogs/fragrance-journal`)
+  await page.getByRole('link', { name: 'Fixture second article', exact: true }).click()
+  await page.getByRole('heading', { name: 'Second fragrance story', exact: true, level: 1 }).waitFor()
+  assert.equal(await page.getByText('4 Minutes', { exact: true }).count(), 0)
+  assert.equal(await page.locator('main time').count(), 1)
+})
+
+test('native React reading time displays markup literally without executable elements', async t => {
+  const payload = '<img src=x onerror=window.PRIVATE_EXECUTION=1>'
+  const { page, state } = await blogPage(t)
+  state.fixture.records.find(row => row._id === 'post-a').readTime = payload
+  await page.goto(`${origin}/blogs/fragrance-journal`)
+  await page.getByRole('heading', { name: 'Fragrance journal', exact: true, level: 1 }).waitFor()
+  assert.equal(await page.getByText(payload, { exact: true }).count(), 1)
+  assert.equal(await page.locator('main [onerror], main img[src="x"]').count(), 0)
+  assert.equal(await page.evaluate(() => window.PRIVATE_EXECUTION), undefined)
+})
+
 test('explicit activation constructs one client across Strict Mode, rerenders and independent detail navigation', async t => {
   const { page } = await blogPage(t)
   await page.goto(`${origin}/blogs`)

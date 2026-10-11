@@ -20,6 +20,21 @@ test('server article and SEO are readable with JavaScript disabled and no applic
   assert.ok(state.images.length > 0)
 })
 
+test('HTML article reading time remains exact, optional and escaped with JavaScript disabled', async t => {
+  for (const readTime of ['4 Minutes', undefined, '<img src=x onerror=alert(1)>']) {
+    const { page } = await withHtmlPage(t, { change(documents) { documents.find(row => row._id === 'post-a').readTime = readTime } })
+    const response = await page.goto(`${origin}/blogs/fragrance-journal`)
+    assert.equal(response.status(), 200)
+    assert.equal(await page.title(), 'Fragrance advice')
+    const header = page.locator('main article header')
+    if (readTime) assert.equal(await header.getByText(readTime, { exact: true }).count(), 1)
+    else assert.equal(await header.locator('p').count(), 3)
+    assert.equal(await header.getByText('4 Minutes min read', { exact: true }).count(), 0)
+    assert.equal(await page.locator('script, [onerror], img[src="x"]').count(), 0)
+    assert.equal(await page.locator('link[rel="canonical"]').getAttribute('href'), `${canonicalOrigin}/blogs/fragrance-journal`)
+  }
+})
+
 test('plain HTML pagination links reach independently canonicalized pages without JavaScript', async t => {
   const { page } = await withHtmlPage(t)
   await page.goto(`${origin}/blogs?pageSize=2`)

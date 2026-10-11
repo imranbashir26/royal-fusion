@@ -96,6 +96,7 @@ export class BlogRepository {
     return {
       id: document._id, slug: document.slug.current, title: document.title, excerpt: document.excerpt,
       publishedAt: new Date(document.publishedAt).toISOString(), updatedAt: new Date(document._updatedAt).toISOString(),
+      ...(document.readTime ? { readTime: document.readTime } : {}),
       author: { id: document.author._id, name: document.author.name, bio: document.author.bio ?? null },
       category: { id: document.category._id, title: document.category.title, slug: document.category.slug.current, description: document.category.description ?? null },
       featuredImage: image(document.featuredImage, document.imageAlt), tags: document.tags ?? [],
