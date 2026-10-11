@@ -58,7 +58,7 @@ test('enabled listing paginates real fixture summaries and never uses legacy blo
   assert.deepEqual(await page.locator('main article h3').allTextContents(), ['Second fragrance story', 'Oldest fragrance story'])
   assert.ok(state.requests.some(row => row.path.includes('page=2&pageSize=2')))
   assert.ok(state.requests.every(row => !row.headers.cookie && !row.headers.authorization && !row.headers['x-rf-csrf']))
-  assert.equal(await page.locator('link[rel="canonical"]').getAttribute('href'), `${canonicalOrigin}/blogs`)
+  assert.equal(await page.locator('link[rel="canonical"]').getAttribute('href'), `${canonicalOrigin}/blogs?page=2&pageSize=2`)
 })
 test('independent article detail preserves Portable Text, references, media and safe client metadata', async t => {
   const { page, state } = await blogPage(t)
@@ -96,7 +96,7 @@ test('empty, missing and invalid articles have distinct states and safe canonica
   await page.goto(`${origin}/blogs/Upper`)
   await page.getByRole('heading', { name: 'Invalid journal address', exact: true }).waitFor()
   assert.equal(state.requests.some(row => row.path.endsWith('/Upper')), false)
-  assert.equal(await page.locator('link[rel="canonical"]').getAttribute('href'), `${canonicalOrigin}/blogs`)
+  assert.equal(await page.locator('link[rel="canonical"]').count(), 0)
   state.fixture.records.splice(0)
   await page.goto(`${origin}/blogs`)
   await page.getByRole('heading', { name: 'New fragrance stories are coming soon', exact: true }).waitFor()

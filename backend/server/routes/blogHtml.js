@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { readFileSync } from 'node:fs'
 import { blogListInputSchema, blogSlugSchema } from '../schemas/blogV1.js'
 import { BlogApiError } from '../services/blogRepository.js'
 import { createBlogHtmlRenderer } from '../services/blogHtmlRenderer.js'
@@ -25,6 +26,14 @@ export function createPublicBlogHtmlRouter({ service, canonicalOrigin, limits, l
     res.set({ Allow: 'GET, HEAD, OPTIONS', 'Cache-Control': 'no-store' })
     if (req.method === 'OPTIONS') return res.status(204).end()
     return send(req, res, 405, renderer.renderError(405))
+  })
+  // One fixed asset, anchored to this module; no user-controlled filesystem path.
+  const stylesheet = readFileSync(new URL('../assets/blog-journal.css', import.meta.url), 'utf8')
+  router.get('/_assets/journal.css', (req, res, next) => {
+    if (Object.keys(req.query).length) return next(new BlogApiError('INVALID_BLOG_REQUEST'))
+    res.status(200).type('css').set({ 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+      'Content-Length': String(Buffer.byteLength(stylesheet)) })
+    res.end(req.method === 'HEAD' ? undefined : stylesheet)
   })
   router.get('/', async (req, res, next) => {
     try {

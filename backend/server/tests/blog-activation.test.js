@@ -107,6 +107,21 @@ test('fresh disabled activation never evaluates the Sanity-dependent chain; the 
   assert.deepEqual(result, { disabledEvaluations: 0, registrations: 0, constructions: 0, positiveControlEvaluations: 1 })
 })
 
+test('injected JSON-only composition also leaves HTML and SDK-dependent modules unevaluated', () => {
+  const deliveryUrl = new URL('../services/blogDelivery.js', import.meta.url).href
+  const result = importProbe('observe', `
+    const {createInjectedBlogDelivery}=await import(${JSON.stringify(deliveryUrl)});
+    const service={async list(){throw new Error('No source reads');},async getBySlug(){throw new Error('No source reads');}};
+    for(const documentMode of [undefined,false,'true',1]) {
+      const delivery=await createInjectedBlogDelivery({service,documentMode,canonicalOrigin:'PRIVATE_INVALID'});
+      assert.equal(delivery.htmlRouter,undefined);assert.equal(typeof delivery.apiRouter,'function');
+    }
+    assert.equal(globalThis.__blogServiceEvaluations||0,0);
+    console.log(JSON.stringify({evaluations:0}));
+  `)
+  assert.deepEqual(result,{evaluations:0})
+})
+
 test('a real SDK import failure is caught before construction and preserves safe blog errors and sibling services', () => {
   const result = importProbe('reject-sdk', `
     const {default:express} = await import('express');

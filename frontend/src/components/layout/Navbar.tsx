@@ -1,3 +1,4 @@
+import { BlogNavigationLink } from '../blog/BlogNavigationLink'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowRight,
@@ -17,7 +18,7 @@ import {
 import type { ReactNode, Ref } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Link, useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router-dom'
 import logo from '../../assets/brand/logo.png'
 import { useCartStore } from '../../store/cartStore'
 import { useWishlistStore } from '../../store/wishlistStore'
@@ -168,7 +169,7 @@ export function Navbar({ onAccountOpen, onSearchOpen }: NavbarProps) {
     >
       <div className="container-lux flex h-20 items-center justify-between gap-4">
         {/* Brand Logo */}
-        <Link className="flex items-center gap-3" to="/" aria-label="Royal Fusion Home">
+        <BlogNavigationLink className="flex items-center gap-3" to="/" aria-label="Royal Fusion Home">
           <img
             className="h-11 w-11 rounded-full object-contain"
             src={logo}
@@ -182,7 +183,7 @@ export function Navbar({ onAccountOpen, onSearchOpen }: NavbarProps) {
               Luxury Fragrances
             </span>
           </span>
-        </Link>
+        </BlogNavigationLink>
 
         {/* Desktop Primary Navigation */}
         <nav
@@ -281,14 +282,14 @@ export function Navbar({ onAccountOpen, onSearchOpen }: NavbarProps) {
                             Handcrafted fragrance compositions created for elegance and distinction.
                           </p>
                         </div>
-                        <Link
+                        <BlogNavigationLink
                           className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-royal-burgundy transition hover:text-champagne"
                           onClick={() => setOpenMenu(null)}
                           to="/collections"
                         >
                           <span>Explore Collection</span>
                           <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
-                        </Link>
+                        </BlogNavigationLink>
                       </div>
                     </div>
                   </div>
@@ -298,7 +299,7 @@ export function Navbar({ onAccountOpen, onSearchOpen }: NavbarProps) {
           </div>
 
           {/* 2. Collections */}
-          <Link
+          <BlogNavigationLink
             className={primaryNavItemClass(isCollectionsActive)}
             to="/collections"
           >
@@ -306,10 +307,10 @@ export function Navbar({ onAccountOpen, onSearchOpen }: NavbarProps) {
               isActive={isCollectionsActive}
               label="Collections"
             />
-          </Link>
+          </BlogNavigationLink>
 
           {/* 3. Best Sellers */}
-          <Link
+          <BlogNavigationLink
             className={primaryNavItemClass(isBestSellersActive)}
             to="/shop?best=true"
           >
@@ -317,10 +318,10 @@ export function Navbar({ onAccountOpen, onSearchOpen }: NavbarProps) {
               isActive={isBestSellersActive}
               label="Best Sellers"
             />
-          </Link>
+          </BlogNavigationLink>
 
           {/* 4. Journal */}
-          <Link
+          <BlogNavigationLink
             className={primaryNavItemClass(isJournalActive)}
             to="/blogs"
           >
@@ -328,10 +329,10 @@ export function Navbar({ onAccountOpen, onSearchOpen }: NavbarProps) {
               isActive={isJournalActive}
               label="Journal"
             />
-          </Link>
+          </BlogNavigationLink>
 
           {/* 5. About */}
-          <Link
+          <BlogNavigationLink
             className={primaryNavItemClass(isAboutActive)}
             to="/about"
           >
@@ -339,7 +340,7 @@ export function Navbar({ onAccountOpen, onSearchOpen }: NavbarProps) {
               isActive={isAboutActive}
               label="About"
             />
-          </Link>
+          </BlogNavigationLink>
 
           {/* 6. Help & Contact Dropdown Trigger */}
           <div
@@ -431,14 +432,14 @@ export function Navbar({ onAccountOpen, onSearchOpen }: NavbarProps) {
           <IconButton ariaLabel="Search" onClick={onSearchOpen}>
             <Search className="h-4.5 w-4.5" aria-hidden="true" />
           </IconButton>
-          <Link
+          <BlogNavigationLink
             aria-label="Wishlist"
             className="relative grid h-9.5 w-9.5 place-items-center rounded-full border border-soft-border bg-warm-ivory/60 text-espresso transition hover:border-champagne/70 hover:bg-champagne/10 hover:text-royal-burgundy"
             to="/wishlist"
           >
             <Heart className="h-4.5 w-4.5" aria-hidden="true" />
             {wishlistCount > 0 && <CounterBadge value={wishlistCount} />}
-          </Link>
+          </BlogNavigationLink>
           <IconButton ariaLabel="Cart" onClick={openCart}>
             <ShoppingBag className="h-4.5 w-4.5" aria-hidden="true" />
             {itemCount > 0 && <CounterBadge value={itemCount} />}
@@ -634,12 +635,12 @@ export function Navbar({ onAccountOpen, onSearchOpen }: NavbarProps) {
 
 function MenuLink({ to, children }: { to: string; children: ReactNode }) {
   return (
-    <Link
+    <BlogNavigationLink
       className="block rounded-md py-1 text-espresso/80 transition hover:text-royal-burgundy hover:translate-x-0.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-champagne"
       to={to}
     >
       {children}
-    </Link>
+    </BlogNavigationLink>
   )
 }
 
@@ -701,7 +702,7 @@ function DropdownItem({
   to: string
 }) {
   return (
-    <Link
+    <BlogNavigationLink
       className="flex items-center gap-3 rounded-lg px-3 py-2 text-espresso transition hover:bg-soft-cream/70 hover:text-royal-burgundy focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-champagne"
       to={to}
     >
@@ -710,7 +711,7 @@ function DropdownItem({
         <p className="font-medium leading-tight">{label}</p>
         {subtitle && <p className="text-[11px] text-muted-taupe truncate">{subtitle}</p>}
       </div>
-    </Link>
+    </BlogNavigationLink>
   )
 }
 
@@ -746,7 +747,7 @@ function MobileLink({
   className?: string
 }) {
   return (
-    <Link
+    <BlogNavigationLink
       className={cn(
         'block rounded-md px-3 py-2 text-sm text-espresso/85 transition hover:bg-champagne/12 hover:text-royal-burgundy',
         className,
@@ -754,7 +755,7 @@ function MobileLink({
       to={to}
     >
       {children}
-    </Link>
+    </BlogNavigationLink>
   )
 }
 

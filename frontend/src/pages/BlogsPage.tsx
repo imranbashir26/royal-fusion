@@ -1,5 +1,6 @@
+import { BlogNavigationLink } from '../components/blog/BlogNavigationLink'
 import { useMemo } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { BlogCard, PublicBlogCard } from '../components/blog/BlogCard'
 import { PageHeader } from '../components/common/PageHeader'
 import { useStorefront } from '../storefront/StorefrontProvider'
@@ -26,9 +27,9 @@ function PublicBlogsPage() {
         {state.data?.data.map(blog => <PublicBlogCard blog={blog} key={blog.id} />)}
       </div> : <BlogState status={state.status} retry={revalidate} />}
       {pagination && pagination.totalPages > 0 && <nav aria-label="Journal pagination" className="mt-8 flex items-center justify-center gap-5">
-        {pagination.page > 1 && <Link to={`/blogs?page=${Math.min(pagination.page - 1, pagination.totalPages)}&pageSize=${pagination.pageSize}`}>Previous page</Link>}
+        {pagination.page > 1 && <BlogNavigationLink to={`/blogs?page=${Math.min(pagination.page - 1, pagination.totalPages)}&pageSize=${pagination.pageSize}`}>Previous page</BlogNavigationLink>}
         <span>Page {pagination.page} of {pagination.totalPages}</span>
-        {pagination.page < pagination.totalPages && <Link to={`/blogs?page=${pagination.page + 1}&pageSize=${pagination.pageSize}`}>Next page</Link>}
+        {pagination.page < pagination.totalPages && <BlogNavigationLink to={`/blogs?page=${pagination.page + 1}&pageSize=${pagination.pageSize}`}>Next page</BlogNavigationLink>}
       </nav>}
       {state.status === 'ready' && <button className="mt-6 font-semibold text-burgundy underline" onClick={revalidate} type="button">Refresh articles</button>}
     </section>

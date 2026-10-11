@@ -11,7 +11,7 @@ export function SeoManager() {
 
   useEffect(() => {
     const metadata = integration.enabled && /^\/blogs(?:\/|$)/.test(location.pathname)
-      ? integration.client ? resolvePublicBlogSeo(location.pathname, integration.metadata, integration.client.configuration)
+      ? integration.client ? resolvePublicBlogSeo(location.pathname, integration.metadata, integration.client.configuration, location.search)
         : { title: 'Royal Fusion Journal', description: '', ogTitle: 'Royal Fusion Journal', ogDescription: '',
           robots: 'noindex,follow', ogImage: '', canonical: '' }
       : resolveStorefrontSeo(location.pathname, location.search, { seo, products, categories, collections, blogs }, window.location.origin)

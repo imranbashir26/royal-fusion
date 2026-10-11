@@ -5,19 +5,21 @@ import type { BlogArticle, BlogListInput, BlogListResponse } from '../../../shar
 import { PublicBlogError, validatePublicBlogConfiguration, type BlogFailure, type PublicBlogClient } from '../services/publicBlogsApi'
 
 /** A configuration failure retains the enabled authority boundary, with no legacy fallback. */
-export type BlogIntegration = { readonly enabled: true; readonly client: PublicBlogClient }
-  | { readonly enabled: true; readonly unavailable: true }
+export type BlogIntegration = ({ readonly enabled: true; readonly client: PublicBlogClient }
+  | { readonly enabled: true; readonly unavailable: true }) & { readonly documentMode?: boolean }
 export type BlogLoadState<T> = { status: 'idle' | 'loading' | 'ready' | 'empty' | BlogFailure; data?: T }
 export type BlogRouteState = BlogLoadState<BlogArticle>
 interface BlogContext {
   enabled: boolean
+  documentMode: boolean
   client?: PublicBlogClient
   routeKey: string
   pathname: string
+  search: string
   metadata: BlogRouteState
   publishMetadata: (path: string, state: BlogRouteState) => void
 }
-const disabled: BlogContext = { enabled: false, routeKey: '', pathname: '', metadata: { status: 'idle' }, publishMetadata: () => {} }
+const disabled: BlogContext = { enabled: false, documentMode: false, routeKey: '', pathname: '', search: '', metadata: { status: 'idle' }, publishMetadata: () => {} }
 const Context = createContext<BlogContext>(disabled)
 
 export function PublicBlogProvider({ integration, children }: { integration?: BlogIntegration; children: ReactNode }) {
@@ -33,9 +35,10 @@ export function PublicBlogProvider({ integration, children }: { integration?: Bl
     if (path !== location.pathname) return
     setRoute(previous => previous.key === location.key && previous.client === client ? { ...previous, metadata } : previous)
   }, [location.key, location.pathname, client])
-  const value = useMemo<BlogContext>(() => ({ enabled, client, routeKey: location.key, pathname: location.pathname,
+  const documentMode = enabled && integration.documentMode === true
+  const value = useMemo<BlogContext>(() => ({ enabled, documentMode, client, routeKey: location.key, pathname: location.pathname, search: location.search,
     metadata: enabled && !client ? { status: 'unavailable' } : route.key === location.key && route.client === client ? route.metadata : { status: 'loading' }, publishMetadata,
-  }), [enabled, client, location.key, location.pathname, route, publishMetadata])
+  }), [enabled, documentMode, client, location.key, location.pathname, location.search, route, publishMetadata])
   return <Context.Provider value={value}>{children}</Context.Provider>
 }
 export const usePublicBlogIntegration = () => useContext(Context)
@@ -72,20 +75,21 @@ export function usePublicBlogList(input: BlogListInput, scope: 'listing' | 'prev
     return client.list({ page, pageSize }, signal)
   }, [client, page, pageSize])
   const publish = useCallback((state: BlogLoadState<BlogListResponse>) => {
-    if (scope === 'listing') publishMetadata('/blogs', { status: state.status })
-  }, [scope, publishMetadata])
-  const request = useRequest(load, Boolean(client) && (scope === 'listing' ? pathname === '/blogs' : scope === 'preview' ? pathname === '/' : pathname.startsWith('/blogs/')), routeKey, publish, listEmpty)
+    if (scope === 'listing') publishMetadata(pathname, { status: state.status })
+  }, [scope, pathname, publishMetadata])
+  const request = useRequest(load, Boolean(client) && (scope === 'listing' ? /^\/blogs\/?$/.test(pathname) : scope === 'preview' ? pathname === '/' : pathname.startsWith('/blogs/')), routeKey, publish, listEmpty)
   const state: BlogLoadState<BlogListResponse> = enabled && !client ? { status: 'unavailable' } : request.state
   return { ...request, state }
 }
 export function usePublicBlogArticle(slug: string) {
-  const { enabled, client, pathname, routeKey, publishMetadata } = usePublicBlogIntegration()
+  const { enabled, client, pathname, search, routeKey, publishMetadata } = usePublicBlogIntegration()
   let currentSlug = ''
-  try { if (/^\/blogs\/[^/]+$/.test(pathname)) currentSlug = decodeURIComponent(pathname.slice(7)) } catch { /* Invalid path never becomes a canonical. */ }
+  try { const match = /^\/blogs\/([^/]+)\/?$/.exec(pathname); if (match) currentSlug = decodeURIComponent(match[1]) } catch { /* Invalid path never becomes a canonical. */ }
   const load = useCallback(async (signal: AbortSignal) => {
     if (!client) throw new PublicBlogError('unavailable')
+    if (search) throw new PublicBlogError('invalid', 400)
     return (await client.getBySlug(slug, signal)).data
-  }, [client, slug])
+  }, [client, slug, search])
   const publish = useCallback((state: BlogLoadState<BlogArticle>) => publishMetadata(pathname, state), [pathname, publishMetadata])
   const request = useRequest(load, Boolean(client) && pathname.startsWith('/blogs/') && (currentSlug === slug || !currentSlug), routeKey, publish, neverEmpty)
   const state: BlogLoadState<BlogArticle> = enabled && !client ? { status: 'unavailable' } : request.state

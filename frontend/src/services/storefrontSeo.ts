@@ -1,7 +1,7 @@
 import type { StorefrontData } from '../types/admin'
 import type { BlogRouteState } from '../blog/PublicBlogProvider'
 import { blogImageUrl } from './blogImages'
-import { isPublicBlogSlug, validatePublicBlogConfiguration, type PublicBlogConfiguration } from './publicBlogsApi'
+import { isPublicBlogSlug, publicBlogSearchInput, validatePublicBlogConfiguration, type PublicBlogConfiguration } from './publicBlogsApi'
 
 export const staticSeoPaths = ['/', '/shop', '/collections', '/attars', '/about', '/contact']
 function https(value: unknown) {
@@ -41,17 +41,30 @@ export function resolveStorefrontSeo(path: string, search: string, data: Pick<St
 }
 
 /** Fixture-enabled editorial metadata uses only the explicitly approved origin. */
-export function resolvePublicBlogSeo(path: string, state: BlogRouteState, configuration: PublicBlogConfiguration) {
+export function resolvePublicBlogSeo(path: string, state: BlogRouteState, configuration: PublicBlogConfiguration, search = '') {
   const approved = validatePublicBlogConfiguration(configuration)
+  const listing = /^\/blogs\/?$/.test(path)
   let slug = ''
-  try { if (/^\/blogs\/[^/]+$/.test(path)) slug = decodeURIComponent(path.slice(7)) } catch { /* Invalid article path. */ }
-  const article = state.status === 'ready' && state.data?.slug === slug ? state.data : undefined
-  const canonical = new URL(isPublicBlogSlug(slug) ? `/blogs/${slug}` : '/blogs', approved.canonicalOrigin).href
+  try { const match = /^\/blogs\/([^/]+)\/?$/.exec(path); if (match) slug = decodeURIComponent(match[1]) } catch { /* Invalid article path. */ }
+  const candidate = state.status === 'ready' && state.data?.slug === slug ? state.data : undefined
+  const url = new URL(listing ? '/blogs' : isPublicBlogSlug(slug) ? `/blogs/${slug}` : '/blogs', approved.canonicalOrigin)
+  let valid = listing || isPublicBlogSlug(slug)
+  try {
+    if (listing) {
+      const input = publicBlogSearchInput(new URLSearchParams(search))
+      if (input.page > 1) url.searchParams.set('page', String(input.page))
+      if (input.pageSize !== 20) url.searchParams.set('pageSize', String(input.pageSize))
+    } else if (search) valid = false
+  } catch { valid = false }
+  const failed = ['invalid', 'not-found', 'unavailable', 'rate-limited'].includes(state.status)
+  const beyondEnd = listing && state.status === 'empty' && url.searchParams.has('page')
+  const canonical = valid && !failed && !beyondEnd ? url.href : ''
+  const article = valid && !failed ? candidate : undefined
   if (article && article.seo.canonicalUrl !== canonical) throw new TypeError('Article metadata is invalid.')
-  const title = article ? article.seo.title || article.title : path === '/blogs' ? 'Royal Fusion Journal' : 'Royal Fusion Journal | Article'
-  const description = article ? article.seo.description || article.excerpt : ''
+  const title = article ? article.seo.title || article.title : listing ? `Royal Fusion Journal${url.searchParams.has('page') ? ` | Page ${url.searchParams.get('page')}` : ''}` : 'Royal Fusion Journal | Article'
+  const description = article ? article.seo.description || article.excerpt : listing && valid && !failed ? 'Stories, education and fragrance insights from Royal Fusion.' : ''
   const image = article?.seo.ogImage ?? article?.featuredImage
   return { title, description, canonical, robots: article ? article.seo.noIndex ? 'noindex,follow' : 'index,follow'
-    : path === '/blogs' && ['ready', 'empty'].includes(state.status) ? 'index,follow' : 'noindex,follow',
+    : listing && valid && state.status === 'ready' ? 'index,follow' : 'noindex,follow',
     ogTitle: title, ogDescription: description, ogImage: image ? blogImageUrl(image, approved, 1200, 630) : '' }
 }

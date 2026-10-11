@@ -39,7 +39,7 @@ test('article links and shop/home navigation remain ordinary same-origin anchors
   assert.equal(await articleLink.count(), 1)
   await articleLink.click()
   assert.equal(new URL(page.url()).pathname, '/blogs/fragrance-journal')
-  await page.getByRole('link', { name: 'Shop', exact: true }).click()
+  await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Shop', exact: true }).click()
   assert.equal(await page.getByRole('heading', { name: 'Unrelated storefront fixture' }).count(), 1)
   await page.getByRole('link', { name: 'Journal', exact: true }).click()
   await page.getByRole('link', { name: 'Royal Fusion', exact: true }).click()

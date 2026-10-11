@@ -12,6 +12,7 @@ import { blogHtmlImageUrl, projectBlogHtmlImage } from '../services/blogHtmlMedi
 import { createSanityBlogV1Service } from '../services/sanityBlogSource.js'
 import { createPublicBlogsV1Router } from '../routes/blogsV1.js'
 import { requestContext } from '../middleware/authSecurity.js'
+import { createInjectedBlogDelivery } from '../services/blogDelivery.js'
 import { makeSanityBlogDocuments, createSanityBlogClientFixture, blockExternalBlogTestNetwork } from './support/sanityBlogFixtures.js'
 
 const canonicalOrigin = 'https://shop.example.invalid'
@@ -40,6 +41,34 @@ async function start(t, { state = fixture(), service = state.service, limits, li
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) })
   return { base: `http://127.0.0.1:${server.address().port}`, state }
 }
+
+test('explicit injected composition shares service reads between HTML and JSON without constructing another client', async t => {
+  const state = fixture(), app = express()
+  const delivery = await createInjectedBlogDelivery({ service: state.service, canonicalOrigin, documentMode: true })
+  app.use(helmet(),requestContext)
+  app.use('/blogs',delivery.htmlRouter);app.use('/api/v1/public/blogs',delivery.apiRouter)
+  const server=app.listen(0,'127.0.0.1');await once(server,'listening')
+  t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve))})
+  const base=`http://127.0.0.1:${server.address().port}`
+  assert.equal(state.calls.length,0)
+  const json=await (await fetch(base+'/api/v1/public/blogs/fragrance-journal')).json()
+  const html=await (await fetch(base+'/blogs/fragrance-journal')).text()
+  assert.ok(html.includes(json.data.title));assert.equal(state.calls.length,2)
+  assert.ok(state.calls.every(call=>call.options.perspective==='published'))
+})
+
+test('only the fixed journal stylesheet is served with CSS MIME, HEAD parity and no filesystem exposure', async t => {
+  const {base,state}=await start(t)
+  const css=await fetch(base+'/blogs/_assets/journal.css'), text=await css.text()
+  assert.equal(css.status,200);assert.match(css.headers.get('content-type'),/^text\/css; charset=utf-8$/)
+  assert.equal(css.headers.get('x-content-type-options'),'nosniff');assert.equal(css.headers.get('cache-control'),'no-store')
+  assert.doesNotMatch(text,/@import|url\(|expression\(/i)
+  const head=await fetch(base+'/blogs/_assets/journal.css',{method:'HEAD'})
+  assert.equal(head.status,200);assert.equal(head.headers.get('content-length'),css.headers.get('content-length'));assert.equal(await head.text(),'')
+  for(const target of ['/_assets/other.css','/_assets/journal.css?path=secret','/_assets%2Fjournal.css']) assert.equal((await fetch(base+'/blogs'+target)).status,400)
+  assert.equal((await fetch(base+'/blogs/_assets/journal.css',{method:'POST'})).status,405)
+  assert.equal(state.calls.length,0)
+})
 const content = async (base, path = '/blogs', options) => { const response = await fetch(`${base}${path}`, options); return { response, html: await response.text() } }
 
 test('valid listing is complete initial HTML with summaries, native ordering, public references and no body query', async t => {

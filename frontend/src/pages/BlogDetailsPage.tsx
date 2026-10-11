@@ -1,5 +1,6 @@
+import { BlogNavigationLink } from '../components/blog/BlogNavigationLink'
 import { CalendarDays } from 'lucide-react'
-import { Link, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { BlogCard, PublicBlogCard } from '../components/blog/BlogCard'
 import { EmptyState } from '../components/common/EmptyState'
 import { PageHeader } from '../components/common/PageHeader'
@@ -40,7 +41,7 @@ function PublicBlogDetailsPage() {
         <BlogBody body={blog.body} key={blog.id} />
         {blog.author.bio && <p className="mt-8 text-sm text-brownroyal/65">{blog.author.bio}</p>}
         <div className="mt-8 flex flex-wrap gap-3">
-          <Link className={buttonClasses({ variant: 'outline' })} to="/blogs">Back to Journal</Link>
+          <BlogNavigationLink className={buttonClasses({ variant: 'outline' })} to="/blogs">Back to Journal</BlogNavigationLink>
           <button className="font-semibold text-burgundy underline" onClick={revalidate} type="button">Refresh article</button>
         </div>
       </div><MoreReads articleId={blog.id} />
@@ -93,9 +94,9 @@ function LegacyBlogDetailsPage() {
               <p key={paragraph}>{paragraph}</p>
             ))}
           </div>
-          <Link className={buttonClasses({ className: 'mt-10', variant: 'outline' })} to="/blogs">
+          <BlogNavigationLink className={buttonClasses({ className: 'mt-10', variant: 'outline' })} to="/blogs">
             Back to Journal
-          </Link>
+          </BlogNavigationLink>
         </div>
         <aside>
           <h2 className="mb-4 font-serif text-3xl font-semibold text-burgundy">More Reads</h2>

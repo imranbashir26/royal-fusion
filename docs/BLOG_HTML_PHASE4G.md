@@ -241,3 +241,279 @@ The legacy loader's custom historical Published filter may omit native-published
 articles; approve that consequence rather than adding a second publication state or
 fallback. This foundation does not claim deployed HTML, production readiness or
 authorization for live content, service startup or another phase.
+
+## Phase 4G-2A — local storefront integration, verification completed
+
+Starting checkpoint: `phase2-canonical-variants`,
+`e316a93f6b9282b228323bea7348ea331b1d0a02`, empty index, only the protected
+checkoutIntegration modification and root vercel.json deletion. The Phase 4G-2
+assessment and current Phase 4B–4G implementation were inspected; no development
+handoff was present. The preceding Phase 4G-1 evidence remains historical evidence.
+
+### Implemented local boundary
+
+`blogDelivery.js` composes the existing JSON router and, only for an explicit injected
+`documentMode: true`, the existing HTML router around one validated service. It
+constructs no SDK client and adds no publication rules. The production activation
+module and index.js remain byte-for-byte unchanged and never import this helper.
+JSON-only composition does not evaluate the HTML/Sanity-dependent chain. No production
+flag, real environment value, Vercel rewrite or application startup change is included.
+
+`BlogNavigationLink` preserves React Router behavior by default. Under the explicitly
+injected native integration's document mode, only `/blogs` and `/blogs/**` links use
+document navigation; non-blog links retain SPA routing. Navbar (including portal
+mobile navigation), footer, homepage previews, cards, pagination, article body/back
+links and shared empty-state links use this wrapper. There is no automatic redirect
+or reload effect. Production createBlogIntegration does not select document mode.
+
+The fixed `/blogs/_assets/journal.css` route serves only the module-anchored local
+stylesheet, with text/css, nosniff, no-store and HEAD parity. It exposes no directory
+or user-selected filesystem path. Journal documents include this stylesheet and
+semantic Home/Shop/Journal navigation. Burgundy/ivory/gold presentation, system/Georgia
+fonts, responsive article cards/images, focus outlines and the skip link require no
+scripts, external fonts or CSP relaxation. The React cart drawer/account modal are
+not replicated in HTML; returning to the storefront restores its own providers.
+
+The retained native React path supports `/blogs/` and single trailing article slashes.
+Listing metadata follows HTML's page/pageSize canonical normalization, page titles,
+description and empty-page noindex policy. Error states remove canonicals; an empty
+later page has no canonical. Article query parameters remain rejected before a detail
+read. Tracking keys, repeated/unknown parameters and invalid pagination remain invalid.
+Only the injected synthetic HTTPS origin supplies canonical authority; no Host header,
+browser origin, production redirect or sitemap implementation is added.
+
+### Files in this local change
+
+Created:
+- `backend/server/services/blogDelivery.js`
+- `backend/server/assets/blog-journal.css`
+- `frontend/src/components/blog/BlogNavigationLink.tsx`
+- `frontend/tests/blogHtmlIntegrationBrowser.test.mjs`
+- `frontend/tests/support/blogHtmlIntegrationBrowserHarness.mjs`
+
+Modified:
+- `backend/server/routes/blogHtml.js`
+- `backend/server/services/blogHtmlRenderer.js`
+- `backend/server/tests/blog-activation.test.js`
+- `backend/server/tests/blog-html.test.js`
+- `frontend/src/blog/PublicBlogProvider.tsx`
+- `frontend/src/components/blog/BlogBody.tsx`
+- `frontend/src/components/blog/BlogCard.tsx`
+- `frontend/src/components/common/EmptyState.tsx`
+- `frontend/src/components/home/BlogsPreview.tsx`
+- `frontend/src/components/layout/Footer.tsx`
+- `frontend/src/components/layout/Navbar.tsx`
+- `frontend/src/components/layout/SeoManager.tsx`
+- `frontend/src/pages/BlogDetailsPage.tsx`
+- `frontend/src/pages/BlogsPage.tsx`
+- `frontend/src/services/storefrontSeo.ts`
+- `frontend/tests/blogBrowser.test.mjs`
+- `frontend/tests/blogHtmlBrowser.test.mjs`
+- `frontend/tests/blogIntegration.test.mjs`
+- `docs/BLOG_HTML_PHASE4G.md`
+
+### Initial verification and historical stop
+
+The new harness serves the actual React App and HTML journal on one loopback origin.
+It injects the existing native-shaped GROQ fixtures and mocks catalog, customer/admin
+sessions and checkout endpoints. Browser/Node guards prevent live upstream access;
+no SQL, database fixture or production index import is used. Browser suites ran
+sequentially and source was not edited during a running browser suite.
+
+| Gate | Initial observed result |
+| --- | --- |
+| Backend blog activation/domain/adapter/HTML | 86/86 passed: 11 activation, 20 domain, 30 adapter, 25 HTML |
+| Focused frontend blog contracts/SEO | 16/16 passed, included in the full frontend count |
+| Full frontend default regression selection | 146/146 passed |
+| SQL-free backend authentication/security | 46/46 passed |
+| Protected-source bytes test | 1/1 passed; combined SQL-free backend selection 47/47 |
+| Frontend TypeScript | Passed |
+| Frontend lint | Passed, two existing StorefrontProvider dependency warnings |
+| Targeted JS/test lint | Passed before the later test-locator corrections |
+| Installed dependency tree, npm ls --all | Passed; manifests/lockfile unchanged |
+| Existing HTML browser launch probe | 1/1 selected case passed |
+| Initial checkout-blocked integration browser attempt | 11 passed, case 12 failed, remaining 3 not executed |
+| Full existing browser regression suites | Not executed: fail-fast runner stopped in the new suite |
+| Frontend production build | Not executed: critical checkout verification stop |
+
+That initial integration attempt passed direct/refresh HTML and CSS/CSP checks, actual
+desktop/mobile/storefront/footer/preview navigation, keyboard/new-tab/history,
+pagination and trailing slash, disabled native/legacy modes, canonical cart UUIDs,
+quantities/selections/consumption metadata preservation, customer cookie/session/CSRF
+continuity, and administrator restoration. Mobile and desktop synthetic-image
+screenshots were inspected. This does not establish hosting-proxy or live-content
+compatibility or a complete accessibility audit. Checkout recovery was not established
+at this historical stop.
+
+**Critical stop:** `lost checkout response remains frozen through HTML navigation and
+retries one idempotent order` failed at the initial submission check (test line 201).
+Expected one mock order-endpoint request; observed seven. This occurred before any
+HTML navigation. The original fixture simulated response loss by destroying the server
+response; the existing checkout browser harness instead aborts its intercepted request. Current
+CheckoutClient source issues one POST in its request function and has no retry loop.
+At that stop, the evidence could not establish whether the repeats originated in browser
+transport, fixture behavior or application behavior. That observation alone did not
+justify changing checkout logic or accepting duplicate orders. Distinct logical-order count,
+frozen recovery and duplicate-submission assertions were not reached in this case.
+
+The initial runner stopped immediately. No remaining browser or build gate continued
+in that attempt; failure documentation and Git integrity inspection followed. No
+application checkout/authentication/cart source was changed. The subsequent authorized
+fixture-only investigation and correction below resolved this verification blocker.
+
+Earlier failures are retained as historical results:
+- Initial backend run: 82/83 passed; its unchanged Phase 4G-1 boundary check rejected
+  HTML references in the production activation module. The injected helper was moved
+  to the separate, unimported blogDelivery module; production activation bytes were
+  restored exactly. Final backend result is 86/86 with all prior assertions retained.
+- First selected browser attempt: eight hook failures, zero cases reaching assertions,
+  after Chrome's existing 15-second launch timeout. The next full-suite launch attempt
+  also timed out before assertions. No launch/assertion timeout was increased.
+- A successful launch then failed the first case's cleanup assertion because the
+  fixture seeding script accessed sessionStorage in an inaccessible document. Seeding
+  now runs only in a JavaScript-enabled document at the loopback origin; page-error
+  assertions remain unchanged. No application storage behavior was altered.
+- Following attempt: first four passed, then the mobile locator failed. The correct
+  Open menu button and portal Mobile menu dialog were selected.
+- Following attempt: first six passed, then the article locator assumed the link was
+  inside its H3. The existing card wraps the H3 in its link; the selector was corrected.
+- Following attempt: first six passed, then that article was incorrectly expected on
+  page two. The test now navigates back to its actual first-page fixture before the
+  exact single-link assertion. No ordering or pagination contract changed.
+- Following attempt: first ten passed, then an administrator locator counted both
+  sidebar and dashboard links. It was scoped to the dashboard's main control.
+- Initial checkout-blocked attempt: first eleven passed, then the seven-versus-one
+  checkout assertion failed. The runner stopped before the subsequent authorized
+  investigation, correction and regression/build verification.
+
+Cart assertions retain raw durable journals and use the existing snapshot-plus-delta
+projection for consumed quantities. A raw snapshot is not substituted for projected
+cart state; no checkout business logic or assertions were weakened.
+
+All logs, stopped attempts, browser runner and images are outside Git at
+`C:/Users/DCS/.codex/outputs/royal-fusion-phase4g2a-20261011/`.
+
+### Confirmed checkout investigation and controlled response loss
+
+The subsequent investigation recorded one trusted user click, one trusted form submit
+and one application fetch through `handleSubmit`, `submitFrozen` and
+`CheckoutClient.request`. Chrome 154.0.8037.99 nevertheless sent seven distinct HTTP
+POSTs after the mock called `res.destroy()` before response headers: the first six
+arrivals used previously established connections and the last used a fresh connection. These
+were actual server arrivals, not OPTIONS, redirects or repeated route-handler counting.
+Every arrival carried the identical idempotency identity and request body; the mock
+created one receipt. Disabled blog integration and React-free controls reproduced the
+transport behavior. The evidence identified Chrome transport retransmissions after
+destroyed mock responses, without demonstrating additional application submissions or
+a checkout application regression.
+
+The corrected fixture uses Playwright interception for controlled response loss.
+`route.fetch({maxRetries: 0, maxRedirects: 0})` must obtain a complete HTTP 200 mock
+receipt with the matching idempotency key before the response is disposed and
+browser-facing delivery is aborted with `route.abort()`. This completes one upstream
+operation and loses only its delivery; it introduces no automatic retry or redirect.
+Physical `res.destroy()` remains a separate diagnostic, which recorded one trusted
+submit, one application fetch, seven server POSTs, one distinct key and one receipt.
+The original exactly-one initial request and receipt assertions were retained.
+
+An outside-repository controlled-loss experiment passed 1/1 before adoption. The
+corrected focused checkout scenario then passed 1/1: the frozen attempt and cart
+survived HTML Journal navigation and the storefront return; checkout reload restored
+the same attempt without another POST. An explicit recovery double-click produced one
+additional POST with the same body/key, two total HTTP requests and one total receipt.
+The cart was consumed once; a later HTML round trip and success reload produced no
+additional request or consumption. This verifies disposable mock recovery and navigation,
+not database-level idempotency or production readiness.
+
+Investigation evidence is retained at
+`C:/Users/DCS/.codex/outputs/royal-fusion-checkout-investigation-20261011/`.
+The controlled-loss experiment, diagnostic, final report and test logs are retained at
+`C:/Users/DCS/.codex/outputs/royal-fusion-phase4g2a-checkout-correction-20261011/`.
+
+### Approved test corrections and retained subsequent failures
+
+The subsequent fixture correction changed the integration test and its harness, with
+three separately approved assertion/locator corrections in existing browser tests:
+
+- `blogHtmlBrowser.test.mjs`: scope the Shop link to `Main navigation` because both
+  header and footer contain valid Shop links; retain the href/navigation assertions.
+- `blogBrowser.test.mjs`: expect the documented page-two canonical
+  `https://shop.example.invalid/blogs?page=2&pageSize=2`, replacing the historical
+  root `/blogs` expectation.
+- `blogBrowser.test.mjs`: expect zero canonical links for invalid `/blogs/Upper`,
+  retaining its noindex, content, request and security assertions.
+
+No application SEO or checkout logic changed in those corrections. No assertion was
+removed, timeout increased or arbitrary sleep introduced. Subsequent failed attempts
+also remain recorded in the correction report:
+
+- Two focused attempts passed the one-request/receipt checks but failed a newly added
+  seed-versus-persisted cart byte comparison solely because of JSON property ordering.
+  The complete parsed cart structure is now compared at that boundary; journal bytes
+  and original navigation snapshots remain exact. Final focused result: 1/1.
+- A broad attempt had 17 Chrome-launch hook failures at the unchanged 15-second
+  timeout, before application assertions. The unchanged subsequent launch succeeded.
+- The existing HTML browser run passed two cases before the ambiguous Shop locator
+  failed; the approved scope correction yielded 8/8.
+- The React blog run passed three cases before the page-two canonical failure; after
+  its approved correction, six passed before the invalid-route canonical wait failed.
+  The second approved correction yielded 13/13.
+
+### Final Codex-reported verification — 2026-10-11
+
+The following results are recorded from the completed correction's
+`VERIFICATION_REPORT.md` and `verification-summary.json`. This documentation-only
+update did not independently execute tests or repeat the verification.
+
+| Final regression gate | Passed |
+| --- | --- |
+| New HTML integration browser | 17/17 |
+| Existing HTML browser | 8/8 |
+| Existing React blog browser | 13/13 |
+| Checkout browser | 10/10 |
+| Variant browser | 10/10 |
+| Customer authentication browser | 1/1 |
+| Admin Phase 1 browser | 12/12 |
+| Admin Phase 3 browser | 10/10 |
+| Admin orders browser | 9/9 |
+| Contact browser | 9/9 |
+| Backend blog activation/domain/adapter/HTML | 86/86 |
+| SQL-free backend security and protected-source checks | 47/47 |
+| Complete frontend default regression selection | 146/146 |
+| Total | **378/378** |
+
+The final runs reported **zero failures, skips or cancellations**. The browser
+subtotal is 99/99; backend blog counts are 11 activation, 20 domain, 30 adapter and
+25 HTML. The 47 SQL-free checks comprise 46 security checks and one protected-source
+check. Focused reruns and the outside experiment are not counted again in the total.
+Browser suites ran sequentially; source edits occurred after the relevant runner
+stopped. External-network guards passed; no SQL or database fixtures were executed.
+
+Reported TypeScript, installed dependency-tree validation, targeted lint, frontend
+lint, production frontend build and Git whitespace checks passed. Frontend lint retained
+two existing StorefrontProvider dependency warnings; the build retained the 681.56 kB
+main-chunk size warning. No fresh dependency audit or advisory resolution is claimed.
+
+### Outstanding production gates and rollback
+
+This fixture-only implementation remains uncommitted. Implementation verification
+completed with the reported results above; independent review awaits final documentation
+confirmation. Successful mock checkout recovery does not establish production readiness
+or authorize activation. Database-level same-key and concurrent-delivery idempotency
+remain a separate release gate: source design was reviewed, but no SQL was executed
+and persistent duplicate prevention was not experimentally verified in this phase.
+Business origin, live native-published content/assets, actual hosting status/header/query
+and cookie forwarding, compatible Node/workspace installation, capacity/monitoring,
+tracking-query policy, sitemap policy and the previously recorded unresolved Studio/CLI
+advisories still require separate review. No new dependency audit was run here and no
+advisory is claimed resolved.
+
+Future Vercel/Belmo routing and feature activation remain deferred. Existing JSON
+activation defaults and production HTTP ordering denial are unchanged. Roll back
+frontend document navigation/routing/artifacts before removing any later HTML support;
+coordinate those changes so consumers never point at an unmounted route. Native-content
+versus historical-publication rollback differences remain the earlier documented gate.
+No production connections, live Sanity operations, SQL, environment edits, ordering
+enablement, staging, commit, push, deployment or Belmo startup occurred in this phase.
+This final documentation correction changes only this file, preserves the protected
+working-tree exclusions, and executes no tests, SQL, services or activation operations.

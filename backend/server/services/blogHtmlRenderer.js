@@ -131,7 +131,7 @@ export function createBlogHtmlRenderer({ canonicalOrigin, projectId = '6n1y88j4'
         + meta('og:image:width', '1200', true) + meta('og:image:height', '630', true) : '')
       + (publishedAt ? meta('article:published_time', new Date(publishedAt).toISOString(), true) : '')
       + (updatedAt ? meta('article:modified_time', new Date(updatedAt).toISOString(), true) : '')
-    return { html: `<!doctype html><html lang="en"><head>${head}</head><body><a href="#main">Skip to content</a><header><nav aria-label="Main navigation">${anchor('/', 'Royal Fusion')} ${anchor('/shop', 'Shop')} ${anchor('/blogs', 'Journal')}</nav></header><main id="main">${content}</main><footer>${anchor('/blogs', 'Back to Journal')}</footer></body></html>`, robots }
+    return { html: `<!doctype html><html lang="en"><head>${head}<link rel="stylesheet" href="/blogs/_assets/journal.css"></head><body><a class="skip-link" href="#main">Skip to content</a><header class="site-header"><nav aria-label="Main navigation">${anchor('/', 'Royal Fusion')} ${anchor('/shop', 'Shop')} ${anchor('/blogs', 'Journal')}</nav></header><main id="main">${content}</main><footer class="site-footer">${anchor('/', 'Home')} ${anchor('/shop', 'Shop')} ${anchor('/blogs', 'Back to Journal')}</footer></body></html>`, robots }
   }
   /** @param {{html: string, robots: string}} result */
   function bounded(result) {

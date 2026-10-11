@@ -146,9 +146,9 @@ test('new SEO uses approved origin through ready/loading/error states and has no
   article.seo.noIndex = true; assert.equal(seo.resolvePublicBlogSeo('/blogs/fragrance-journal', { status: 'ready', data: article }, configuration).robots, 'noindex,follow')
   for (const status of ['loading', 'not-found', 'unavailable', 'rate-limited']) {
     const result = seo.resolvePublicBlogSeo('/blogs/fragrance-journal', { status }, configuration)
-    assert.equal(result.robots, 'noindex,follow'); assert.equal(result.ogImage, ''); assert.equal(result.canonical, ready.canonical)
+    assert.equal(result.robots, 'noindex,follow'); assert.equal(result.ogImage, ''); assert.equal(result.canonical, status === 'loading' ? ready.canonical : '')
   }
-  assert.equal(seo.resolvePublicBlogSeo('/blogs/Upper', { status: 'invalid' }, configuration).canonical, `${canonicalOrigin}/blogs`)
+  assert.equal(seo.resolvePublicBlogSeo('/blogs/Upper', { status: 'invalid' }, configuration).canonical, '')
   assert.throws(() => client(undefined, { configuration: { ...configuration, canonicalOrigin: 'http://localhost:5173' } }))
 })
 test('cancellation and deadlines settle even fixtures ignoring their AbortSignal', async () => {
@@ -164,3 +164,16 @@ test('unpublish is observed on fresh detail/list reads without any legacy fallba
   await assert.rejects(source.getBySlug('fragrance-journal'), failure('not-found'))
   assert.equal((await source.list()).pagination.total, 3)
 })
+
+ test('React listing metadata matches HTML pagination and strict query policy', () => {
+  for (const [path,search,suffix] of [['/blogs','','/blogs'],['/blogs/','?page=1&pageSize=20','/blogs'],['/blogs','?page=2','/blogs?page=2'],['/blogs/','?pageSize=2&page=2','/blogs?page=2&pageSize=2']]) {
+   const result=seo.resolvePublicBlogSeo(path,{status:'ready'},configuration,search);
+   assert.equal(result.canonical,canonicalOrigin+suffix); assert.equal(result.robots,'index,follow');
+  }
+  for(const search of ['?page=0','?page=2&page=3','?utm_source=fixture']) {
+   const result=seo.resolvePublicBlogSeo('/blogs',{status:'ready'},configuration,search);
+   assert.equal(result.canonical,''); assert.equal(result.robots,'noindex,follow');
+  }
+  assert.equal(seo.resolvePublicBlogSeo('/blogs',{status:'empty'},configuration).robots,'noindex,follow');
+  assert.equal(seo.resolvePublicBlogSeo('/blogs',{status:'empty'},configuration,'?page=1000').canonical,'');
+ });

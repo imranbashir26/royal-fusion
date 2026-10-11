@@ -1,8 +1,8 @@
+import { BlogNavigationLink } from '../blog/BlogNavigationLink'
 import { motion, useReducedMotion } from 'framer-motion'
 import { ArrowRight, Camera, Mail, MapPin, Music2, Phone, Users, Video } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
 import logo from '../../assets/brand/logo.png'
 import { publicAddress, publicEmail, publicPhone } from '../../utils/contactDetails'
 import { newsletterService } from '../../services/newsletterService'
@@ -174,10 +174,10 @@ export function Footer() {
       <footer className="bg-deep-wine text-warm-ivory">
         <div className="container-lux grid gap-x-8 gap-y-10 py-14 sm:grid-cols-2 md:py-16 lg:grid-cols-3 xl:grid-cols-[1.5fr_0.85fr_0.85fr_1fr_1.1fr]">
           <div className="min-w-0 sm:col-span-2 lg:col-span-1">
-            <Link className="inline-flex items-center gap-3 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-warm-ivory" to="/">
+            <BlogNavigationLink className="inline-flex items-center gap-3 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-warm-ivory" to="/">
               <img alt="Royal Fusion logo" className="h-13 w-13 rounded-full bg-warm-ivory object-contain p-0.5" height={52} src={logo} width={52} />
               <span className="font-serif text-3xl font-semibold leading-none text-warm-ivory">Royal Fusion</span>
-            </Link>
+            </BlogNavigationLink>
             <p className="mt-5 max-w-[310px] text-sm leading-[1.7] text-warm-ivory/80">
               {settings.footerDescription && !settings.footerDescription.toLowerCase().includes('prototype')
                 ? settings.footerDescription
@@ -207,12 +207,12 @@ export function Footer() {
               <ul className="mt-5 space-y-2.5">
                 {group.links.map(({ label, to }) => (
                   <li key={label}>
-                    <Link
+                    <BlogNavigationLink
                       className="inline-flex min-h-8 items-center rounded-sm text-sm leading-6 text-warm-ivory/85 transition-colors hover:text-champagne focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-warm-ivory motion-reduce:transition-none"
                       to={to}
                     >
                       {label}
-                    </Link>
+                    </BlogNavigationLink>
                   </li>
                 ))}
               </ul>
@@ -244,9 +244,9 @@ export function Footer() {
                 </p>
               )}
             </div>
-            <Link className="mt-5 inline-flex min-h-9 items-center gap-2 rounded-sm text-sm font-semibold text-warm-ivory hover:text-champagne focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-warm-ivory" to="/contact">
+            <BlogNavigationLink className="mt-5 inline-flex min-h-9 items-center gap-2 rounded-sm text-sm font-semibold text-warm-ivory hover:text-champagne focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-warm-ivory" to="/contact">
               Get in Touch <ArrowRight aria-hidden="true" className="h-4 w-4" />
-            </Link>
+            </BlogNavigationLink>
           </div>
         </div>
 

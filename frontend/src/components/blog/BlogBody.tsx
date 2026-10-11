@@ -1,6 +1,6 @@
+import { BlogNavigationLink } from './BlogNavigationLink'
 import { Component, type ReactNode } from 'react'
 import { PortableText, type PortableTextComponents } from '@portabletext/react'
-import { Link } from 'react-router-dom'
 import type { BlogBody as ArticleBody, BlogImageBlock } from '../../../../shared/contracts/blogV1'
 import { BlogImage } from './BlogImage'
 
@@ -17,7 +17,7 @@ const components: PortableTextComponents = {
     link: ({ children, value }) => {
       const href: unknown = value?.href
       if (typeof href !== 'string' || /[\s<>\\]/.test(href)) throw new TypeError('Article content is invalid.')
-      if (href.startsWith('/') && !href.startsWith('//')) return <Link className="underline text-burgundy" to={href}>{children}</Link>
+      if (href.startsWith('/') && !href.startsWith('//')) return <BlogNavigationLink className="underline text-burgundy" to={href}>{children}</BlogNavigationLink>
       const url = new URL(href)
       if (url.protocol !== 'https:' || url.username || url.password) throw new TypeError('Article content is invalid.')
       return <a className="underline text-burgundy" href={url.href} rel="noopener noreferrer">{children}</a>

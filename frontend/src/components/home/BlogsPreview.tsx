@@ -1,6 +1,6 @@
+import { BlogNavigationLink } from '../blog/BlogNavigationLink'
 import { motion, useReducedMotion } from 'framer-motion'
 import { ArrowRight, BookOpen } from 'lucide-react'
-import { Link } from 'react-router-dom'
 import type { BlogPost } from '../../types'
 import { useStorefront } from '../../storefront/StorefrontProvider'
 import type { BlogSummary } from '../../../../shared/contracts/blogV1'
@@ -36,7 +36,7 @@ function JournalCard({ blog, index }: { blog: BlogPost | BlogSummary; index: num
       viewport={{ once: true, amount: 0.1 }}
       whileInView={{ opacity: 1, y: 0 }}
     >
-      <Link
+      <BlogNavigationLink
         aria-label={`Read ${blog.title}`}
         className="group block overflow-hidden focus-visible:outline-2 focus-visible:outline-offset-[-4px] focus-visible:outline-royal-burgundy"
         to={articleUrl}
@@ -58,7 +58,7 @@ function JournalCard({ blog, index }: { blog: BlogPost | BlogSummary; index: num
             <BookOpen className="h-9 w-9" strokeWidth={1.25} />
           </span>
         )}
-      </Link>
+      </BlogNavigationLink>
 
       <div className="flex flex-1 flex-col p-6 sm:p-7">
         {category && (
@@ -67,23 +67,23 @@ function JournalCard({ blog, index }: { blog: BlogPost | BlogSummary; index: num
           </p>
         )}
         <h3 className="font-serif text-[clamp(1.625rem,2.2vw,1.9375rem)] font-semibold leading-[1.12] text-royal-burgundy">
-          <Link
+          <BlogNavigationLink
             className="rounded-sm hover:text-deep-wine focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-royal-burgundy"
             to={articleUrl}
           >
             {blog.title}
-          </Link>
+          </BlogNavigationLink>
         </h3>
         {blog.excerpt && (
           <p className="mt-3 line-clamp-4 text-[15px] leading-[1.6] text-muted-taupe">{blog.excerpt}</p>
         )}
-        <Link
+        <BlogNavigationLink
           className="group mt-6 inline-flex min-h-11 items-center gap-2 self-start rounded-sm border-b border-champagne/70 text-sm font-semibold text-royal-burgundy hover:text-deep-wine focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-royal-burgundy"
           to={articleUrl}
         >
           Read Article
           <ArrowRight aria-hidden="true" className="h-4 w-4 transition-transform duration-300 motion-safe:group-hover:translate-x-1 motion-reduce:transition-none" />
-        </Link>
+        </BlogNavigationLink>
       </div>
     </motion.article>
   )
@@ -103,7 +103,7 @@ function PublicBlogsPreview() {
     </div>
     {state.status === 'ready' ? <><div className="mx-auto grid gap-6 md:grid-cols-2 xl:grid-cols-3">
       {state.data?.data.map((blog, index) => <JournalCard blog={blog} index={index} key={blog.id} />)}
-    </div><div className="mt-10 text-center"><Link className="font-semibold text-burgundy underline" to="/blogs">Explore All Articles</Link></div></>
+    </div><div className="mt-10 text-center"><BlogNavigationLink className="font-semibold text-burgundy underline" to="/blogs">Explore All Articles</BlogNavigationLink></div></>
       : <BlogState status={state.status} retry={revalidate} />}
   </div></section>
 }
@@ -138,13 +138,13 @@ function LegacyBlogsPreview() {
               ))}
             </div>
             <div className="mt-10 flex justify-center md:mt-12">
-              <Link
+              <BlogNavigationLink
                 className="group inline-flex min-h-12 items-center justify-center gap-3 rounded-[10px] bg-royal-burgundy px-7 py-3 text-sm font-semibold text-warm-ivory transition-colors duration-300 hover:bg-deep-wine focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-royal-burgundy motion-reduce:transition-none"
                 to="/blogs"
               >
                 Explore All Articles
                 <ArrowRight aria-hidden="true" className="h-4 w-4 transition-transform duration-300 motion-safe:group-hover:translate-x-1 motion-reduce:transition-none" />
-              </Link>
+              </BlogNavigationLink>
             </div>
           </>
         ) : (
