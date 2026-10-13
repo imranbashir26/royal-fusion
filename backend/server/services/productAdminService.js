@@ -137,6 +137,9 @@ export class ProductAdminService {
   }
 
   async saveTester(id, input, actor, existing = null) {
+    if (input.variants?.some(variant => Object.hasOwn(variant, 'standardManualAvailable'))) {
+      throw new ProductApiError(400, 'INVALID_REQUEST', 'Standard availability does not apply to testers.')
+    }
     if (Buffer.byteLength(JSON.stringify(input),'utf8')>32768) throw new ProductApiError(413,'REQUEST_TOO_LARGE','Tester catalog request exceeds 32 KiB.')
     const columns = toProductColumns(input)
     await this.assignCategory(columns, Object.hasOwn(input, 'categoryId') ? input.categoryId : existing?.categoryId ?? null, existing?.categoryId ?? null)
@@ -226,6 +229,8 @@ function catalogDto(data) {
     sku: row.sku, regularPrice: Number(row.regular_price),
     salePrice: row.sale_price == null ? null : Number(row.sale_price),
     stockQuantity: row.stock_quantity, active: row.active, available: row.available,
+    ...(data.product.commerce_kind !== 'tester' && typeof row.standard_manual_available === 'boolean'
+      ? { standardManualAvailable: row.standard_manual_available } : {}),
     displayOrder: row.display_order,
   })) }
 }

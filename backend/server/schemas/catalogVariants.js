@@ -15,6 +15,7 @@ export const catalogVariantSchema = z.object({
   stockQuantity: z.number().int().min(0).max(2147483647),
   active: z.boolean().default(true),
   available: z.boolean().optional(),
+  standardManualAvailable: z.boolean().optional(),
   displayOrder: z.number().int().min(0).max(2147483647).default(0),
 }).strict().superRefine((value, context) => {
   if (value.salePrice !== null && value.salePrice >= value.regularPrice) {
