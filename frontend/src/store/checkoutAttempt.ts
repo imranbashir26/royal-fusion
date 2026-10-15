@@ -39,7 +39,9 @@ export function validPurchasedLines(value: unknown, items?: unknown): value is P
 export function validIntent(value: unknown): value is CheckoutIntent {
   if (!object(value) || !keys(value, ['request', 'lines']) || !object(value.request)) return false
   const request = value.request
-  if (!keys(request, ['idempotencyKey', 'items', 'contact', 'shipping', 'paymentMethod', 'couponCode'])
+  const confirmation = Object.hasOwn(request, 'quoteFingerprint')
+  if (confirmation && (typeof request.quoteFingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(request.quoteFingerprint))) return false
+  if (!keys(request, ['idempotencyKey', 'items', 'contact', 'shipping', 'paymentMethod', 'couponCode', ...(confirmation ? ['quoteFingerprint'] : [])])
     || !isVariantId(request.idempotencyKey) || !aggregateRequestItems(request.items)
     || !object(request.contact) || !keys(request.contact, ['name', 'email', 'phone'])
     || !text(request.contact.name, 2, 120) || !text(request.contact.phone, 7, 40)

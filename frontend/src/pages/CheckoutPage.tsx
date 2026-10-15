@@ -7,17 +7,18 @@ import { Button } from '../components/common/Button'
 import { PageHeader } from '../components/common/PageHeader'
 import { orderService } from '../services/orderService'
 import { CheckoutClientError } from '../services/checkoutClient'
+import { isDefinitiveQuoteRejection, quoteAcceptanceKey } from '../services/checkoutConfirmation'
 import { checkoutCompletionAvailable, useCartStore } from '../store/cartStore'
 import { useCheckoutIntentStore } from '../store/checkoutIntentStore'
 import { useStorefront } from '../storefront/StorefrontProvider'
 import type { CanonicalOrderRequest, CheckoutPaymentMethod, CheckoutQuoteResponse } from '../types'
 import { cn } from '../utils/cn'
-import { formatCurrency } from '../utils/format'
+import { formatCheckoutCurrency } from '../utils/checkoutMoney'
 
 export function CheckoutPage() {
   const { products, payments, isLoading } = useStorefront()
   const { items, selectedLineIds, removeItems, capturePurchase } = useCartStore()
-  const { intent, recovery, pendingReceipt, freeze, complete, newAttempt } = useCheckoutIntentStore()
+  const { intent, recovery, pendingReceipt, freeze, complete, newAttempt, rejectQuote } = useCheckoutIntentStore()
   const completionAvailable = checkoutCompletionAvailable()
   const navigate = useNavigate()
   const selectedLineIdSet = new Set(selectedLineIds)
@@ -30,16 +31,22 @@ export function CheckoutPage() {
   const [quote, setQuote] = useState<{ signature: string; data: CheckoutQuoteResponse; at: number } | null>(null)
   const [quoteError, setQuoteError] = useState('')
   const [orderError, setOrderError] = useState('')
+  const [acceptedQuote, setAcceptedQuote] = useState<string | null>(null)
+  const [quoteNotice, setQuoteNotice] = useState('')
+  const [quoteReload, setQuoteReload] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const inFlight = useRef(false)
   const signature = JSON.stringify({ items: enrichedItems.map((item) => ({ variantId: item.variantId, quantity: item.quantity })),
     shipping: { city: form.city.trim(), province: form.province.trim() }, email: form.email.trim().toLowerCase(), couponCode: couponCode.trim().toUpperCase() })
   const currentQuote = quote?.signature === signature ? quote.data : null
+  const acceptanceKey = quoteAcceptanceKey(signature, currentQuote, paymentMethod)
+  const confirmed = acceptanceKey !== null && acceptedQuote === acceptanceKey
+  useEffect(() => { setAcceptedQuote(null) }, [signature, paymentMethod, currentQuote?.quoteFingerprint])
   const configuredPaymentMethods = useMemo(() => payments
     .filter((payment) => payment.active !== false && (payment.name === 'Cash on Delivery' || payment.name === 'Bank Transfer'))
     .map((payment) => ({ label: payment.name as CheckoutPaymentMethod, icon: payment.name === 'Bank Transfer' ? Landmark : Wallet })), [payments])
   const activePaymentMethods = configuredPaymentMethods.filter((method) => !currentQuote || currentQuote.paymentMethods.includes(method.label))
-  const checkoutBlocked = !completionAvailable || !eligible || !currentQuote || !currentQuote.orderingEnabled || !activePaymentMethods.some((method) => method.label === paymentMethod)
+  const checkoutBlocked = !completionAvailable || !eligible || !currentQuote || !acceptanceKey || !currentQuote.orderingEnabled || !activePaymentMethods.some((method) => method.label === paymentMethod)
 
   useEffect(() => {
     if (!activePaymentMethods.some((method) => method.label === paymentMethod) && activePaymentMethods[0]) setPaymentMethod(activePaymentMethods[0].label)
@@ -60,7 +67,7 @@ export function CheckoutPage() {
     const timer = window.setTimeout(() => void load(), 350)
     const interval = window.setInterval(() => void load(), 60000)
     return () => { active = false; window.clearTimeout(timer); window.clearInterval(interval) }
-  }, [signature, eligible, intent, form.city, form.province])
+  }, [signature, eligible, intent, form.city, form.province, quoteReload])
 
   async function submitFrozen() {
     if (inFlight.current) return
@@ -73,6 +80,14 @@ export function CheckoutPage() {
       navigate('/checkout/success', { replace: true })
     } catch (error) {
       setOrderError(error instanceof Error ? error.message : 'Your order could not be confirmed. Your cart has been saved.')
+      if (isDefinitiveQuoteRejection(error)) {
+        try {
+          rejectQuote(frozen.request.idempotencyKey)
+          setAcceptedQuote(null); setQuote(null); setQuoteError('')
+          setQuoteNotice('No order was created. Checkout prices or charges changed. Review the updated total and confirm it again.')
+          setQuoteReload(value => value + 1)
+        } catch { setOrderError('The saved checkout attempt requires recovery. Retry its original request before starting another attempt.') }
+      }
       if (error instanceof CheckoutClientError && error.unknownOutcome) setOrderError(`${error.message} Retry the saved attempt; do not start another order.`)
     } finally { inFlight.current = false; setIsSubmitting(false) }
   }
@@ -82,7 +97,7 @@ export function CheckoutPage() {
     if (useCheckoutIntentStore.getState().intent) return submitFrozen()
     if (useCheckoutIntentStore.getState().recovery) { setOrderError('The saved attempt requires recovery before starting another order.'); return }
     if (!checkoutCompletionAvailable()) { setOrderError('Checkout is unavailable in this browser. Your cart has been saved; no order was submitted.'); return }
-    if (checkoutBlocked || !quote || Date.now() - quote.at > 120000) { setOrderError('Check selected variants, destination, payment method and current quote before ordering. Your cart has been saved.'); return }
+    if (checkoutBlocked || !confirmed || !quote || Date.now() - quote.at > 120000) { setOrderError('Review and confirm the current checkout total before ordering. Your cart has been saved.'); return }
     const contact = { name: form.name.trim(), email: form.email.trim().toLowerCase(), phone: form.phone.trim() }
     const shipping = { address: form.address.trim(), city: form.city.trim(), province: form.province.trim(), notes: form.notes.trim() }
     if (contact.name.length < 2 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email) || contact.phone.length < 7 || shipping.address.length < 4) {
@@ -91,9 +106,10 @@ export function CheckoutPage() {
     const request: Omit<CanonicalOrderRequest, 'idempotencyKey'> = {
       items: enrichedItems.map((item) => ({ variantId: item.variant!.id, quantity: item.quantity })),
       contact, shipping, paymentMethod, couponCode: couponCode.trim().toUpperCase(),
+      quoteFingerprint: currentQuote!.quoteFingerprint!,
     }
     try {
-      freeze(request, capturePurchase(enrichedItems.map((item) => ({ lineId: item.lineId, variantId: item.variant!.id, quantity: item.quantity }))))
+      freeze(request, capturePurchase(enrichedItems.map((item) => ({ lineId: item.lineId, variantId: item.variant!.id, quantity: item.quantity }))), currentQuote!.idempotencyKey)
       await submitFrozen()
     } catch { setOrderError('Your checkout attempt could not be saved. Your cart has been kept; no order was submitted.') }
   }
@@ -112,7 +128,7 @@ export function CheckoutPage() {
   if (isLoading) return <section className="container-lux py-16" role="status">Loading checkout catalog...</section>
   if (!items.length && !isLoading) return <Navigate replace to="/shop" />
   if (!selectedCartItems.length && !isLoading) return <section className="container-lux py-16"><h1 className="font-serif text-3xl">Select cart items to check out</h1><Link to="/cart">Return to cart</Link></section>
-  const amount = (field: 'subtotal' | 'discount' | 'shippingFee' | 'total') => currentQuote ? formatCurrency(currentQuote[field]) : 'Waiting for quote'
+  const amount = (field: 'subtotal' | 'discount' | 'shippingFee' | 'total') => currentQuote ? formatCheckoutCurrency(currentQuote[field]) : 'Waiting for quote'
   return <>
     <PageHeader eyebrow="Checkout" title="Complete Your Royal Order" description="Review your selected fragrances and delivery details." />
     <section className="container-lux grid gap-8 py-12 md:py-16 lg:grid-cols-[1fr_380px]">
@@ -136,15 +152,17 @@ export function CheckoutPage() {
         <CheckoutPanel title="Coupon"><Field label="Coupon code" value={couponCode} maxLength={40} required={false} onChange={(value) => setCouponCode(value.toUpperCase())} /></CheckoutPanel>
         {checkoutBlocked && <p role="status">{!completionAvailable ? 'Checkout is unavailable in this browser. Your cart has been saved; no order was submitted.' : currentQuote?.orderingEnabled === false ? 'Ordering is temporarily unavailable. Your cart has been saved.' : 'Complete your destination and resolve unavailable items to receive a checkout quote.'}</p>}
         {quoteError && <p role="alert" className="text-burgundy">{quoteError}</p>}
+        {quoteNotice && <p role="status" className="text-burgundy">{quoteNotice}</p>}
         {orderError && <p role="alert" className="text-burgundy">{orderError}</p>}
-        <Button disabled={checkoutBlocked || isSubmitting || activePaymentMethods.length === 0} size="lg" type="submit"><PackageCheck className="h-5 w-5" aria-hidden="true" />{isSubmitting ? 'Placing Order...' : 'Place Order'}</Button>
+        <label className="flex items-start gap-3"><input type="checkbox" checked={confirmed} disabled={checkoutBlocked || isSubmitting} onChange={event => setAcceptedQuote(event.target.checked ? acceptanceKey : null)} /><span>I confirm the quoted total of {currentQuote ? formatCheckoutCurrency(currentQuote.total) : 'the current checkout quote'}.</span></label>
+        <Button disabled={checkoutBlocked || !confirmed || isSubmitting || activePaymentMethods.length === 0} size="lg" type="submit"><PackageCheck className="h-5 w-5" aria-hidden="true" />{isSubmitting ? 'Placing Order...' : 'Place Order'}</Button>
       </form>
       <aside className="h-fit rounded-lg border border-champagne/25 bg-ivory/90 p-6 lg:sticky lg:top-24">
         <h2 className="font-serif text-3xl text-burgundy">Order Summary</h2>
         <div className="mt-5 space-y-4">{enrichedItems.map((item) => <div className="border-b border-champagne/20 pb-3" key={item.lineId}>
           <p className="font-semibold">{item.product.name}</p><p>{item.size} x {item.quantity}</p>
           {item.message && <p className="text-burgundy">{item.message}</p>}
-          <p>{item.lineAmount === null ? 'Unavailable' : formatCurrency(item.lineAmount)}</p>
+          <p>{item.lineAmount === null ? 'Unavailable' : `Catalog estimate: ${formatCheckoutCurrency(item.lineAmount)}`}</p>
           <button type="button" className="text-burgundy underline" aria-label={`Remove ${item.product.name}`} onClick={() => removeItems([item.lineId])}>Remove</button>
         </div>)}</div>
         <dl className="mt-5 space-y-3">{(['subtotal', 'discount', 'shippingFee', 'total'] as const).map((field) => <div className="flex justify-between" key={field}><dt>{({ subtotal: 'Subtotal', discount: 'Discount', shippingFee: 'Shipping', total: 'Total' })[field]}</dt><dd>{amount(field)}</dd></div>)}</dl>

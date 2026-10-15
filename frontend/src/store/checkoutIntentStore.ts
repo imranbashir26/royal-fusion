@@ -15,9 +15,10 @@ interface IntentState {
   completion: Completion | null
   pendingReceipt: CanonicalOrderReceipt | null
   recovery: Recovery | null
-  freeze: (request: Omit<CanonicalOrderRequest, 'idempotencyKey'>, lines: PurchasedLine[]) => CheckoutIntent
+  freeze: (request: Omit<CanonicalOrderRequest, 'idempotencyKey'>, lines: PurchasedLine[], issuedToken?: string) => CheckoutIntent
   complete: (receipt: CanonicalOrderReceipt) => Promise<void>
   newAttempt: () => void
+  rejectQuote: (attemptId: string) => void
 }
 interface Storage { getItem: (key: string) => string | null; setItem: (key: string, value: string) => void }
 const key = 'royal-fusion-checkout-intent-v1'
@@ -87,13 +88,14 @@ export function createCheckoutIntentStore(storage?: Storage, uuid = () => crypto
     target.setItem(key, JSON.stringify({ version: 2, ...value, ...(reset ? { reset: true } : {}) }))
   }
   return create<IntentState>()((set, get) => ({ ...initial, hydrationStatus: hydration.status, receipt: initial.completion?.receipt ?? null,
-    freeze: (request, lines) => {
+    freeze: (request, lines, issuedToken) => {
       if (get().recovery) throw new Error('The saved checkout attempt requires explicit recovery.')
       if (get().intent) return get().intent!
+      if (issuedToken !== undefined && !isVariantId(issuedToken)) throw new Error('Invalid issued checkout token.')
       const grouped = aggregateRequestItems(request.items)
       if (!grouped) throw new Error('Invalid checkout items.')
       const intent = JSON.parse(JSON.stringify({ request: { ...request,
-        items: [...grouped].sort(([a], [b]) => a.localeCompare(b)).map(([variantId, quantity]) => ({ variantId, quantity })), idempotencyKey: uuid() }, lines })) as CheckoutIntent
+        items: [...grouped].sort(([a], [b]) => a.localeCompare(b)).map(([variantId, quantity]) => ({ variantId, quantity })), idempotencyKey: issuedToken ?? uuid() }, lines })) as CheckoutIntent
       if (!validIntent(intent)) throw new Error('Invalid checkout intent.')
       const frozen = immutable(intent)
       write({ intent: frozen, completion: get().completion, pendingReceipt: null, recovery: null })
@@ -121,6 +123,13 @@ export function createCheckoutIntentStore(storage?: Storage, uuid = () => crypto
         write({ intent, completion: get().completion, pendingReceipt: validated, recovery })
         set({ recovery, hydrationStatus: 'recovery_required' }); throw error
       }
+    },
+    // Only the explicit QUOTE_CHANGED/QUOTE_REQUIRED no-effect response permits this.
+    // Uncertain transport outcomes must retain the original immutable request.
+    rejectQuote: (attemptId) => {
+      if (!get().intent || get().intent!.request.idempotencyKey !== attemptId || get().pendingReceipt || get().recovery) throw new Error('The saved checkout attempt requires recovery.')
+      write({ intent: null, completion: get().completion, pendingReceipt: null, recovery: null }, !get().completion)
+      set({ intent: null, pendingReceipt: null, recovery: null, hydrationStatus: get().completion ? 'completed' : 'reset' })
     },
     newAttempt: () => {
       write({ intent: null, completion: get().completion, pendingReceipt: null, recovery: null }, !get().completion)

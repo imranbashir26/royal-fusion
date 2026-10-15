@@ -15,22 +15,35 @@ export class OrdersV1Service {
       p_idempotency_key: 'checkout:' + input.idempotencyKey, p_items: input.items, p_contact: input.contact, p_shipping: input.shipping,
       p_payment_method: input.paymentMethod, p_coupon_code: input.couponCode || null,
       p_shipping_method_id: null, p_customer_id: customerId,
+      p_quote_fingerprint: input.quoteFingerprint ?? null,
     }
     let result
     for (let attempt = 0; attempt < 3; attempt++) {
-      try { result = await this.client.rpc('create_order_transaction', args) }
-      catch { scopedQuote.diagnostic('rpc', 'create_order_transaction', 'TRANSPORT_FAILURE'); throw unavailable() }
+      try { result = await this.client.rpc('create_order_transaction_v1_checked', args) }
+      catch { scopedQuote.diagnostic('rpc', 'create_order_transaction_v1_checked', 'TRANSPORT_FAILURE'); throw unavailable() }
       // This known collision rolled back. Never replace the checkout token.
       if (!(result?.error?.code === '23505' && result.error.message?.includes('orders_order_number_key'))) break
     }
     if (result?.error) {
-      scopedQuote.diagnostic('rpc', 'create_order_transaction', normalizedCheckoutCategory(result.error, 'RPC_FAILURE'))
+      scopedQuote.diagnostic('rpc', 'create_order_transaction_v1_checked', normalizedCheckoutCategory(result.error, 'RPC_FAILURE'))
       throw await this.mapError(result.error, input, scopedQuote)
     }
-    return receipt(result?.data, input)
+    const data = result?.data
+    if (data?.outcome !== undefined) {
+      // Only a normal, committed RPC result authorizes replacement. SQL errors,
+      // malformed envelopes and lost responses retain the original attempt.
+      if (data && !Array.isArray(data) && Object.keys(data).length === 3
+          && data.outcome === 'retired' && data.code === 'QUOTE_CHANGED'
+          && data.idempotencyKey === input.idempotencyKey) {
+        throw new CheckoutApiError(409, 'QUOTE_CHANGED', 'Checkout prices or charges changed. Review the updated total and confirm again.')
+      }
+      throw unavailable()
+    }
+    return receipt(data, input)
   }
   async mapError(error, input, quoteService = this.quoteService) {
     if (error.code === 'P0001') {
+      if (['V1_QUOTE_CHANGED', 'V1_QUOTE_REQUIRED', 'V1_ATTEMPT_UNAVAILABLE'].includes(error.message)) return unavailable()
       if (error.message === 'V2_IDEMPOTENCY_CONFLICT') return new CheckoutApiError(409, 'IDEMPOTENCY_CONFLICT', 'This checkout token belongs to a different request.')
       if (error.message === 'V2_IDEMPOTENCY_AMBIGUOUS') return new CheckoutApiError(409, 'IDEMPOTENCY_AMBIGUOUS', 'This checkout cannot be matched safely. Contact support before starting another attempt.')
       if (error.message === 'V2_INVALID_REQUEST') return new CheckoutApiError(400, 'INVALID_CHECKOUT_REQUEST', 'Please check your checkout information.')

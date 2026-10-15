@@ -17,9 +17,7 @@ const expectedPostTuples = canonical([...ownerTuples,...serviceTuples])
 const ownerSubset = tuples => tuples.filter(t=>t[1]==='postgres')
 const serviceSubset = tuples => tuples.filter(t=>t[1]==='service_role')
 
-test('Release 005 native PostgreSQL 17 integration acceptance (stop on first critical failure)', {
- skip: process.env.RF_RELEASE005_NATIVE_CONFIG ? false : 'Run scripts/test-release005-native.mjs for owned native PG17 integration checks',
-}, async t => {
+test('Release 005 native PostgreSQL 17 integration acceptance (stop on first critical failure)', async t => {
  async function scenario(name, body) {
   let passed=false
   await t.test(name,async st=>{await body(st);passed=true})

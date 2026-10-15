@@ -6,6 +6,7 @@ import {fixtureV2,normalLine,fixedLine,configuredLine,requestV2,orderV2,shapeSQL
 import {fixture014,apply014,mutate014,state014,client014} from './support/fulfillmentV2Database.js'
 import {OrdersV2Service} from '../services/ordersV2Service.js'
 import {OrdersV1Service} from '../services/ordersV1Service.js'
+import {checkedFixture,confirmV1} from './support/checkedV1Database.js'
 import {savePack,productPatch,saveTester,variantPatch} from './support/testerCatalogDatabase.js'
 const logger={warn(){}}
 async function fixture(t){const f=await fixture014();t.after(()=>f.db.close());return f}
@@ -262,14 +263,14 @@ test('late history insertion failure rolls the complete cancellation back',async
 })
 
 test('V1 Baraan lifecycle/replay/payment and cancellation stay unchanged on dispatcher 014',async t=>{
- const f=await fixture(t),service=new OrdersV1Service(client014(f.db),{logger}),request=()=>({idempotencyKey:randomUUID(),items:[{variantId:f.normal.variant,quantity:2}],contact:{name:'Baraan buyer',email:'baraan@example.invalid',phone:'00000000000'},shipping:{address:'Fictional Address',city:'Karachi',province:'Sindh',notes:''},paymentMethod:'Cash on Delivery'})
- const order=await service.create(request()),mutation=randomUUID(),payload={status:'Confirmed',reason:''},result=await mutate014(f,order.id,'status',payload,{mutation,revision:'0'})
+ const f=await checkedFixture(t),service=new OrdersV1Service(client014(f.db),{logger}),request=()=>confirmV1(f.db,{items:[{variantId:f.normal.variant,quantity:2}],contact:{name:'Baraan buyer',email:'baraan@example.invalid',phone:'00000000000'},shipping:{address:'Fictional Address',city:'Karachi',province:'Sindh',notes:''},paymentMethod:'Cash on Delivery',couponCode:''})
+ const order=await service.create(await request()),mutation=randomUUID(),payload={status:'Confirmed',reason:''},result=await mutate014(f,order.id,'status',payload,{mutation,revision:'0'})
  const state=await state014(f.db);assert.deepEqual(await mutate014(f,order.id,'status',payload,{mutation,revision:'0'}),{...result,replayed:true});assert.deepEqual(await state014(f.db),state)
  assert.equal((await mutate014(f,order.id,'status',payload)).changed,false)
  await failure(f,()=>mutate014(f,order.id,'cancel',{reason:'Stale V1'},{revision:'0'}),/ORDER_STALE/)
  await mutate014(f,order.id,'cancel',{reason:'Restore Baraan V1'});assert.equal((await stock(f,f.normal.variant)).stock_quantity,12)
  assert.equal((await mutate014(f,order.id,'cancel',{reason:'V1 independent duplicate'})).changed,false)
- const delivered=await service.create(request())
+ const delivered=await service.create(await request())
  for(const status of ['Confirmed','Processing','Shipped','Delivered'])await mutate014(f,delivered.id,'status',{status,reason:'',...(status==='Shipped'?{courier:'Courier',trackingNumber:'V1-TRACK'}:{})})
  assert.equal((await f.db.query('select payment_status from public.orders where id=$1',[delivered.id])).rows[0].payment_status,'Unpaid')
  await mutate014(f,delivered.id,'payment',{reference:'V1 COD',reason:'Funds collected'})
@@ -323,8 +324,17 @@ for(const styles of [['LF','LF'],['CRLF','CRLF'],['LF','CRLF'],['CRLF','LF']])te
 })
 
 test('014 populated rerun preserves V1/V2 data and rejects unknown baseline/target drift',async t=>{
- const f=await fixture(t),{order}=await create(f,[fixedLine(f)]),v1=new OrdersV1Service(client014(f.db),{logger})
- await v1.create({idempotencyKey:randomUUID(),items:[{variantId:f.normal.variant,quantity:1}],contact:{name:'Fixture Customer',email:'fixture@example.invalid',phone:'00000000000'},shipping:{address:'Fictional Address',city:'Karachi',province:'Sindh',notes:''},paymentMethod:'Cash on Delivery'})
+ const f=await fixture(t),{order}=await create(f,[fixedLine(f)])
+ // Seed the historical V1 RPC contract present at migration 014, before Release 007.
+ // Current checked V1 service coverage uses checkedFixture above; do not install
+ // later releases into this exact historical migration/rerun test.
+ const legacy=await client014(f.db).rpc('create_order_transaction',{
+  p_idempotency_key:'checkout:'+randomUUID(),p_items:[{variantId:f.normal.variant,quantity:1}],
+  p_contact:{name:'Fixture Customer',email:'fixture@example.invalid',phone:'00000000000'},
+  p_shipping:{address:'Fictional Address',city:'Karachi',province:'Sindh',notes:''},
+  p_payment_method:'Cash on Delivery',p_coupon_code:null,p_shipping_method_id:null,p_customer_id:null,
+ })
+ assert.equal(legacy.error,null);assert.ok(legacy.data.id)
  await mutate014(f,order.id,'cancel',{reason:'Populated rerun'})
  const before=await state014(f.db),shape=(await f.db.query(shapeSQL)).rows[0].shape
  for(const style of ['LF','CRLF','LF']){

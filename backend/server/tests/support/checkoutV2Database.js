@@ -44,10 +44,20 @@ export async function orderV2(db,input,customer=null) { return (await db.query('
 export function clientV2(db) {
  const read=testerSqlClient(db)
  return {...read,async rpc(name,args) {
-  if(name==='create_order_transaction') {
+  if(['create_order_transaction','quote_checkout_v1_checked','create_order_transaction_v1_checked'].includes(name)) {
    await db.exec('set role service_role')
-   try {return {data:(await db.query('select public.create_order_transaction($1,$2::jsonb,$3::jsonb,$4::jsonb,$5,$6,$7::uuid,$8::uuid) result',
-    [args.p_idempotency_key,JSON.stringify(args.p_items),JSON.stringify(args.p_contact),JSON.stringify(args.p_shipping),args.p_payment_method,args.p_coupon_code,args.p_shipping_method_id,args.p_customer_id])).rows[0].result,error:null}}
+   try {
+    let result
+    if(name==='quote_checkout_v1_checked')result=await db.query('select public.quote_checkout_v1_checked($1::jsonb,$2::uuid) result',[JSON.stringify(args.p_request),args.p_customer_id])
+    else{
+     const values=[args.p_idempotency_key,JSON.stringify(args.p_items),JSON.stringify(args.p_contact),JSON.stringify(args.p_shipping),args.p_payment_method,args.p_coupon_code,args.p_shipping_method_id,args.p_customer_id]
+     if(name==='create_order_transaction_v1_checked'){
+      values.push(args.p_quote_fingerprint)
+      result=await db.query('select public.create_order_transaction_v1_checked($1,$2::jsonb,$3::jsonb,$4::jsonb,$5,$6,$7::uuid,$8::uuid,$9) result',values)
+     }else result=await db.query('select public.create_order_transaction($1,$2::jsonb,$3::jsonb,$4::jsonb,$5,$6,$7::uuid,$8::uuid) result',values)
+    }
+    return {data:result.rows[0].result,error:null}
+   }
    catch(e){return {data:null,error:{code:e.code,message:e.message}}}
    finally{await db.exec('reset role').catch(e=>{if(e.code!=='25P02')throw e})}
   }

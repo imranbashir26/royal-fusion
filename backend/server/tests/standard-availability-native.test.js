@@ -58,9 +58,7 @@ async function assertBlocked(observer, pid) {
   assert.fail('Expected a real PostgreSQL lock wait')
 }
 
-test('Release 006 owned native PG17 acceptance; stop on first critical failure', {
-  skip: process.env.RF_RELEASE005_NATIVE_CONFIG ? false : 'Use scripts/test-release006-native.mjs',
-}, async t => {
+test('Release 006 owned native PG17 acceptance; stop on first critical failure', async t => {
   async function scenario(name, body) {
     let passed = false
     await t.test(name, async st => { await body(st); passed = true })

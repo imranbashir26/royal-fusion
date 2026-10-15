@@ -6,7 +6,7 @@ import { phase3CheckoutDatabase } from './support/phase3CheckoutDatabase.js'
 
 const input = { code: 'PARENT10', type: 'Percentage', discountValue: 10, minimumOrderAmount: 0, maxDiscountAmount: null, description: '', startDate: null, endDate: null, usageLimit: 10, perCustomerUsageLimit: 0, status: 'Active' }
 async function fixture(t) {
-  const f = await phase3CheckoutDatabase(); t.after(() => f.db.close())
+  const f = await phase3CheckoutDatabase(t)
   f.service = new CouponsService(f.client); f.actorContext = { userId: f.actor, requestId: 'phase3-quote-regression' }
   f.coupon = await f.service.create(input, f.actorContext)
   return f
@@ -24,8 +24,8 @@ test('admin-created coupons feed unchanged V1/V2 rounding, caps, fixed and free-
     await f.service.create({ ...input, type, discountValue, code }, f.actorContext)
     const q = await f.quote(code); assert.equal(q.discount, discount); assert.equal(q.shippingFee, shipping); assert.ok(q.total >= 0); assert.equal(q.orderingEnabled, false)
   }
-  assert.equal(capped.usedCount, 0); assert.equal((await f.db.query('select count(*) from orders')).rows[0].count, 0)
-  assert.equal((await f.db.query('select stock_quantity from product_variants')).rows[0].stock_quantity, 12)
+  assert.equal(capped.usedCount, 0); assert.equal((await f.db.query('select count(*)::int from orders')).rows[0].count, 0)
+  assert.equal((await f.db.query('select stock_quantity from product_variants where id=$1',[f.variant])).rows[0].stock_quantity, 12)
 })
 
 test('unchanged V2 engine discounts monetary pack parents/categories, never physical tester components', async t => {
@@ -53,7 +53,7 @@ test('admin deactivation, dates and usage limits remain enforced by unchanged ch
   row = await f.service.update(row.id, { ...config(row), endDate: null, usageLimit: 1 }, f.actorContext)
   await f.db.query('update coupons set used_count=1 where id=$1', [row.id])
   await assert.rejects(() => f.quote(input.code), /V2_INVALID_COUPON/)
-  assert.equal((await f.db.query('select stock_quantity from product_variants')).rows[0].stock_quantity, 12)
-  assert.equal((await f.db.query('select count(*) from coupon_redemptions')).rows[0].count, 0)
-  assert.equal((await f.db.query('select count(*) from orders')).rows[0].count, 0)
+  assert.equal((await f.db.query('select stock_quantity from product_variants where id=$1',[f.variant])).rows[0].stock_quantity, 12)
+  assert.equal((await f.db.query('select count(*)::int from coupon_redemptions')).rows[0].count, 0)
+  assert.equal((await f.db.query('select count(*)::int from orders')).rows[0].count, 0)
 })

@@ -3,7 +3,9 @@ import test from 'node:test'
 import express from 'express'
 import cookieParser from 'cookie-parser'
 import { randomUUID } from 'node:crypto'
-import { legacyAdminDatabase, applyRelease, sessionSqlClient } from './support/singleAdminDatabase.js'
+import { sessionSqlClient } from './support/singleAdminDatabase.js'
+import {checkedFixture} from './support/checkedV1Database.js'
+import {clientV2} from './support/checkoutV2Database.js'
 import { createAuthRuntime } from '../auth/runtime.js'
 import { createAuthConfig } from '../auth/config.js'
 import { SupabaseSessionRepository } from '../services/sessionRepository.js'
@@ -13,10 +15,15 @@ import { createOrdersV1Router } from '../routes/ordersV1.js'
 import { authErrorHandler, createAdminIdentity, requestContext } from '../middleware/authSecurity.js'
 
 test('trusted customer HTTP cookies, own profile, verification, checkout identity and signout', async t => {
-  const {db,admin,customer}=await legacyAdminDatabase(); t.after(()=>db.close())
-  await applyRelease(db,'001_single_admin_expansion.sql',admin)
+  const {db,admin,normal}=await checkedFixture(t),customer=randomUUID()
+  await db.query('insert into auth.users(id,email) values($1,$2)',[customer,'customer@example.invalid'])
+  await db.query("update profiles set status='Active' where id=$1",[customer])
   const queries=[], sql=sessionSqlClient(db)
   const client={...sql,from(table){const wrap=q=>new Proxy(q,{get(target,key){const value=target[key];if(typeof value!=='function')return value;return (...args)=>{if(key==='eq')queries.push({table,key:args[0],value:args[1]});const result=value.apply(target,args);return result&&typeof result.select==='function'?wrap(result):result}}});return wrap(sql.from(table)) }}
+  client.rpc=async(name,args)=>{
+    if(name!=='quote_checkout_v1_checked')return sql.rpc(name,args)
+    queries.push({rpc:name,args:structuredClone(args)});return clientV2(db).rpc(name,args)
+  }
 
 
   let verified=true, registrations=0
@@ -56,10 +63,11 @@ test('trusted customer HTTP cookies, own profile, verification, checkout identit
   assert.equal((await db.query('select full_name from public.profiles where id=$1',[customer])).rows[0].full_name,'Updated Customer')
   assert.equal((await db.query('select count(*)::int n from public.user_roles where user_id=$1',[customer])).rows[0].n,0)
   // The real quote service validates the cookie's UUID, never a browser customerId.
-  const quote={items:[{variantId:randomUUID(),quantity:1}],shipping:{city:'Lahore',province:'Punjab'}}
+   const quote={items:[{variantId:normal.variant,quantity:1}],shipping:{city:'Lahore',province:'Punjab'}}
   assert.equal((await request('/api/v1/checkout/quote','POST',{...quote,customerId:admin},csrf)).status,400)
-  queries.length=0;await request('/api/v1/checkout/quote','POST',quote,csrf)
-  assert.ok(queries.some(q=>q.table==='profiles'&&q.key==='id'&&q.value===customer));assert.ok(!queries.some(q=>q.value===admin))
+   queries.length=0;assert.equal((await request('/api/v1/checkout/quote','POST',quote,csrf)).status,200)
+   assert.ok(queries.some(q=>q.rpc==='quote_checkout_v1_checked'&&q.args.p_customer_id===customer))
+   assert.ok(!queries.some(q=>q.value===admin||q.args?.p_customer_id===admin))
   await db.query("update public.profiles set status='Inactive' where id=$1",[customer])
   assert.equal((await request('/api/v1/customer/profile')).status,403)
   assert.equal((await request('/api/v1/checkout/quote','POST',quote,csrf)).body.error.code,'CUSTOMER_UNAVAILABLE')

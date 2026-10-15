@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { randomUUID } from 'node:crypto'
+import { randomUUID,randomBytes } from 'node:crypto'
 import express from 'express'
 import cookieParser from 'cookie-parser'
 import { createAuthConfig } from '../auth/config.js'
@@ -10,6 +10,7 @@ import { createOrdersV1Router } from '../routes/ordersV1.js'
 import { publicRouter } from '../routes/public.js'
 import { OrdersV1Service } from '../services/ordersV1Service.js'
 import { CheckoutQuoteService, checkoutCalendarDate } from '../services/checkoutQuoteService.js'
+import { LegacyQuoteOracle } from './support/v1QuoteOracle.js'
 import { parseCheckout, orderRequestSchema } from '../schemas/ordersV1.js'
 
 export const productId = '45852db8-8b83-425e-8d1f-4112958ed505'
@@ -19,7 +20,7 @@ const customerId = '90000000-0000-4000-8000-000000000001'
 export const input = (overrides = {}) => ({ idempotencyKey: randomUUID(), items: [{ variantId, quantity: 1 }],
   contact: { name: 'Fictional Customer', email: 'checkout@example.invalid', phone: '+92 300 0000000' },
   shipping: { address: 'Fictional Address', city: 'Example City', province: 'Example Province', notes: '' },
-  paymentMethod: 'Cash on Delivery', couponCode: '', ...overrides })
+  paymentMethod: 'Cash on Delivery', couponCode: '', quoteFingerprint: '1'.repeat(64), ...overrides })
 export function fixtures() {
   return {
     products: [{ commerce_kind:'standard', id: productId, name: 'Baraan', active: true, status: 'Published' }],
@@ -31,7 +32,8 @@ export function fixtures() {
   }
 }
 export function memoryClient(db = fixtures()) {
-  const calls = []
+  const calls = [],issued=new Map()
+  const subject=(request,customer)=>JSON.stringify([customer,request.items,request.email??request.contact?.email,request.shipping.city,request.shipping.province,(request.couponCode??'').toUpperCase()])
   class Query {
     constructor(table) { this.table = table; this.filters = []; this.head = false }
     select(_columns, options) { this.head = options?.head; return this }
@@ -57,31 +59,53 @@ export function memoryClient(db = fixtures()) {
     calls.push({ name, args: structuredClone(args) })
     if (client.rpcFailure) return { error: client.rpcFailure }
     const failure = (message, code = 'P0001') => ({ error: { code, message } })
+    if(name==='quote_checkout_v1_checked') {
+      try { const quote=await new LegacyQuoteOracle(client,{clock:client.clock??(()=>new Date())}).quote(args.p_request,args.p_customer_id)
+        const idempotencyKey=randomUUID(),quoteFingerprint=randomBytes(32).toString('hex')
+        issued.set('checkout:'+idempotencyKey,{quote,quoteFingerprint,subject:subject(args.p_request,args.p_customer_id),state:'active'})
+        return {data:{...quote,idempotencyKey,quoteFingerprint},error:null} }
+      catch(error){return failure(error.code==='INVALID_COUPON'?'Coupon is unavailable.':error.code==='CUSTOMER_UNAVAILABLE'?'Customer account is unavailable.':error.message,error.code==='CUSTOMER_UNAVAILABLE'?'23503':'P0001')}
+    }
+    if(name!=='create_order_transaction_v1_checked') return failure('Unknown RPC')
+
     if (args.p_customer_id && db.profiles.find(p => p.id === args.p_customer_id)?.status !== 'Active') return failure('Customer account is unavailable.', '23503')
     let order = db.orders.find((row) => row.idempotency_key === args.p_idempotency_key)
     if (order) {
       const items = db.order_items.filter(i => i.order_id === order.id).map(i => ({ variantId: i.variant_id, quantity: i.quantity }))
-      if ((order.checkout_version ?? 1) !== 1 || JSON.stringify(items) !== JSON.stringify(args.p_items)
+      if ((order.checkout_version ?? 1) !== 1 || order.quote_fingerprint != null && order.quote_fingerprint !== args.p_quote_fingerprint || JSON.stringify(items) !== JSON.stringify(args.p_items)
           || order.customer_id !== args.p_customer_id || order.customer_name !== args.p_contact.name || order.customer_email !== args.p_contact.email
           || order.customer_phone !== args.p_contact.phone || order.shipping_address !== args.p_shipping.address || order.shipping_city !== args.p_shipping.city
           || order.shipping_province !== args.p_shipping.province || order.order_notes !== args.p_shipping.notes
           || order.payment_method !== args.p_payment_method || order.coupon_code !== (args.p_coupon_code ?? '')) return failure('V2_IDEMPOTENCY_CONFLICT')
       return { data: rpcReceipt(order, true), error: null }
     }
+    if(!args.p_quote_fingerprint) return failure('V2_INVALID_REQUEST')
+    const attempt=issued.get(args.p_idempotency_key)
+    if(!attempt)return failure('V1_ATTEMPT_UNAVAILABLE')
+    const request={items:args.p_items,contact:args.p_contact,shipping:args.p_shipping,couponCode:args.p_coupon_code??''}
+    if(attempt.quoteFingerprint!==args.p_quote_fingerprint||attempt.subject!==subject(request,args.p_customer_id)
+      ||attempt.request&&JSON.stringify(attempt.request)!==JSON.stringify(args))return failure('V2_IDEMPOTENCY_CONFLICT')
+    const retired=()=>({data:{outcome:'retired',code:'QUOTE_CHANGED',idempotencyKey:args.p_idempotency_key.slice(9)},error:null})
+    if(attempt.state==='retired')return retired()
     let quote
     try {
-      quote = await new CheckoutQuoteService(client).quote({ items: args.p_items, shipping: { city: args.p_shipping.city, province: args.p_shipping.province }, email: args.p_contact.email, couponCode: args.p_coupon_code ?? '' }, args.p_customer_id)
+      quote = await new LegacyQuoteOracle(client).quote({ items: args.p_items, shipping: { city: args.p_shipping.city, province: args.p_shipping.province }, email: args.p_contact.email, couponCode: args.p_coupon_code ?? '' }, args.p_customer_id)
       if (!quote.paymentMethods.includes(args.p_payment_method)) return failure('V1_PAYMENT_UNAVAILABLE')
     } catch (error) {
       if (['VARIANT_NOT_FOUND','VARIANT_UNAVAILABLE','OUT_OF_STOCK','INSUFFICIENT_STOCK'].includes(error.code)) return failure('One or more product variants are unavailable.')
       if (error.code === 'INVALID_COUPON') return failure('Coupon is unavailable.')
       return failure('V1_CONFIGURATION_UNAVAILABLE')
     }
+    if(['subtotal','discount','shippingFee','total'].some(key=>quote[key]!==attempt.quote[key])){
+      attempt.state='retired';attempt.request=structuredClone(args);return retired()
+    }
     order = { id: randomUUID(), order_number: 'RF-20261002-1234ABCD', customer_id: args.p_customer_id,
       customer_name: args.p_contact.name, customer_email: args.p_contact.email, customer_phone: args.p_contact.phone,
       shipping_address: args.p_shipping.address, shipping_city: args.p_shipping.city, shipping_province: args.p_shipping.province, order_notes: args.p_shipping.notes,
       payment_method: args.p_payment_method, coupon_code: args.p_coupon_code ?? '', status: 'Pending', payment_status: args.p_payment_method === 'Cash on Delivery' ? 'Unpaid' : 'Pending',
       subtotal: quote.subtotal, discount: quote.discount, shipping_fee: quote.shippingFee, total: quote.total, currency: 'PKR', idempotency_key: args.p_idempotency_key }
+    order.quote_fingerprint = args.p_quote_fingerprint
+    attempt.state='committed';attempt.request=structuredClone(args)
     db.orders.push(order)
     args.p_items.forEach((item) => { db.order_items.push({ order_id: order.id, variant_id: item.variantId, quantity: item.quantity }); db.product_variants.find((row) => row.id === item.variantId).stock_quantity -= item.quantity })
     if (client.loseResponse) { client.loseResponse = false; throw new Error('Transport failure after commit') }
@@ -95,7 +119,12 @@ export function memoryClient(db = fixtures()) {
     queue = pending.catch(() => {})
     return pending
   }
+  client.orderCalls=calls.filter.bind(calls,call=>call.name==='create_order_transaction_v1_checked')
   return client
+}
+async function issuedInput(client,raw=input(),customer=null){
+ const quote=await new CheckoutQuoteService(client,{logger}).quote({items:raw.items,email:raw.contact.email,shipping:{city:raw.shipping.city,province:raw.shipping.province},couponCode:raw.couponCode},customer)
+ return {...raw,idempotencyKey:quote.idempotencyKey,quoteFingerprint:quote.quoteFingerprint}
 }
 function rpcReceipt(order, idempotent) {
   return { id:order.id,idempotencyKey:order.idempotency_key.slice(9),orderNumber:order.order_number,status:order.status,
@@ -104,25 +133,25 @@ function rpcReceipt(order, idempotent) {
 }
 const logger = { warn() {} }
 
-test('Baraan request uses exact eight privileged RPC arguments; guest, Bank Transfer and replay', async () => {
-  const client = memoryClient(), service = new OrdersV1Service(client, { logger }), body = input()
+test('Baraan request uses exact nine checked RPC arguments; guest, Bank Transfer and replay', async () => {
+  const client = memoryClient(), service = new OrdersV1Service(client, { logger }), body = await issuedInput(client)
   client.auth = { setSession: () => assert.fail('Privileged auth state must not be mutated'), signInWithPassword: () => assert.fail('Privileged client must never sign in') }
   const result = await service.create(body)
   assert.equal(result.subtotal, 2900); assert.equal(result.total, 3150); assert.equal(result.paymentStatus, 'Unpaid')
   assert.notEqual(result.id, result.orderNumber)
-  assert.deepEqual(client.calls[0], { name: 'create_order_transaction', args: {
+  assert.deepEqual(client.orderCalls()[0], { name: 'create_order_transaction_v1_checked', args: {
     p_idempotency_key: `checkout:${body.idempotencyKey}`, p_items: body.items, p_contact: body.contact, p_shipping: body.shipping,
-    p_payment_method: 'Cash on Delivery', p_coupon_code: null, p_shipping_method_id: null, p_customer_id: null,
+    p_payment_method: 'Cash on Delivery', p_coupon_code: null, p_shipping_method_id: null, p_customer_id: null, p_quote_fingerprint: body.quoteFingerprint,
   } })
   client.db.product_variants[0].active = false; client.db.product_variants[0].regular_price = 9000
-  assert.equal((await service.create(body)).idempotent, true); assert.equal(client.calls.length, 2)
+  assert.equal((await service.create(body)).idempotent, true); assert.equal(client.orderCalls().length, 2)
   await assert.rejects(service.create({ ...body, shipping: { ...body.shipping, notes: 'changed' } }), { code: 'IDEMPOTENCY_CONFLICT' })
   await assert.rejects(service.create(body, customerId), { code: 'IDEMPOTENCY_CONFLICT' })
   const bank = memoryClient()
-  assert.equal((await new OrdersV1Service(bank).create(input({ paymentMethod: 'Bank Transfer' }), customerId)).paymentStatus, 'Pending')
-  assert.equal(bank.calls[0].args.p_customer_id, customerId)
-  bank.db.profiles[0].status = 'Inactive'
-  await assert.rejects(new OrdersV1Service(bank).create(input(), customerId), { code: 'CUSTOMER_UNAVAILABLE' })
+  assert.equal((await new OrdersV1Service(bank).create(await issuedInput(bank,input({ paymentMethod: 'Bank Transfer' }),customerId), customerId)).paymentStatus, 'Pending')
+  assert.equal(bank.orderCalls()[0].args.p_customer_id, customerId)
+  const inactive=await issuedInput(bank,input(),customerId);bank.db.profiles[0].status = 'Inactive'
+  await assert.rejects(new OrdersV1Service(bank).create(inactive, customerId), { code: 'CUSTOMER_UNAVAILABLE' })
 })
 test('strict schema rejects injection, invalid UUID, quantities, methods and aggregates', () => {
   for (const body of [input({ price: 1 }), input({ total: 1 }), input({ customerId }), input({ status: 'Paid' }), input({ shippingFee: 0 }),
@@ -138,7 +167,7 @@ test('strict schema rejects injection, invalid UUID, quantities, methods and agg
 })
 
 test('authoritative receipt is allowlisted; missing, malformed or wrong-token RPC results fail closed', async () => {
-  const body=input(),client=memoryClient(),service=new OrdersV1Service(client,{logger}),receipt=await service.create(body)
+  const client=memoryClient(),body=await issuedInput(client),service=new OrdersV1Service(client,{logger}),receipt=await service.create(body)
   client.rpc=async()=>({data:{...receipt,idempotent:true,customer_email:'private@example.invalid',quote_snapshot:{secret:'private'}}})
   const replay=await service.create(body);assert.deepEqual(replay,{...receipt,idempotent:true})
   // Historical monetary values belong to SQL; the service does not re-price them.
@@ -160,17 +189,17 @@ test('SQL domain errors are deterministic and redacted; order-number retries ret
     await assert.rejects(()=>service.create(body,null,'domain-request-id'),e=>e.code==='INVALID_CHECKOUT_REQUEST'&&!/SECRET|Authorization|customer@/.test(e.message))}
   assert.ok(entries.every(e=>e.requestId==='domain-request-id'));assert.doesNotMatch(JSON.stringify(entries),/SECRET|Authorization|customer@/)
   const retry=memoryClient(),rpc=retry.rpc.bind(retry),keys=[];let attempts=0
-  retry.rpc=async(name,args)=>{keys.push(args.p_idempotency_key);if(attempts++<2)return {error:{code:'23505',message:'orders_order_number_key'}};return rpc(name,args)}
-  assert.equal((await new OrdersV1Service(retry,{logger}).create(body)).idempotent,false)
+  retry.rpc=async(name,args)=>{if(name!=='create_order_transaction_v1_checked')return rpc(name,args);keys.push(args.p_idempotency_key);if(attempts++<2)return {error:{code:'23505',message:'orders_order_number_key'}};return rpc(name,args)}
+  assert.equal((await new OrdersV1Service(retry,{logger}).create(await issuedInput(retry,body))).idempotent,false)
   assert.equal(keys.length,3);assert.equal(new Set(keys).size,1)
 })
 test('lost response, concurrent conflict and safe RPC error mapping', async () => {
-  const client = memoryClient(), service = new OrdersV1Service(client, { logger }), body = input()
+  const client = memoryClient(), service = new OrdersV1Service(client, { logger }), body = await issuedInput(client)
   client.loseResponse = true
   await assert.rejects(service.create(body), { code: 'CHECKOUT_UNAVAILABLE' })
   assert.equal((await service.create(body)).idempotent, true); assert.equal(client.db.orders.length, 1)
-  const concurrent = memoryClient(), concurrently = new OrdersV1Service(concurrent, { logger }), token = randomUUID()
-  const outcomes = await Promise.allSettled([concurrently.create(input({ idempotencyKey: token })), concurrently.create(input({ idempotencyKey: token, shipping: { ...input().shipping, notes: 'different' } }))])
+  const concurrent = memoryClient(), concurrently = new OrdersV1Service(concurrent, { logger }), request = await issuedInput(concurrent)
+  const outcomes = await Promise.allSettled([concurrently.create(request), concurrently.create({ ...request, shipping: { ...request.shipping, notes: 'different' } })])
   assert.equal(outcomes.filter((outcome) => outcome.status === 'fulfilled').length, 1)
   assert.equal(outcomes.find((outcome) => outcome.status === 'rejected').reason.code, 'IDEMPOTENCY_CONFLICT')
   for (const [failure, code] of [[{ code: 'P0001', message: 'Coupon has expired.' }, 'INVALID_COUPON'], [{ code: 'P0001', message: 'No shipping method is available.' }, 'CHECKOUT_UNAVAILABLE'], [{ code: 'XX000', message: 'SECRET SQL' }, 'CHECKOUT_FAILED']]) {
@@ -189,8 +218,8 @@ test('new-order commerce rejection comes from RPC; diagnostics preserve public e
     [(db) => { db.shipping_methods = [] }, 'CHECKOUT_UNAVAILABLE'],
     [(db) => { db.site_settings[0].payments[0].active = false }, 'INVALID_PAYMENT_METHOD'],
   ]) {
-    const client = memoryClient(); change(client.db)
-    await assert.rejects(new OrdersV1Service(client).create(input()), { code }); assert.equal(client.calls.length, 1)
+    const client = memoryClient(),body=await issuedInput(client);change(client.db)
+    await assert.rejects(new OrdersV1Service(client).create(body), { code }); assert.equal(client.orderCalls().length, 1)
   }
 })
 
@@ -206,7 +235,7 @@ async function api(t, { production = false, orderLimit = 20 } = {}) {
   app.use(authErrorHandler(config))
   const server = app.listen(0, '127.0.0.1'); await new Promise((resolve) => server.once('listening', resolve))
   t.after(() => new Promise((resolve) => server.close(resolve)))
-  return { client, async request(body, { actor, csrf = true, requestOrigin = origin, quote = false } = {}) {
+  return { client,async issue(body=input(),options={}){const result=await this.request({items:body.items,shipping:{city:body.shipping.city,province:body.shipping.province},email:body.contact.email,couponCode:body.couponCode},{...options,quote:true});assert.equal(result.status,200);return {...body,idempotencyKey:result.body.data.idempotencyKey,quoteFingerprint:result.body.data.quoteFingerprint}}, async request(body, { actor, csrf = true, requestOrigin = origin, quote = false } = {}) {
     const headers = { 'Content-Type': 'application/json' }
     if (requestOrigin) headers.Origin = requestOrigin
     if (actor) {
@@ -223,19 +252,20 @@ async function api(t, { production = false, orderLimit = 20 } = {}) {
 }
 test('HTTP guest/customer, origin, conditional CSRF, admin rejection and production launch gate', async (t) => {
   const server = await api(t)
-  const body = input()
+  const body = await server.issue()
   assert.equal((await server.request(body, { requestOrigin: 'https://evil.invalid' })).status, 403)
   assert.equal((await server.request(body, { requestOrigin: null })).status, 403)
   assert.equal((await server.request(body, { actor: 'customer', csrf: false })).status, 403)
   assert.equal((await server.request(body, { actor: 'admin' })).status, 403)
   const guest = await server.request(body); assert.equal(guest.status, 201); assert.equal(guest.body.data.idempotent, false)
   assert.equal((await server.request(body)).status, 200)
-  assert.equal((await server.request(input(), { actor: 'customer' })).status, 201)
+  assert.equal((await server.request(await server.issue(input(),{actor:'customer'}), { actor: 'customer' })).status, 201)
   assert.equal(server.client.calls.at(-1).args.p_customer_id, customerId)
   const gated = await api(t, { production: true })
   const preview = await gated.request({ items: body.items, shipping: { city: 'Karachi', province: 'Sindh' }, email: '', couponCode: '' }, { quote: true })
   assert.equal(preview.status, 200); assert.equal(preview.body.data.orderingEnabled, false)
-  assert.equal((await gated.request(input())).body.error.code, 'CHECKOUT_UNAVAILABLE'); assert.equal(gated.client.calls.length, 0)
+  assert.equal((await gated.request(input())).body.error.code, 'CHECKOUT_UNAVAILABLE')
+  assert.deepEqual(gated.client.calls.map(call => call.name), ['quote_checkout_v1_checked'])
 })
 test('HTTP rate limit and malformed body have safe envelopes', async (t) => {
   const server = await api(t, { orderLimit: 2 })
@@ -259,7 +289,7 @@ test('production legacy order and coupon paths are fenced before JSON access', a
 test('quotes: regular/sale prices, scoped shipping, base/default, thresholds and coupons', async () => {
   const client = memoryClient(), service = new CheckoutQuoteService(client)
   const quote = (overrides = {}) => service.quote({ items: [{ variantId, quantity: 1 }], shipping: { city: 'Karachi', province: 'Sindh' }, email: 'checkout@example.invalid', couponCode: '', ...overrides })
-  assert.equal((await quote()).subtotal, 2900); assert.equal(client.calls.length, 0)
+  assert.equal((await quote()).subtotal, 2900); assert.ok(client.calls.every(call=>call.name==='quote_checkout_v1_checked'))
   client.db.shipping_rates.push({ shipping_method_id: methodId, active: true, scope_type: 'default', scope_value: '', fee: 240, minimum_subtotal: 0 })
   assert.equal((await quote()).shippingFee, 240)
   client.db.shipping_rates.push({ shipping_method_id: methodId, active: true, scope_type: 'province', scope_value: 'Sindh', fee: 300, minimum_subtotal: 0 })
@@ -289,22 +319,22 @@ test('quotes: regular/sale prices, scoped shipping, base/default, thresholds and
   client.db.product_categories.push({ product_id: productId, category_id: 'category' })
   assert.equal((await quote({ couponCode: 'SAVE' })).discount, 250)
   coupon.end_date = '2000-01-01'; await assert.rejects(quote({ couponCode: 'SAVE' }), { code: 'INVALID_COUPON' })
-  assert.equal(client.calls.length, 0)
+  assert.ok(client.calls.every(call=>call.name==='quote_checkout_v1_checked'))
 })
 
 test('committed replay precedes disabled payment configuration; new token fails and changed intent conflicts', async () => {
-  const client = memoryClient(), service = new OrdersV1Service(client, { logger }), body = input()
+  const client = memoryClient(), service = new OrdersV1Service(client, { logger }), body = await issuedInput(client)
   const first = await service.create(body)
   client.db.site_settings[0].payments[0].active = false
   const replay = await service.create(body)
   assert.equal(replay.id, first.id); assert.equal(replay.idempotent, true); assert.equal(replay.idempotencyKey, body.idempotencyKey)
   await assert.rejects(service.create({ ...body, shipping: { ...body.shipping, notes: 'changed' } }), { code: 'IDEMPOTENCY_CONFLICT' })
-  await assert.rejects(service.create({ ...body, idempotencyKey: randomUUID() }), { code: 'INVALID_PAYMENT_METHOD' })
-  assert.equal(client.calls.length, 4)
+  await assert.rejects(service.create(await issuedInput(client,body)), { code: 'INVALID_PAYMENT_METHOD' })
+  assert.equal(client.orderCalls().length, 4)
 })
 test('SQL decides replay/conflict without service quote or textual read optimizations', async () => {
   for (const changed of [false, true]) {
-    const client = memoryClient(), body = input(), first = new OrdersV1Service(client, { logger })
+    const client = memoryClient(), body = await issuedInput(client), first = new OrdersV1Service(client, { logger })
     const quote = new CheckoutQuoteService(client, { logger })
     quote.withRequestId = () => quote
     await first.create(body)
@@ -313,7 +343,7 @@ test('SQL decides replay/conflict without service quote or textual read optimiza
     const racing = changed ? { ...body, shipping: { ...body.shipping, notes: 'changed' } } : body
     if (changed) await assert.rejects(second.create(racing), { code: 'IDEMPOTENCY_CONFLICT' })
     else assert.equal((await second.create(racing)).idempotent, true)
-    assert.equal(client.calls.length, 2); assert.equal(client.db.orders.length, 1)
+    assert.equal(client.orderCalls().length, 2); assert.equal(client.db.orders.length, 1)
   }
 })
 test('read diagnostics retain only request/operation/subsystem/normalized category', async () => {
@@ -339,7 +369,7 @@ test('order error mapping preserves the original requestId in internal read/RPC 
   await assert.rejects(new OrdersV1Service(client, { logger: { warn: (entry) => entries.push(entry) } }).create(input(), null, requestId),
     (error) => error.code === 'VARIANT_UNAVAILABLE' && !error.message.includes('SECRET'))
   assert.deepEqual(entries, [
-    { event: 'checkout.internal_failure', requestId, operation: 'rpc', subsystem: 'create_order_transaction', category: 'P0001' },
+    { event: 'checkout.internal_failure', requestId, operation: 'rpc', subsystem: 'create_order_transaction_v1_checked', category: 'P0001' },
     { event: 'checkout.internal_failure', requestId, operation: 'relational_read', subsystem: 'product_variants', category: 'PGRST301' },
   ])
   assert.doesNotMatch(JSON.stringify(entries), /SECRET|customer@|Authorization/)
@@ -350,9 +380,45 @@ test('quote coupon boundaries use explicit UTC rather than local calendar date',
   client.db.coupons.push({ id: randomUUID(), code: 'MIDNIGHT', status: 'Active', type: 'Fixed Amount', discount_value: 100, minimum_order_amount: 0, usage_limit: 0, used_count: 0, per_customer_usage_limit: 0, max_discount_amount: null, start_date: '2026-10-02', end_date: '2026-10-02' })
   const body = { items: [{ variantId, quantity: 1 }], shipping: { city: 'Karachi', province: 'Sindh' }, email: 'fixture@example.invalid', couponCode: 'MIDNIGHT' }
   for (const [instant, allowed] of [['2026-10-02T04:59:59+05:00', false], ['2026-10-02T05:00:00+05:00', true], ['2026-10-03T00:00:00Z', false]]) {
-    const quote = new CheckoutQuoteService(client, { clock: () => new Date(instant), logger })
+    client.clock = () => new Date(instant) // SQL fixture clock; the application sends no timestamp.
+    const quote = new CheckoutQuoteService(client, { logger })
     assert.equal(checkoutCalendarDate(new Date(instant)), new Date(instant).toISOString().slice(0, 10))
     if (allowed) assert.equal((await quote.quote(body)).discount, 100)
     else await assert.rejects(quote.quote(body), { code: 'INVALID_COUPON' })
   }
+})
+
+
+test('checked quotation is an allowlisted SQL adapter with no caller totals or timestamps',async()=>{
+ const calls=[],response={subtotal:2900,discount:0,shippingFee:250,total:3150,currency:'PKR',shippingMethodId:methodId,paymentMethods:['Cash on Delivery'],quoteFingerprint:'a'.repeat(64),idempotencyKey:randomUUID(),_coupon:{secret:'PRIVATE'}}
+ const service=new CheckoutQuoteService({rpc:async(name,args)=>{calls.push({name,args});return {data:response,error:null}},from:()=>assert.fail('Quotation must be SQL-authoritative')},{logger})
+ const request={items:[{variantId,quantity:1}],shipping:{city:'Karachi',province:'Sindh'},email:'fixture@example.invalid',couponCode:''}
+ const q=await service.quote(request);assert.equal(q.total,3150);assert.equal(q.quoteFingerprint,response.quoteFingerprint);assert.equal('_coupon' in q,false)
+ assert.deepEqual(calls,[{name:'quote_checkout_v1_checked',args:{p_request:request,p_customer_id:null}}])
+ await assert.rejects(()=>service.quote({...request,total:1}),{code:'INVALID_CHECKOUT_REQUEST'})
+})
+test('missing and forged credentials cannot authorize replacement or effects',async()=>{
+ const client=memoryClient(),service=new OrdersV1Service(client,{logger}),body=await issuedInput(client)
+ await assert.rejects(()=>service.create({...body,quoteFingerprint:undefined}),{code:'INVALID_CHECKOUT_REQUEST',status:400})
+ await assert.rejects(()=>service.create({...body,quoteFingerprint:'0'.repeat(64)}),{code:'IDEMPOTENCY_CONFLICT',status:409})
+ assert.equal(client.db.orders.length,0);assert.equal(client.orderCalls().length,2)
+})
+test('rolled-back price exceptions cannot authorize replacement',async t=>{
+ const server=await api(t);server.client.rpcFailure={code:'P0001',message:'V1_QUOTE_CHANGED'}
+ const result=await server.request(input());assert.equal(result.status,503);assert.equal(result.body.error.code,'CHECKOUT_UNAVAILABLE');assert.doesNotMatch(JSON.stringify(result.body),/V1_QUOTE_CHANGED|SQL/)
+})
+
+test('only matching committed terminal envelopes become safe HTTP quotation conflicts',async t=>{
+ const server=await api(t),body=await server.issue()
+ server.client.rpc=async(name,args)=>{assert.equal(name,'create_order_transaction_v1_checked');return {data:{outcome:'retired',code:'QUOTE_CHANGED',idempotencyKey:args.p_idempotency_key.slice(9)},error:null}}
+ const response=await server.request(body);assert.equal(response.status,409);assert.equal(response.body.error.code,'QUOTE_CHANGED')
+ const service=new OrdersV1Service(server.client,{logger})
+ for(const data of [{outcome:'retired',code:'QUOTE_CHANGED',idempotencyKey:randomUUID()},{outcome:'retired',code:'QUOTE_REQUIRED',idempotencyKey:body.idempotencyKey},{outcome:'unknown',code:'QUOTE_CHANGED',idempotencyKey:body.idempotencyKey},{outcome:'retired',code:'QUOTE_CHANGED',idempotencyKey:body.idempotencyKey,private:'hidden'}]){
+  server.client.rpc=async()=>({data,error:null});await assert.rejects(()=>service.create(body),{code:'CHECKOUT_UNAVAILABLE',status:503})
+ }
+})
+test('unknown transport results never change the checked fingerprint or token on retry',async()=>{
+ const client=memoryClient(),service=new OrdersV1Service(client,{logger}),request=await issuedInput(client);client.loseResponse=true
+ await assert.rejects(()=>service.create(request),{code:'CHECKOUT_UNAVAILABLE'});assert.equal((await service.create(request)).idempotent,true)
+ assert.deepEqual(client.orderCalls()[0],client.orderCalls()[1]);assert.equal(client.db.orders.length,1)
 })

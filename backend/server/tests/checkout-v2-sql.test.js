@@ -3,6 +3,7 @@ import test from 'node:test'
 import {randomUUID} from 'node:crypto'
 import {fixtureV2,normalLine,fixedLine,configuredLine,quoteRequest,quoteV2,requestV2,orderV2,baselineV2,applyV2,shapeSQL,clientV2} from './support/checkoutV2Database.js'
 import {OrdersV1Service} from '../services/ordersV1Service.js'
+import {checkedFixture,installCheckedV1,confirmV1} from './support/checkedV1Database.js'
 import {savePack,saveTester,productPatch,variantPatch,testerBaseline,applyTesterMigration} from './support/testerCatalogDatabase.js'
 import {installProductionCatalogMetadata,productionCatalogDriftCases,verifiedRlsAutoEnableBody,productionEventSnapshotSQL,verifiedPlatformEventTriggers} from './support/productionCatalogFixture.js'
 import {apply014} from './support/fulfillmentV2Database.js'
@@ -436,8 +437,23 @@ function actualV1Service(db,{denyReads=false}={}) {
  return {client,calls,logs,service:new OrdersV1Service(client,{logger:{warn:entry=>logs.push(entry)}})}
 }
 
+test('checked V1 fixture rejects missing/forged confirmation and unchecked bypass without effects',async t=>{
+ const {db,normal}=await checkedFixture(t),{service,client}=actualV1Service(db)
+ const input=await confirmV1(db,serviceInput(await requestV2(db,[normalLine(normal.variant)]))),before=await state(db)
+ await assert.rejects(()=>service.create({...input,quoteFingerprint:undefined}),{code:'INVALID_CHECKOUT_REQUEST',status:400})
+ await assert.rejects(()=>service.create({...input,quoteFingerprint:'0'.repeat(64)}),{code:'IDEMPOTENCY_CONFLICT',status:409})
+ const args={p_idempotency_key:'checkout:'+input.idempotencyKey,p_items:input.items,p_contact:input.contact,p_shipping:input.shipping,
+  p_payment_method:input.paymentMethod,p_coupon_code:null,p_shipping_method_id:null,p_customer_id:null}
+ assert.equal((await client.rpc('create_order_transaction',args)).error.message,'V1_QUOTE_REQUIRED')
+ assert.deepEqual(await state(db),before)
+ const receipt=await service.create(input),committed=await state(db)
+ // Legacy transport remains replay-only and binds the original request identity.
+ assert.equal((await client.rpc('create_order_transaction',args)).data.id,receipt.id)
+ assert.deepEqual(await state(db),committed)
+})
+
 test('actual V1 service: historical aliases replay frozen receipts; ambiguity and changed intent reach SQL with zero effects',async t=>{
- const f=await baselineV2(),{db}=f;t.after(()=>db.close())
+ const f=await checkedFixture(t,{historical:true}),{db}=f
  const product=randomUUID(),variant=randomUUID(),coupon=randomUUID()
  await db.query("insert into public.products(id,name,slug,sku,price,scent_family,main_image_url,status,active) values($1::uuid,'Historical service',$1::uuid::text,$1::uuid::text,2900,'Woody','/fixture.webp','Published',true)",[product])
  await db.query("insert into public.product_variants(id,product_id,option_value,sku,regular_price,stock_quantity) values($1::uuid,$2,'50 ml',$1::uuid::text,2900,12)",[variant,product])
@@ -451,13 +467,14 @@ test('actual V1 service: historical aliases replay frozen receipts; ambiguity an
  }
  const ambiguous='b'+randomUUID().slice(1),duplicate=requestV2Legacy(variant,ambiguous)
  await v1Sql(db,duplicate);await v1Sql(db,{...duplicate,idempotencyKey:ambiguous.toUpperCase()})
- await applyV2(db)
+ await installCheckedV1(db,{pre013:true})
  const {service,calls,logs}=actualV1Service(db,{denyReads:true}),before=await state(db)
  for(const alias of aliases)await t.test(alias.form+' service replay',async()=>{
   const count=calls.length,result=await service.create(serviceInput(alias.request),null,'historical-service-id')
   assert.equal(result.id,alias.id);assert.equal(result.idempotencyKey,alias.request.idempotencyKey);assert.equal(result.idempotent,true)
   assert.equal(result.paymentStatus,'Unpaid');assert.equal(result.currency,'PKR');assert.equal(result.total,2860)
-  assert.equal(calls.length,count+1);assert.equal(calls.at(-1).name,'create_order_transaction')
+  assert.equal(calls.length,count+1);assert.equal(calls.at(-1).name,'create_order_transaction_v1_checked')
+  assert.equal(calls.at(-1).args.p_quote_fingerprint,null)
   assert.deepEqual(await state(db),before)
   assert.equal((await db.query('select idempotency_key from public.orders where id=$1',[alias.id])).rows[0].idempotency_key,alias.storedKey)
  })
@@ -482,12 +499,14 @@ test('actual V1 service: historical aliases replay frozen receipts; ambiguity an
 })
 
 test('actual V1 service: Baraan new order, canonical/uppercase retry, lost response and V2 fence all use authoritative RPC',async t=>{
- const f=await fixture(t),{db}=f,{service,client,calls}=actualV1Service(db,{denyReads:true})
- const request=serviceInput(await requestV2(db,[normalLine(f.normal.variant)])),created=await service.create(request)
+ const f=await checkedFixture(t),{db}=f,{service,client,calls}=actualV1Service(db,{denyReads:true})
+ const request=await confirmV1(db,serviceInput(await requestV2(db,[normalLine(f.normal.variant)]))),created=await service.create(request)
  assert.equal(created.subtotal,2900);assert.equal(created.shippingFee,250);assert.equal(created.total,3150)
  assert.equal(created.paymentStatus,'Unpaid');assert.equal(created.idempotent,false);assert.equal(created.idempotencyKey,request.idempotencyKey)
  assert.deepEqual(Object.keys(created).sort(),['id','idempotencyKey','orderNumber','status','paymentStatus','paymentMethod','subtotal','discount','shippingFee','total','currency','idempotent'].sort())
  assert.equal(calls.length,1);assert.equal(calls[0].args.p_shipping_method_id,null);assert.equal(calls[0].args.p_customer_id,null)
+ assert.equal(calls[0].name,'create_order_transaction_v1_checked');assert.equal(calls[0].args.p_quote_fingerprint,request.quoteFingerprint)
+ assert.equal(Object.keys(calls[0].args).length,9)
  const before=await state(db)
  for(const key of [request.idempotencyKey,request.idempotencyKey.toUpperCase()]){
   const count=calls.length,replay=await service.create({...request,idempotencyKey:key})
@@ -495,7 +514,7 @@ test('actual V1 service: Baraan new order, canonical/uppercase retry, lost respo
  }
  await assert.rejects(()=>service.create({...request,shipping:{...request.shipping,notes:'Changed'}}),{code:'IDEMPOTENCY_CONFLICT'})
  assert.deepEqual(await state(db),before)
- const lostRequest={...request,idempotencyKey:randomUUID()},rpc=client.rpc.bind(client);let lost=true
+ const lostRequest=await confirmV1(db,request),rpc=client.rpc.bind(client);let lost=true
  client.rpc=async(...args)=>{const result=await rpc(...args);if(lost&&!result.error){lost=false;throw new Error('Disposable lost response after commit')}return result}
  await assert.rejects(()=>service.create(lostRequest),{code:'CHECKOUT_UNAVAILABLE'})
  const committed=(await db.query('select id from public.orders where idempotency_key=$1',['checkout:'+lostRequest.idempotencyKey])).rows[0].id,afterLost=await state(db)
@@ -510,14 +529,16 @@ test('actual V1 service: Baraan new order, canonical/uppercase retry, lost respo
 })
 
 test('actual V1 service: new-order payment/configuration/stock/coupon/shipping failures roll back all effects',async t=>{
- const f=await fixture(t),{db}=f,{service,calls}=actualV1Service(db)
- const request=serviceInput(await requestV2(db,[normalLine(f.normal.variant)]))
+ const f=await checkedFixture(t),{db}=f,{service,calls}=actualV1Service(db)
+ const request=await confirmV1(db,serviceInput(await requestV2(db,[normalLine(f.normal.variant)])))
  const rejected=async(code,body=request)=>{
   const before=await state(db),count=calls.length
-  await assert.rejects(()=>service.create({...body,idempotencyKey:randomUUID()},null,'new-order-service-id'),{code})
+  await assert.rejects(()=>service.create(body,null,'new-order-service-id'),{code})
   assert.equal(calls.length,count+1);assert.deepEqual(await state(db),before)
  }
- await rejected('VARIANT_NOT_FOUND',{...request,items:[{variantId:randomUUID(),quantity:1}]})
+ const variantBackup=(await db.query('select to_jsonb(v) row from product_variants v where id=$1',[f.normal.variant])).rows[0].row
+ await db.query('delete from product_variants where id=$1',[f.normal.variant]);await rejected('VARIANT_NOT_FOUND')
+ await db.query('insert into product_variants select (jsonb_populate_record(null::public.product_variants,$1::jsonb)).*',[JSON.stringify(variantBackup)])
  await db.query('update public.product_variants set stock_quantity=0 where id=$1',[f.normal.variant]);await rejected('OUT_OF_STOCK')
  await db.query('update public.product_variants set stock_quantity=12,available=true where id=$1',[f.normal.variant])
  await db.query("update public.products set status='Draft' where id=$1",[f.normal.product]);await rejected('VARIANT_UNAVAILABLE')
@@ -528,36 +549,40 @@ test('actual V1 service: new-order payment/configuration/stock/coupon/shipping f
  // PostgreSQL's positive numeric CHECK rejects zero but permits NaN; the SQL guard must reject it.
  await db.query("update public.product_variants set regular_price='NaN'::numeric where id=$1",[f.normal.variant]);await rejected('CHECKOUT_UNAVAILABLE')
  await db.query('update public.product_variants set regular_price=2900 where id=$1',[f.normal.variant])
- await rejected('INVALID_COUPON',{...request,couponCode:'MISSING'})
+ await db.exec("insert into coupons(code,type,discount_value,status) values('V1-INACTIVE','Percentage',10,'Active')")
+ const couponRequest=await confirmV1(db,{...request,couponCode:'V1-INACTIVE'})
+ await db.exec("update coupons set status='Inactive' where code='V1-INACTIVE'");await rejected('INVALID_COUPON',couponRequest)
  await db.exec('update public.shipping_methods set active=false');await rejected('CHECKOUT_UNAVAILABLE')
  await db.exec('update public.shipping_methods set active=true')
  const method=(await db.query('select id from public.shipping_methods limit 1')).rows[0].id
  await db.query("insert into public.shipping_rates(shipping_method_id,scope_type,scope_value,fee) values($1,'default','',250),($1,'default','another',250)",[method]);await rejected('CHECKOUT_UNAVAILABLE')
  await db.exec('delete from public.shipping_rates')
- const bank=await service.create({...request,idempotencyKey:randomUUID(),paymentMethod:'Bank Transfer'},f.admin)
+ const bankInput=await confirmV1(db,{...request,idempotencyKey:randomUUID(),paymentMethod:'Bank Transfer'},f.admin)
+ const bank=await service.create(bankInput,f.admin)
  assert.equal(bank.paymentStatus,'Pending');assert.equal(bank.total,3150)
- const tester=await service.create({...request,idempotencyKey:randomUUID(),items:[{variantId:f.tester.tester.variant_id,quantity:1}]})
+ const tester=await service.create(await confirmV1(db,{...request,idempotencyKey:randomUUID(),items:[{variantId:f.tester.tester.variant_id,quantity:1}]}))
  assert.equal(tester.subtotal,250);assert.equal((await db.query('select manual_available from public.tester_variants where variant_id=$1',[f.tester.tester.variant_id])).rows[0].manual_available,true)
 })
 
 test('actual V1 SQL payment fallback preserves private false, public precedence and commerce fallback',async t=>{
- const f=await fixture(t),{db}=f,{service}=actualV1Service(db),input=serviceInput(await requestV2(db,[normalLine(f.normal.variant)]))
+ const f=await checkedFixture(t),{db}=f,{service}=actualV1Service(db),input=await confirmV1(db,serviceInput(await requestV2(db,[normalLine(f.normal.variant)])))
  await db.exec('update public.site_settings set payments=\'[{"name":"Cash on Delivery","active":false},{"name":"Bank Transfer","active":true}]\'')
  await db.exec('insert into public.public_site_settings(key,value) values(\'payments\',\'[{"name":"Cash on Delivery","active":true}]\') on conflict(key) do update set value=excluded.value')
  await assert.rejects(()=>service.create(input),{code:'INVALID_PAYMENT_METHOD'})
  await db.exec('update public.site_settings set payments=\'[]\'')
- const publicReceipt=await service.create(input);assert.equal(publicReceipt.total,3150)
+ const publicInput=await confirmV1(db,input),publicReceipt=await service.create(publicInput);assert.equal(publicReceipt.total,3150)
  await db.exec('update public.public_site_settings set value=\'[]\' where key=\'payments\';insert into public.public_site_settings(key,value) values(\'commerce\',\'{"codEnabled":true,"bankTransferEnabled":false}\') on conflict(key) do update set value=excluded.value')
- const fallback=await service.create({...input,idempotencyKey:randomUUID()});assert.equal(fallback.total,3150)
+ const fallback=await service.create(await confirmV1(db,{...input,idempotencyKey:randomUUID()}));assert.equal(fallback.total,3150)
  await db.exec('update public.public_site_settings set value=\'{"codEnabled":false,"bankTransferEnabled":true}\' where key=\'commerce\'')
- await assert.rejects(()=>service.create({...input,idempotencyKey:randomUUID()}),{code:'INVALID_PAYMENT_METHOD'})
- assert.equal((await service.create(input)).id,publicReceipt.id)
+ const disabledCodInput=await confirmV1(db,input)
+ await assert.rejects(()=>service.create(disabledCodInput),{code:'INVALID_PAYMENT_METHOD'})
+ assert.equal((await service.create(publicInput)).id,publicReceipt.id)
 })
 
 test('actual V1 service receipt after tracking correction remains public-only and preserves customer notes',async t=>{
- const f=await fixture(t),{db}=f,{service}=actualV1Service(db,{denyReads:true})
+ const f=await checkedFixture(t),{db}=f,{service}=actualV1Service(db,{denyReads:true})
  const request=serviceInput(await requestV2(db,[normalLine(f.normal.variant)]));request.shipping.notes='Customer note'
- const order=await service.create(request),reason='Private corrected transposed tracking entry'
+ const confirmed=await confirmV1(db,request),order=await service.create(confirmed),reason='Private corrected transposed tracking entry'
  const mutate=async(action,payload)=>{
   const revision=(await db.query('select revision::text revision from public.orders where id=$1',[order.id])).rows[0].revision
   return (await db.query('select public.apply_admin_order_action($1::uuid,$2::uuid,$3,$4::uuid,$5,$6::jsonb,$7) result',
@@ -566,7 +591,7 @@ test('actual V1 service receipt after tracking correction remains public-only an
  await mutate('status',{status:'Confirmed'});await mutate('status',{status:'Processing'})
  await mutate('status',{status:'Shipped',courier:'Old courier',trackingNumber:'OLD-TRACK'})
  await mutate('fulfillment',{courier:'New courier',trackingNumber:'NEW-TRACK',reason})
- const before=await state(db),receipt=await service.create(request)
+ const before=await state(db),receipt=await service.create(confirmed)
  assert.equal(receipt.status,'Shipped');assert.equal(receipt.id,order.id);assert.equal(receipt.idempotent,true)
  assert.doesNotMatch(JSON.stringify(receipt),/Private corrected|audit|metadata|trackingCorrection|payload/)
  assert.equal((await db.query('select order_notes from public.orders where id=$1',[order.id])).rows[0].order_notes,'Customer note')

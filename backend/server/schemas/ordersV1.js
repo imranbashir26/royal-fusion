@@ -21,6 +21,8 @@ export const orderRequestSchema = z.strictObject({
   shipping: z.strictObject({ address: text(4, 500), city: text(2, 100), province: text(2, 100), notes: text(0, 1000).default('') }),
   paymentMethod: z.enum(paymentMethods),
   couponCode,
+  // Missing confirmation is forwarded only for SQL-authorized historical replay.
+  quoteFingerprint: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 })
 export const quoteRequestSchema = z.strictObject({
   items,

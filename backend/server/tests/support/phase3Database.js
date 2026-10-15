@@ -20,8 +20,9 @@ export async function phase3Database() {
   for (const name of ['coupons_code_lower_uidx', 'seo_settings_page_key_lower_uidx', 'seo_settings_route_lower_uidx']) await db.exec(foundation.match(new RegExp(`create unique index if not exists ${name}[^;]+;`))[0])
   await db.exec(initial.match(/create or replace function public\.set_updated_at\(\)[\s\S]*?\$\$;/)[0])
   for (const name of ['coupons', 'seo_settings']) await db.exec(`create trigger fixture_updated_at before update on ${name} for each row execute function public.set_updated_at()`)
-  return { db, client: { from: name => new Query(db, name) } }
+  return { db, client: phase3SqlClient(db) }
 }
+export const phase3SqlClient=db=>({from:name=>new Query(db,name)})
 const tables = new Set(['profiles', 'roles', 'user_roles', 'customer_addresses', 'orders', 'coupons', 'coupon_products', 'coupon_categories', 'coupon_redemptions', 'seo_settings', 'admin_audit_logs', 'products', 'product_variants', 'product_categories', 'shipping_methods', 'shipping_rates', 'site_settings', 'public_site_settings'])
 const ident = v => { if (!/^[a-z_][a-z0-9_]*$/.test(v)) throw Error('Invalid fixture identifier'); return `"${v}"` }
 class Query {

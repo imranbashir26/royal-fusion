@@ -4,47 +4,17 @@ import { readFile } from 'node:fs/promises'
 import { createCatalogDatabase } from './support/catalogDatabase.js'
 import { CheckoutQuoteService, checkoutCalendarDate } from '../services/checkoutQuoteService.js'
 import { OrdersV1Service } from '../services/ordersV1Service.js'
+import {checkedFixture,confirmV1} from './support/checkedV1Database.js'
+import {clientV2} from './support/checkoutV2Database.js'
 
 const productId = '45852db8-8b83-425e-8d1f-4112958ed505', variantId = 'b35b3be7-a7dd-4c70-9c14-d1a9394d4711'
 const methodId = '60000000-0000-4000-8000-000000000001'
 const baseRequest = { items: [{ variantId, quantity: 1 }], contact: { name: 'SQL Fixture', email: 'sql@example.invalid', phone: '00000000000' },
   shipping: { address: 'Fictional SQL Address', city: 'Karachi', province: 'Sindh', notes: '' }, paymentMethod: 'Cash on Delivery', couponCode: '' }
 
-// Test-only PostgREST-shaped adapter to an in-memory database. No credentials/network.
-function adapter(db) {
-  return { from(table) {
-    const values = [], filters = []
-    let columns = '*', head = false, range = ''
-    const ordering = []
-    const name = (value) => { assert.match(value, /^[a-z_]+$/); return `"${value}"` }
-    const parameter = (value) => { values.push(value); return `$${values.length}` }
-    const query = {
-      select(value, options) { columns = value.split(',').map(name).join(','); head = options?.head; return query },
-      eq(column, value) { filters.push(`${name(column)} = ${parameter(value)}`); return query },
-      in(column, value) { filters.push(value.length ? `${name(column)} in (${value.map(parameter).join(',')})` : 'false'); return query },
-      ilike(column, value) { filters.push(`${name(column)} ilike ${parameter(value)}`); return query },
-      order(column) { ordering.push(name(column)); return query },
-      range(start, end) { range = ` limit ${end - start + 1} offset ${start}`; return query },
-      or(expression) {
-        filters.push(`(${expression.split(',').map((part) => {
-          const [column, operator, ...rest] = part.split('.')
-          return `${name(column)} ${operator === 'ilike' ? 'ilike' : '='} ${parameter(operator === 'ilike' ? JSON.parse(rest.join('.')) : rest.join('.'))}`
-        }).join(' or ')})`); return query
-      },
-      then(resolve, reject) {
-        return db.query(`select ${head ? 'count(*)::int as count' : columns} from public.${name(table)}${filters.length ? ` where ${filters.join(' and ')}` : ''}${ordering.length ? ` order by ${ordering.join(',')}` : ''}${range}`, values)
-          .then((result) => ({ data: head ? null : result.rows, count: head ? result.rows[0].count : null, error: null })).then(resolve, reject)
-      },
-    }; return query
-  }, async rpc(name, args) {
-    assert.equal(name, 'create_order_transaction')
-    try {
-      const result = await db.query('select public.create_order_transaction($1,$2::jsonb,$3::jsonb,$4::jsonb,$5,$6,$7::uuid,$8::uuid) as receipt',
-        [args.p_idempotency_key, JSON.stringify(args.p_items), JSON.stringify(args.p_contact), JSON.stringify(args.p_shipping), args.p_payment_method, args.p_coupon_code, args.p_shipping_method_id, args.p_customer_id])
-      return { data: result.rows[0].receipt, error: null }
-    } catch (error) { return { data: null, error: { code: error.code, message: error.message } } }
-  } }
-}
+// Test-only PostgREST-shaped adapter to the owned disposable database.
+const adapter=clientV2
+
 test('migration 010 changes only approved locking/shipping/UTC blocks and preserves ACL/signature', async () => {
   const original = await readFile(new URL('../../supabase/migrations/002_launch_schema_foundation.sql', import.meta.url), 'utf8')
   const changed = await readFile(new URL('../../supabase/migrations/010_checkout_product_locking.sql', import.meta.url), 'utf8')
@@ -60,21 +30,22 @@ test('migration 010 changes only approved locking/shipping/UTC blocks and preser
   assert.ok(changed.indexOf('for update of siblings') < changed.indexOf('for update of products'))
 })
 
-test('PGlite shipping ambiguity fails closed in quote and actual RPC, including identical fees', async (t) => {
-  const db = await createCatalogDatabase(); await db.exec("alter table public.products add column commerce_kind text not null default 'standard'; alter table public.orders add column checkout_version smallint not null default 1"); t.after(() => db.close())
-  await db.exec(await readFile(new URL('../../supabase/migrations/010_checkout_product_locking.sql', import.meta.url), 'utf8'))
-  await db.query(`insert into public.products(id,name,slug,sku,price,scent_family,main_image_url,status,active)
-    values($1,'Baraan','baraan','RF-BAR-001',2900,'Woody','https://example.invalid/fixture.webp','Published',true)`, [productId])
-  await db.query(`insert into public.product_variants(id,product_id,option_value,sku,regular_price,stock_quantity) values($1,$2,'50 ml','RF-BAR-001',2900,12)`, [variantId, productId])
+test('Native checked shipping ambiguity fails closed in quote and actual RPC, including identical fees', async (t) => {
+  const {db}=await checkedFixture(t);await db.exec('delete from public.shipping_methods')
   await db.query(`insert into public.shipping_methods(id,code,name,base_fee) values($1,'standard','Standard',250)`, [methodId])
   await db.exec(`insert into public.site_settings(id,payments) values('site','[{"name":"Cash on Delivery","active":true}]') on conflict(id) do update set payments=excluded.payments`)
   const client = adapter(db), quote = new CheckoutQuoteService(client, { logger: { warn() {} } })
-  const preview = () => quote.quote({ items: baseRequest.items, shipping: { city: 'Karachi', province: 'Sindh' }, email: baseRequest.contact.email, couponCode: '' })
+  const preview = async () => {
+    if(transaction)await db.exec('savepoint quote_preview')
+    try{return await quote.quote({ items: baseRequest.items, shipping: { city: 'Karachi', province: 'Sindh' }, email: baseRequest.contact.email, couponCode: '' })}
+    finally{if(transaction)await db.exec('rollback to quote_preview; release savepoint quote_preview')}
+  }
+  let confirmed=await confirmV1(db,baseRequest)
   let transaction = false
   const direct = async () => {
     if (transaction) await db.exec('savepoint checkout_attempt')
-    const result = await client.rpc('create_order_transaction', { p_idempotency_key: `checkout:${crypto.randomUUID()}`, p_items: baseRequest.items, p_contact: baseRequest.contact, p_shipping: baseRequest.shipping,
-      p_payment_method: 'Cash on Delivery', p_coupon_code: null, p_shipping_method_id: methodId, p_customer_id: null })
+    const result = await client.rpc('create_order_transaction_v1_checked', { p_idempotency_key: `checkout:${confirmed.idempotencyKey}`, p_items: baseRequest.items, p_contact: baseRequest.contact, p_shipping: baseRequest.shipping,
+      p_payment_method: 'Cash on Delivery', p_coupon_code: null, p_shipping_method_id: null, p_customer_id: null, p_quote_fingerprint:confirmed.quoteFingerprint })
     if (transaction) { if (result.error) await db.exec('rollback to checkout_attempt'); await db.exec('release checkout_attempt') }
     return result
   }
@@ -91,7 +62,7 @@ test('PGlite shipping ambiguity fails closed in quote and actual RPC, including 
     // The service now reaches SQL rather than rejecting in JavaScript. Model
     // PostgREST's rolled-back failed RPC while retaining this outer test fixture.
     await db.exec('savepoint service_attempt')
-    await assert.rejects(new OrdersV1Service(client, { logger: { warn() {} } }).create({ ...baseRequest, idempotencyKey: crypto.randomUUID() }), { code: 'CHECKOUT_UNAVAILABLE' })
+    await assert.rejects(new OrdersV1Service(client, { logger: { warn() {} } }).create(confirmed), { code: 'CHECKOUT_UNAVAILABLE' })
     await db.exec('rollback to service_attempt; release savepoint service_attempt')
     assert.equal((await db.query('select count(*)::int n from public.orders')).rows[0].n, 0)
     assert.equal((await db.query('select stock_quantity from public.product_variants where id=$1', [variantId])).rows[0].stock_quantity, 12)
@@ -99,8 +70,10 @@ test('PGlite shipping ambiguity fails closed in quote and actual RPC, including 
     transaction = false
   }
   await db.query(`insert into public.shipping_rates(shipping_method_id,scope_type,scope_value,fee,minimum_subtotal) values($1,'default','',200,0),($1,'default','higher',175,1000)`, [methodId])
+  confirmed=await confirmV1(db,baseRequest)
   assert.equal((await preview()).shippingFee, 175); assert.equal((await direct()).data.shippingFee, 175)
   await db.exec('delete from public.shipping_rates')
+  confirmed=await confirmV1(db,baseRequest)
   assert.equal((await preview()).shippingFee, 250); assert.equal((await direct()).data.shippingFee, 250)
 })
 
@@ -117,17 +90,16 @@ test('UTC coupon dates agree around midnight regardless of database session time
     }
   }
 })
-test('PGlite actual RPC: Baraan snapshots, payment/inventory, replay, rollback and quote parity (not concurrency)', async (t) => {
+test('Native checked RPC: Baraan snapshots, payment/inventory, replay, rollback and quote parity (not concurrency)', async (t) => {
   // The current service consumes the complete authoritative receipt introduced by 013.
-  const { fixtureV2 } = await import('./support/checkoutV2Database.js')
-  const { db } = await fixtureV2(); t.after(() => db.close())
+  const {db}=await checkedFixture(t)
   await db.query("update public.product_variants set sku='RF-BAR-001' where id=$1",[variantId])
   await db.exec('delete from public.shipping_methods')
   await db.query(`insert into public.shipping_methods(id,code,name,base_fee,free_shipping_threshold) values($1,'standard','Standard',250,7000)`, [methodId])
   await db.query(`insert into public.shipping_rates(shipping_method_id,scope_type,scope_value,fee) values($1,'city','Karachi',200),($1,'province','Sindh',300),($1,'default','',250)`, [methodId])
   await db.exec(`insert into public.site_settings(id,payments) values('site','[{"name":"Cash on Delivery","active":true},{"name":"Bank Transfer","active":true}]') on conflict(id) do update set payments=excluded.payments`)
   const client = adapter(db), orders = new OrdersV1Service(client, { logger: { warn() {} } }), quotes = new CheckoutQuoteService(client)
-  const request = { ...baseRequest, idempotencyKey: crypto.randomUUID() }
+  const request=await confirmV1(db,baseRequest)
   const quote = await quotes.quote({ items: request.items, shipping: { city: 'Karachi', province: 'Sindh' }, email: request.contact.email, couponCode: '' })
   const receipt = await orders.create(request)
   assert.equal(receipt.total, 3100); assert.equal(receipt.paymentStatus, 'Unpaid'); assert.equal(receipt.status, 'Pending')
@@ -145,7 +117,7 @@ test('PGlite actual RPC: Baraan snapshots, payment/inventory, replay, rollback a
   const counts = (await db.query('select (select count(*)::int from public.inventory_movements) movements,(select count(*)::int from public.payments) payments,(select count(*)::int from public.order_items) items')).rows[0]
   await db.exec(`create function public.fail_test_payment() returns trigger language plpgsql as $$ begin raise exception 'test-only payment failure'; end $$;
     create trigger test_payment_failure before insert on public.payments for each row execute function public.fail_test_payment();`)
-  await assert.rejects(orders.create({ ...request, idempotencyKey: crypto.randomUUID() }))
+  await assert.rejects(orders.create(await confirmV1(db,baseRequest)))
   assert.equal((await db.query('select count(*)::int n from public.orders')).rows[0].n, before)
   assert.deepEqual((await db.query('select (select count(*)::int from public.inventory_movements) movements,(select count(*)::int from public.payments) payments,(select count(*)::int from public.order_items) items')).rows[0], counts)
   assert.equal((await db.query('select stock_quantity from public.product_variants where id=$1', [variantId])).rows[0].stock_quantity, 11)
@@ -159,7 +131,7 @@ test('PGlite actual RPC: Baraan snapshots, payment/inventory, replay, rollback a
   ]) {
     const candidate = { ...baseRequest, idempotencyKey: crypto.randomUUID(), items: [{ variantId, quantity: settings.quantity }], shipping: { ...baseRequest.shipping, city: settings.city, province: settings.province }, couponCode: settings.couponCode }
     const preview = await quotes.quote({ items: candidate.items, shipping: { city: settings.city, province: settings.province }, email: candidate.contact.email, couponCode: candidate.couponCode })
-    const ordered = await orders.create(candidate)
+    const ordered = await orders.create({...candidate,idempotencyKey:preview.idempotencyKey,quoteFingerprint:preview.quoteFingerprint})
     for (const key of ['subtotal', 'discount', 'shippingFee', 'total']) assert.equal(ordered[key], preview[key])
   }
   // Each parity case rolls back to preserve stock and coupon counters for the next case.
@@ -175,7 +147,7 @@ test('PGlite actual RPC: Baraan snapshots, payment/inventory, replay, rollback a
     if (scenario.baseOnly) await db.exec('delete from public.shipping_rates')
     const candidate = { ...baseRequest, idempotencyKey: crypto.randomUUID(), paymentMethod: 'Bank Transfer', couponCode: 'PARITY' }
     const preview = await quotes.quote({ items: candidate.items, shipping: { city: 'Karachi', province: 'Sindh' }, email: candidate.contact.email, couponCode: 'PARITY' })
-    const result = await orders.create(candidate)
+    const result = await orders.create({...candidate,idempotencyKey:preview.idempotencyKey,quoteFingerprint:preview.quoteFingerprint})
     assert.equal(result.paymentStatus, 'Pending')
     for (const key of ['subtotal', 'discount', 'shippingFee', 'total']) assert.equal(result[key], preview[key])
     await db.exec('rollback')

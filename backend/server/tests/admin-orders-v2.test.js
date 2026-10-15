@@ -13,6 +13,7 @@ import {createAdminOrdersV1Router} from '../routes/adminOrdersV1.js'
 import {createOrdersV2Router} from '../routes/ordersV2.js'
 import {OrdersV2Service} from '../services/ordersV2Service.js'
 import {OrdersV1Service} from '../services/ordersV1Service.js'
+import {checkedFixture,confirmV1} from './support/checkedV1Database.js'
 import {checkoutExecutionPolicy} from '../services/checkoutExecutionPolicy.js'
 let f,client,server,base,calls=[],logs=[]
 const origin='https://fulfillment014.example.invalid',logger={warn:e=>logs.push(e)}
@@ -109,12 +110,16 @@ test('malformed or privately extended RPC receipt is validated/allowlisted and d
  }finally{client.rpc=rpc}
 })
 
-test('V1 Admin API remains usable on 014; dispatcher cancellation retains existing receipt/status contract',async()=>{
- const request={idempotencyKey:randomUUID(),items:[{variantId:f.normal.variant,quantity:1}],contact:{name:'V1 buyer',email:'v1@example.invalid',phone:'00000000000'},shipping:{address:'Fictional Address',city:'Karachi',province:'Sindh',notes:''},paymentMethod:'Cash on Delivery'}
- const order=await new OrdersV1Service(client,{logger}).create(request),d=await http('/admin/'+order.id,undefined,{actor:'admin'});assert.equal(d.status,200)
- assert.equal(d.body.data.checkoutVersion,1);assert.equal(d.body.data.snapshotVersion,undefined)
- const cancel=await http('/admin/'+order.id+'/cancel',{mutationId:randomUUID(),expectedRevision:d.body.data.revision,reason:'V1 unchanged'},{actor:'admin'})
- assert.equal(cancel.status,200);assert.equal(cancel.body.data.status,'Cancelled')
+test('V1 Admin API remains usable on 014; dispatcher cancellation retains existing receipt/status contract',async t=>{
+ const previous=f,from=client.from,rpc=client.rpc
+ f=await checkedFixture(t);Object.assign(client,client014(f.db))
+ try{
+  const request=await confirmV1(f.db,{items:[{variantId:f.normal.variant,quantity:1}],contact:{name:'V1 buyer',email:'v1@example.invalid',phone:'00000000000'},shipping:{address:'Fictional Address',city:'Karachi',province:'Sindh',notes:''},paymentMethod:'Cash on Delivery',couponCode:''})
+  const order=await new OrdersV1Service(client,{logger}).create(request),d=await http('/admin/'+order.id,undefined,{actor:'admin'});assert.equal(d.status,200)
+  assert.equal(d.body.data.checkoutVersion,1);assert.equal(d.body.data.snapshotVersion,undefined)
+  const cancel=await http('/admin/'+order.id+'/cancel',{mutationId:randomUUID(),expectedRevision:d.body.data.revision,reason:'V1 unchanged'},{actor:'admin'})
+  assert.equal(cancel.status,200);assert.equal(cancel.body.data.status,'Cancelled')
+ }finally{f=previous;client.from=from;client.rpc=rpc}
 })
 
 test('before 014 an explicitly enabled local service still cannot execute owner-only order RPC',async t=>{

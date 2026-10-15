@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { randomUUID,randomBytes } from 'node:crypto'
 import { createServer } from 'vite'
 import { productId, secondVariantId, productRow, variantRow } from '../variantFixtures.mjs'
 
@@ -82,9 +83,9 @@ before(async () => {
   await server.listen()
   origin = `http://127.0.0.1:${server.httpServer.address().port}`
   try { browser = await playwright.chromium.launch({ headless: true, timeout: 15000 }) }
-  catch {
+  catch (chromiumError) {
     try { browser = await playwright.chromium.launch({ headless: true, timeout: 15000, channel: 'chrome' }) }
-    catch { throw new Error('Cannot launch browser tests. Provide Playwright Chromium or install Google Chrome, then rerun npm run test:variants:browser.') }
+    catch (chromeError) { throw new Error(`Cannot launch browser tests. Bundled Chromium: ${chromiumError.message}; installed Chrome: ${chromeError.message}. No browser is downloaded.`) }
   }
 }, { timeout: 60000 })
 
@@ -107,6 +108,9 @@ export async function pageFixture(t, { admin = null, webLocks = true, checkout =
     if (wishlist) localStorage.setItem('royal-fusion-wishlist', JSON.stringify({ state: { productIds: [productId] }, version: 0 }))
   }, { webLocks, legacy, wishlist, productId })
   const orders = [], variantReads = [], errors = []
+  const issued=new Map()
+  const quoteIdentity=body=>JSON.stringify([body.items,body.shipping.city,body.shipping.province,body.email??body.contact?.email,body.couponCode??''])
+  const receiptFor=(body,amounts,idempotent)=>({id:body.idempotencyKey,idempotencyKey:body.idempotencyKey,orderNumber:'RF-20261002-1234ABCD',status:'Pending',paymentStatus:'Unpaid',paymentMethod:body.paymentMethod,...amounts,currency:'PKR',idempotent})
   await context.route('**/*', async (route) => {
     const url = new URL(route.request().url())
     if (admin && url.pathname.startsWith('/api/')) {
@@ -118,19 +122,41 @@ export async function pageFixture(t, { admin = null, webLocks = true, checkout =
       if (!checkout) { orders.push(url.pathname); return route.abort() }
       const body = route.request().postDataJSON(); orders.push(body)
       if (checkout.pending) await checkout.pending
+      const conflict=code=>route.fulfill({status:409,json:{error:{code,message:'Checkout attempt cannot be reused.'}}})
+      // Historical replay is an explicitly seeded committed fixture, never an
+      // unconditional success for unissued saved requests.
+      if(checkout.historicalRequest?.idempotencyKey===body.idempotencyKey){
+        assert.deepEqual(body,checkout.historicalRequest)
+        return route.fulfill({json:{data:receiptFor(body,checkout.historicalAmounts,true)}})
+      }
+      const attempt=issued.get(body.idempotencyKey)
+      if(!attempt)return route.fulfill({status:503,json:{error:{code:'CHECKOUT_UNAVAILABLE',message:'Saved attempt requires recovery.'}}})
+      if(body.quoteFingerprint!==attempt.quote.quoteFingerprint||quoteIdentity(body)!==attempt.identity)return conflict('IDEMPOTENCY_CONFLICT')
+      if(attempt.request)assert.deepEqual(body,attempt.request)
+      if(attempt.state==='retired')return conflict('QUOTE_CHANGED')
+      if(attempt.state==='committed')return route.fulfill({json:{data:{...attempt.receipt,idempotent:true}}})
       if (checkout.mode === 'network') return route.abort()
+      if (checkout.mode === 'quoteChanged') {
+        attempt.state='retired';attempt.request=structuredClone(body)
+        checkout.mode = 'success'; checkout.shippingFee = 1000
+        return route.fulfill({ status: 409, json: { error: { code: 'QUOTE_CHANGED', message: 'Review the updated total and confirm again.' } } })
+      }
       if (checkout.mode === 'stock') return route.fulfill({ status: 409, json: { error: { code: 'INSUFFICIENT_STOCK', message: 'Not enough stock.' } } })
-      const subtotal = body.items.reduce((sum, item) => sum + item.quantity * 2900, 0), shippingFee = checkout.shippingFee ?? 777
-      return route.fulfill({ json: { data: checkout.mode === 'malformed' ? { id: 'bad' } : {
-        id: body.idempotencyKey, idempotencyKey: body.idempotencyKey, orderNumber: 'RF-20261002-1234ABCD', status: 'Pending', paymentStatus: 'Unpaid',
-        paymentMethod: body.paymentMethod, subtotal, discount: 0, shippingFee, total: subtotal + shippingFee, currency: 'PKR', idempotent: orders.slice(0, -1).some((previous) => previous.idempotencyKey === body.idempotencyKey),
-      } } })
+      const {subtotal,discount,shippingFee,total}=attempt.quote
+      attempt.receipt=receiptFor(body,{subtotal,discount,shippingFee,total},false);attempt.request=structuredClone(body);attempt.state='committed'
+      return route.fulfill({ json: { data: checkout.mode === 'malformed' ? { id: 'bad' } : attempt.receipt } })
     }
     if (url.pathname.endsWith('/v1/auth/session')) return route.fulfill({ json: { data: admin?.session ?? { authenticated: false, csrfToken: 'fixture-csrf' } } })
     if (url.pathname.endsWith('/checkout/quote') && checkout) {
       const body = route.request().postDataJSON(); checkout.quotes ??= []; checkout.quotes.push(body)
       const subtotal = body.items.reduce((sum, item) => sum + item.quantity * 2900, 0), shippingFee = checkout.shippingFee ?? 777
-      return route.fulfill({ json: { data: { subtotal, discount: 0, shippingFee, total: subtotal + shippingFee, currency: 'PKR', shippingMethodId: '60000000-0000-4000-8000-000000000001', paymentMethods: ['Cash on Delivery'], orderingEnabled: checkout.orderingEnabled !== false } } })
+      // Explicit normalized server-response amounts support presentation tests;
+      // receipts replay those issued values without recomputing a financial quote.
+      const amounts=checkout.amounts??{subtotal,discount:0,shippingFee,total:subtotal+shippingFee}
+      assert.deepEqual(Object.keys(amounts).sort(),['discount','shippingFee','subtotal','total'])
+      const quote={idempotencyKey:randomUUID(),...amounts,currency:'PKR',shippingMethodId:'60000000-0000-4000-8000-000000000001',paymentMethods:['Cash on Delivery'],orderingEnabled:checkout.orderingEnabled!==false,quoteFingerprint:randomBytes(32).toString('hex')}
+      issued.set(quote.idempotencyKey,{identity:quoteIdentity(body),quote,state:'active'});checkout.issuedQuotes??=[];checkout.issuedQuotes.push(quote)
+      return route.fulfill({json:{data:quote}})
     }
     const fulfill = (body) => route.fulfill({ json: body, headers: { 'access-control-allow-origin': '*' } })
     if (url.hostname === 'catalog.invalid') {

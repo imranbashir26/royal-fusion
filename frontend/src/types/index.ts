@@ -194,6 +194,8 @@ export interface CanonicalOrderRequest {
   shipping: { address: string; city: string; province: string; notes: string }
   paymentMethod: CheckoutPaymentMethod
   couponCode: string
+  /** Absent only on historical saved attempts; SQL rejects unchecked new orders. */
+  quoteFingerprint?: string
 }
 export interface CheckoutQuoteRequest {
   items: CanonicalOrderItemRequest[]
@@ -202,9 +204,11 @@ export interface CheckoutQuoteRequest {
   couponCode: string
 }
 export interface CheckoutQuoteResponse {
+  idempotencyKey?: string
   subtotal: number; discount: number; shippingFee: number; total: number
   currency: 'PKR'; shippingMethodId: string; paymentMethods: CheckoutPaymentMethod[]
   orderingEnabled: boolean
+  quoteFingerprint?: string
 }
 export interface CanonicalOrderReceipt {
   id: string; idempotencyKey: string; orderNumber: string

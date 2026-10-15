@@ -30,6 +30,11 @@ export function isQuote(value: unknown): value is CheckoutQuoteResponse {
   const row = value as Record<string, unknown>
   return amounts(row) && isVariantId(row.shippingMethodId) && Array.isArray(row.paymentMethods)
     && row.paymentMethods.length > 0 && row.paymentMethods.every(isPaymentMethod) && typeof row.orderingEnabled === 'boolean'
+    && (row.quoteFingerprint === undefined || typeof row.quoteFingerprint === 'string' && /^[0-9a-f]{64}$/.test(row.quoteFingerprint))
+}
+export function isCheckedQuote(value: unknown): value is CheckoutQuoteResponse & { quoteFingerprint: string; idempotencyKey: string } {
+  return isQuote(value) && typeof value.quoteFingerprint === 'string' && /^[0-9a-f]{64}$/.test(value.quoteFingerprint)
+    && isVariantId(value.idempotencyKey)
 }
 export function createCheckoutClient(fetcher: typeof fetch = fetch, baseUrl = import.meta.env?.VITE_API_URL || '/api') {
   async function request<T>(path: string, body: unknown, validate: (value: unknown) => value is T, order: boolean): Promise<T> {
@@ -58,6 +63,7 @@ export function createCheckoutClient(fetcher: typeof fetch = fetch, baseUrl = im
       contact: { name: body.contact.name, email: body.contact.email, phone: body.contact.phone },
       shipping: { address: body.shipping.address, city: body.shipping.city, province: body.shipping.province, notes: body.shipping.notes },
       paymentMethod: body.paymentMethod, couponCode: body.couponCode,
+      ...(body.quoteFingerprint !== undefined ? { quoteFingerprint: body.quoteFingerprint } : {}),
     }, isOrderReceipt, true),
   }
 }

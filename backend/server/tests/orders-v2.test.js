@@ -11,7 +11,7 @@ import {AdminOrdersV1Service} from '../services/adminOrdersV1Service.js'
 import {CheckoutQuoteV2Service} from '../services/checkoutQuoteV2Service.js'
 import {fixtureV2,clientV2,quoteRequest,fixedLine,normalLine,requestV2,orderV2} from './support/checkoutV2Database.js'
 import {startIsolatedApi} from './support/isolatedApi.js'
-import {apply014} from './support/fulfillmentV2Database.js'
+import {checkedFixture} from './support/checkedV1Database.js'
 let f,server,base,calls=[],logs=[]
 const origin='https://checkout.example.invalid'
 const config={...createAuthConfig({NODE_ENV:'test',CLIENT_ORIGIN:origin,AUTH_CSRF_SECRET:'synthetic-v2-secret-1234567890123456789',ADMIN_AUTH_PROVIDER:'prototype',CUSTOMER_AUTH_PROVIDER:'prototype',ENABLE_ADMIN_MFA:'false'}),environment:'production',secureCookies:true,allowDevelopmentLoopback:false}
@@ -67,10 +67,10 @@ test('diagnostics preserve request correlation and redact internal database erro
  assert.equal(entries[0].requestId,'v2-correlated-id');assert.equal(entries[0].operation,'quote_checkout_v2');assert.equal(entries[0].subsystem,'checkout_v2');assert.equal(entries[0].category,'XX000')
  assert.doesNotMatch(JSON.stringify(entries),/password|Authorization|payload|SELECT|stack/)
 })
-test('v1 service rejects normal-only v2 replay; Admin reads frozen detail after 014',async()=>{
- await apply014(f.db)
- const req=await requestV2(f.db,[normalLine(f.normal.variant)]),receipt=await orderV2(f.db,req),client=clientV2(f.db)
- const v1={idempotencyKey:req.idempotencyKey,items:[{variantId:f.normal.variant,quantity:1}],contact:req.contact,shipping:req.shipping,paymentMethod:req.paymentMethod,couponCode:''}
+test('v1 service rejects normal-only v2 replay; Admin reads frozen detail after 014',async t=>{
+ const checked=await checkedFixture(t)
+ const req=await requestV2(checked.db,[normalLine(checked.normal.variant)]),receipt=await orderV2(checked.db,req),client=clientV2(checked.db)
+ const v1={idempotencyKey:req.idempotencyKey,items:[{variantId:checked.normal.variant,quantity:1}],contact:req.contact,shipping:req.shipping,paymentMethod:req.paymentMethod,couponCode:''}
  await assert.rejects(()=>new OrdersV1Service(client,{logger:{warn(){}}}).create(v1),{code:'IDEMPOTENCY_CONFLICT'})
  const admin=new AdminOrdersV1Service(client,{warn(){}}),list=await admin.list({page:1,pageSize:25},'fixture-request')
  assert.equal(list.items.find(o=>o.id===receipt.id).checkoutVersion,2);assert.equal(list.items.find(o=>o.id===receipt.id).fulfillmentSupported,true)
