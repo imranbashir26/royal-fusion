@@ -16,6 +16,7 @@ import type { AdminField, AdminResourceConfig } from './adminConfig'
 import { resourceConfigs } from './adminConfig'
 import {SaleScheduleFields} from './SaleScheduleFields'
 import type {AdminSaleSnapshot} from '../services/saleSchedule'
+import {useSaleSchedulingCapability} from '../services/saleSchedulingCapability'
 
 type AdminRecord = Record<string, unknown> & { id?: string }
 
@@ -386,6 +387,7 @@ function AdminRecordForm({
   const { refreshSession } = useAdminAuth()
   const [form, setForm] = useState<AdminRecord>(() => ({
     ...(initialValue ?? createDefaultRecord(config.fields)),
+    ...(initialValue && config.endpoint === 'products' ? {variantEditBaseline:structuredClone(Object.fromEntries(['price','salePrice','stockQuantity','sku','bottleSize','variations'].map(key=>[key,initialValue[key]])))} : {}),
     ...(!initialValue && config.endpoint === 'categories' ? { active: true } : {}),
   } as AdminRecord))
   const [error, setError] = useState('')
@@ -658,6 +660,12 @@ function ProductFormSections({
   onUploadMedia?: (fieldName: string, file: File) => Promise<string>
   onDeleteMedia?: (fieldName: string, imageUrl: string) => Promise<void>
 }) {
+  const {can} = useAdminAuth()
+  const scheduling = useSaleSchedulingCapability(can('products:manage'))
+  const edits = (form.saleScheduleEdits ?? {}) as Record<string,AdminSaleSnapshot>
+  const editSale = (id: string, patch: AdminSaleSnapshot) => setForm(current => ({...current,
+    saleScheduleEdits:{...(current.saleScheduleEdits as Record<string,AdminSaleSnapshot> ?? {}),[id]:{...edits[id],...patch}},
+  }))
   const sections = [
     {
       title: '🏷️ 1. Basic Information & Pricing',
@@ -686,8 +694,9 @@ function ProductFormSections({
   return (
     <div className="space-y-6">
       {Array.isArray(form.variants) && form.variants.map((variant: AdminSaleSnapshot & {id: string; optionValue?: string}) => (
-        <SaleScheduleFields key={variant.id} sale={variant} label={`Variant ${variant.optionValue ?? variant.id}`} />
+        <SaleScheduleFields key={variant.id} sale={variant} label={`Variant ${variant.optionValue ?? variant.id}`} enabled={scheduling} edited={edits[variant.id]} onChange={patch=>editSale(variant.id,patch)} />
       ))}
+      {!form.id && !Array.isArray(form.variants) && <SaleScheduleFields sale={{regularPrice:Number(form.price),salePrice:form.salePrice ? Number(form.salePrice) : null}} label="New canonical variant" enabled={scheduling} edited={edits.new} onChange={patch=>editSale('new',patch)} />}
       {sections.map((section) => {
         const sectionFields = section.fields
           .map((fieldName) => fieldMap.get(fieldName))

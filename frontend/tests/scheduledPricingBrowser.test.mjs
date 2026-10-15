@@ -149,3 +149,23 @@ test('Fixed pack administration displays its independent effective price and ret
  assert.equal(writes.length,1);assert.equal(writes[0].definition.fixedSalePrice,400.25)
  assert.equal('fixedSaleStartsAt' in writes[0].definition,false);assert.equal(writes[0].expectedDefinitionRevision,'9')
 })
+
+test('Enabled server capability unlocks canonical scheduling; invalid windows do not submit', {timeout:90000},async t=>{
+ const {page}=await pageFixture(t,{admin:adminFixture()}),writes=[]
+ const dto={id:productId,commerceKind:'standard',name:'Baraan',slug:'baraan',sku:'RF-001',categoryId:null,category:'',image:'/favicon.svg',gallery:['/favicon.svg'],price:2900,salePrice:2450.25,oldPrice:null,stockQuantity:12,status:'Draft',scentFamily:'Woody',bottleSize:'50 ml',catalogRevision:'7',variations:[],notes:{top:[],middle:[],base:[]},variants:[{id:variantId,optionName:'Size',optionValue:'50 ml',sku:'RF-001-50',regularPrice:2900,salePrice:2450.25,saleStartsAt:start,saleEndsAt:end,effectivePrice:2900,saleActive:false,pricingAt:'2026-10-15T00:00:00Z',validUntil:start,stockQuantity:12,available:true,standardManualAvailable:true,active:true,displayOrder:0}]}
+ await page.route('**/api/v1/admin/**',async route=>{
+  const req=route.request(),url=new URL(req.url())
+  if(url.pathname.endsWith('/sale-capabilities'))return route.fulfill({json:{data:{scheduledSaleWrites:true}}})
+  if(url.pathname.includes('/products')){if(req.method()==='PUT'){writes.push(req.postDataJSON());return route.fulfill({json:{data:dto}})}return route.fulfill({json:{data:url.pathname.endsWith(productId)?dto:{items:[dto],page:1,pageSize:25,total:1,totalPages:1}}})}
+  return route.fulfill({json:{data:{items:[],totalPages:0}}})
+ })
+ await page.goto(`${origin}/admin/products`);await page.getByRole('button',{name:'Edit',exact:true}).click()
+ const starts=page.getByLabel('Sale start (ISO timestamp with UTC offset)'),ends=page.getByLabel('Sale end (ISO timestamp with UTC offset)')
+ await page.getByLabel('Scheduled sale price (PKR fixed amount)').waitFor();assert.equal(await starts.isEnabled(),true);assert.equal(await starts.inputValue(),start)
+ await ends.fill('2000-01-01T00:00:00Z');await page.getByRole('button',{name:'Save Record',exact:true}).click();await page.getByText('Sale end must be after sale start.',{exact:true}).waitFor();assert.equal(writes.length,0)
+ await ends.fill('2099-03-01T00:00:00.654321Z');await page.getByLabel('Scheduled sale price (PKR fixed amount)').fill('2400.75')
+ await page.getByLabel('Regular price *',{exact:true}).fill('3300');await page.getByLabel('Stock quantity *',{exact:true}).fill('5');await page.getByLabel('SKU *',{exact:true}).fill('RF-CHANGED')
+ await page.getByRole('button',{name:'Save Record',exact:true}).click()
+ await page.getByRole('heading',{name:'Edit Product',exact:true}).waitFor({state:'hidden'});assert.equal(writes.length,1)
+ const v=writes[0].variants[0];assert.equal(v.salePrice,2400.75);assert.equal(v.saleEndsAt,'2099-03-01T00:00:00.654321Z');assert.equal('saleStartsAt' in v,false);assert.equal(v.id,variantId);assert.deepEqual([v.regularPrice,v.stockQuantity,v.sku],[3300,5,'RF-CHANGED']);assert.equal(v.standardManualAvailable,true);assert.equal(writes[0].expectedRevision,'7');assert.equal('effectivePrice' in v,false)
+})

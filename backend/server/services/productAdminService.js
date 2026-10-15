@@ -2,6 +2,7 @@ import { toProductColumns, toProductDto } from '../mappers/productAdminMapper.js
 import { toCatalogVariants } from '../schemas/catalogVariants.js'
 import {scheduledWriteRequested,toSaleTimestamp} from '../schemas/saleSchedule.js'
 import {batchSalePrices} from './catalogPricingService.js'
+import {createSaleSchedulingPolicy} from './saleSchedulingPolicy.js'
 
 export class ProductApiError extends Error {
   constructor(status, code, message) {
@@ -12,9 +13,10 @@ export class ProductApiError extends Error {
 }
 
 export class ProductAdminService {
-  constructor(client, logger = console) {
+  constructor(client, logger = console, {saleScheduling = createSaleSchedulingPolicy(client)} = {}) {
     this.client = client
     this.logger = logger
+    this.saleScheduling = saleScheduling
   }
 
   requireClient() {
@@ -84,7 +86,7 @@ export class ProductAdminService {
   }
 
   async create(input, actor) {
-    assertSchedulingDisabled(input)
+    await this.saleScheduling.assertAllowed(input)
     const client = this.requireClient()
     if (input.commerceKind === 'tester') return this.saveTester(null, input, actor)
     let operation = 'product.map'
@@ -120,9 +122,11 @@ export class ProductAdminService {
   }
 
   async update(id, input, actor) {
-    assertSchedulingDisabled(input)
+    await this.saleScheduling.assertAllowed(input)
     const client = this.requireClient()
     const existing = await this.get(id)
+    assertReadRevision(input.expectedRevision, existing.catalogRevision)
+    if (!scheduledWriteRequested(input)) await this.saleScheduling.assertAllowed(input,existing)
     if (input.commerceKind && input.commerceKind !== existing.commerceKind) throw new ProductApiError(400, 'INVALID_REQUEST', 'Product kind is immutable.')
     if (existing.commerceKind === 'tester') return this.saveTester(id, input, actor, existing)
     const columns = toProductColumns(input)
@@ -146,7 +150,9 @@ export class ProductAdminService {
     }
     const { data, error } = await client.rpc('save_catalog_product', {
       p_product_id: id, p_patch: columns, p_variants: normalizedVariants(input),
-      p_expected_revision: input.expectedRevision ?? null,
+      // Pin legacy price-only writes too. Canonical/stock writes still require
+      // the caller's revision; an omitted token must not become a stock override.
+      p_expected_revision: input.expectedRevision ?? (input.variants || input.variations?.length || Object.hasOwn(input,'stockQuantity') ? null : existing.catalogRevision),
     })
     if (error) throw databaseError(error)
     if (!data) throw notFound()
@@ -166,7 +172,12 @@ export class ProductAdminService {
   }
 
   async saveTester(id, input, actor, existing = null) {
-    assertSchedulingDisabled(input)
+    await this.saleScheduling.assertAllowed(input)
+    if (id) {
+      existing ??= await this.get(id)
+      assertReadRevision(input.expectedRevision,existing.catalogRevision)
+      if (!scheduledWriteRequested(input)) await this.saleScheduling.assertAllowed(input,existing)
+    }
     if (input.variants?.some(variant => Object.hasOwn(variant, 'standardManualAvailable'))) {
       throw new ProductApiError(400, 'INVALID_REQUEST', 'Standard availability does not apply to testers.')
     }
@@ -244,6 +255,10 @@ export class ProductAdminService {
 
 function notFound() {
   return new ProductApiError(404, 'PRODUCT_NOT_FOUND', 'Product not found.')
+}
+
+function assertReadRevision(expected, actual) {
+  if (expected != null && expected !== actual) throw new ProductApiError(409,'CATALOG_STALE','Catalog changed. Reload the product before saving.')
 }
 
 function normalizedVariants(input) {

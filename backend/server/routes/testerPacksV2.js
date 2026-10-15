@@ -4,10 +4,11 @@ import { createAdminIdentity,createOriginGuard,requireAuthenticatedCsrf,sendCode
 import { AUTH_ERROR_CODES } from '../auth/contracts.js'
 import { ProductApiError } from '../services/productAdminService.js'
 import { TesterCatalogService } from '../services/testerCatalogService.js'
+import {createSaleSchedulingPolicy} from '../services/saleSchedulingPolicy.js'
 import { createPackSchema,updatePackSchema,archivePackSchema,listPacksSchema,boundedCatalogPayload } from '../schemas/testerCatalog.js'
 
-export function createTesterPacksV2Router(runtime,{client=runtime.repository.client,logger=console,publicOnly=false}={}) {
- const router=Router(), service=req=>new TesterCatalogService(client,logger,{requestId:req.requestId})
+export function createTesterPacksV2Router(runtime,{client=runtime.repository.client,logger=console,publicOnly=false,saleScheduling=createSaleSchedulingPolicy(client)}={}) {
+ const router=Router(), service=req=>new TesterCatalogService(client,logger,{requestId:req.requestId,saleScheduling})
  router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next()})
  if(!publicOnly) router.use(createAdminIdentity(runtime))
  const permit=key=>(req,res,next)=>publicOnly || req.administrator.permissions.some(p=>p==='*'||p===key)?next():sendCode(res,AUTH_ERROR_CODES.PERMISSION_DENIED,req.requestId)

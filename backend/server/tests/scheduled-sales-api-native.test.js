@@ -3,6 +3,8 @@ import test from 'node:test'
 import express from 'express'
 import cookieParser from 'cookie-parser'
 import {randomUUID} from 'node:crypto'
+import {readFile} from 'node:fs/promises'
+import {pathToFileURL} from 'node:url'
 import {createAuthConfig} from '../auth/config.js'
 import {getAuthCookieNames,getSessionCsrfToken} from '../auth/cookies.js'
 import {requestContext,authErrorHandler} from '../middleware/authSecurity.js'
@@ -12,14 +14,34 @@ import {createCatalogPricesV2Router} from '../routes/catalogPricesV2.js'
 import {ProductAdminService} from '../services/productAdminService.js'
 import {TesterCatalogService} from '../services/testerCatalogService.js'
 import {testerSqlClient} from './support/testerCatalogDatabase.js'
-import {salesFixture,updateStandard,updateTester,updatePack,variantInput,deadline,waitClock,v1Request,quoteV1,placeV1,committed} from './support/scheduledSalesDatabase.js'
+import {salesFixture,updateStandard,updateTester,updatePack,variantInput,deadline,waitClock,v1Request,quoteV1,placeV1,committed,additional,waitBlocked} from './support/scheduledSalesDatabase.js'
 import {quoteV2,quoteRequest,normalLine,configuredLine,requestV2,orderV2} from './support/checkoutV2Database.js'
 import {state014} from './support/fulfillmentV2Database.js'
 import {timestampMicros} from '../schemas/saleSchedule.js'
+import {createSaleSchedulingPolicy} from '../services/saleSchedulingPolicy.js'
+import {scheduledSalesBrowser} from './support/scheduledSalesBrowser.js'
+import {toProductPayload} from '../../../frontend/src/services/adminProductContract.ts'
 
 const future='2099-01-01T00:00:00Z',past='2000-01-01T00:00:00Z',origin='https://sale-api.example.invalid'
-async function harness(t){
- const f=await salesFixture(t),baseClient=testerSqlClient(f.db),calls=[]
+async function administrationState(db){
+ const commerce=await state014(db)
+ const packs=(await db.query(`select jsonb_build_object(
+  'definitions',(select jsonb_agg(to_jsonb(d) order by product_id) from tester_packs d),
+  'components',(select jsonb_agg(to_jsonb(d) order by pack_id,tester_variant_id) from tester_pack_components d),
+  'allowed',(select jsonb_agg(to_jsonb(d) order by pack_id,tester_variant_id) from tester_pack_allowed_variants d)) state`)).rows[0].state
+ return {commerce,packs}
+}
+async function harness(t,{enabled=false}={}){
+ const f=await salesFixture(t),native=JSON.parse(await readFile(process.env.RF_RELEASE005_NATIVE_CONFIG,'utf8'))
+ const {types}= (await import(pathToFileURL(native.pgModule))).default
+ // PostgREST delivers timestamp JSON strings. pg's default Date parser silently
+ // truncates microseconds; preserve them in this native API transport fixture.
+ const apiDb=Object.create(f.db)
+ apiDb.query=(text,values)=>f.db.query({text,values,types:{getTypeParser(oid,format){
+  return oid===1184 ? value=>value.replace(' ','T').replace(/([+-]\d{2})$/, '$1:00') : types.getTypeParser(oid,format)
+ }}})
+ apiDb.exec=text=>apiDb.query(text)
+ const baseClient=testerSqlClient(apiDb),calls=[]
  const client={...baseClient,from(table){
   const q=baseClient.from(table)
   if(table==='admin_audit_logs')q.insert=async row=>{
@@ -35,8 +57,9 @@ async function harness(t){
   return {record:{sessionClass:accessToken==='customer'?'customer':'administrator',mfaAssurance:'aal2'},identity:{id:accessToken,assuranceLevel:'aal2'}}
  }},adminAuthorization:{resolve:async id=>id===f.admin?{userId:id,permissions:['*']}:id===reader?{userId:id,permissions:['products.read']}:null}}
  const app=express();app.use(requestContext,express.json({limit:'32kb'}),cookieParser())
- app.use('/products',createAdminProductsV1Router(runtime,{logger:{warn(){},error(){}}}))
- app.use('/packs',createTesterPacksV2Router(runtime,{logger:{error(){}}}))
+ const saleScheduling=createSaleSchedulingPolicy(client,{enabled})
+ app.use('/products',createAdminProductsV1Router(runtime,{saleScheduling,logger:{warn(){},error(){}}}))
+ app.use('/packs',createTesterPacksV2Router(runtime,{saleScheduling,logger:{error(){}}}))
  app.use('/public-packs',createTesterPacksV2Router(runtime,{publicOnly:true,logger:{error(){}}}))
  app.use('/catalog',createCatalogPricesV2Router(runtime))
  app.use(authErrorHandler(config));app.use((e,req,res,_next)=>res.status(e.status??500).json({error:{code:'SAFE_FAILURE',requestId:req.requestId}}))
@@ -49,8 +72,35 @@ async function harness(t){
   const res=await fetch(root+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body)})
   return {status:res.status,headers:res.headers,body:await res.json()}
  }
- return {...f,client,calls,http,reader,products:new ProductAdminService(client,{warn(){},error(){}}),packs:new TesterCatalogService(client,{error(){}})}
+ return {...f,client,calls,http,reader,root,config,names,products:new ProductAdminService(client,{warn(){},error(){}},{saleScheduling}),packs:new TesterCatalogService(client,{error(){}},{saleScheduling})}
 }
+
+test('Combined canonical serialization persists scalar, variation and added-row edits through authorized HTTP and PG17',{timeout:60000},async t=>{
+ const f=await harness(t,{enabled:true}),id=f.normal.product
+ const baseline=p=>Object.fromEntries(['price','salePrice','stockQuantity','sku','bottleSize','variations'].map(key=>[key,p[key]]))
+ let p=await f.products.get(id)
+ const outside=(await f.db.query('select to_jsonb(v) value from product_variants v where product_id<>$1 order by id',[id])).rows
+ const serialized=toProductPayload({...p,variantEditBaseline:baseline(p),price:3300,stockQuantity:5,sku:'RF-CHANGED',expectedRevision:p.catalogRevision,saleScheduleEdits:{[f.normal.variant]:{salePrice:2450.25,saleStartsAt:future}}})
+ let r=await f.http('/products/'+id,{method:'PUT',actor:f.admin,body:serialized});assert.equal(r.status,200)
+ p=await f.products.get(id);let v=p.variants.find(v=>v.id===f.normal.variant)
+ assert.deepEqual([v.regularPrice,v.stockQuantity,v.sku,v.salePrice],[3300,5,'RF-CHANGED',2450.25]);assert.equal(Date.parse(v.saleStartsAt),Date.parse(future));assert.equal(v.standardManualAvailable,true)
+ const payload=toProductPayload({...p,variantEditBaseline:baseline(p),expectedRevision:p.catalogRevision,
+  variations:[{name:'100 ml',sku:'RF-100',price:4500,salePrice:3500,stock:3,active:true,saleStartsAt:future}],
+  saleScheduleEdits:{[f.normal.variant]:{saleEndsAt:'2099-03-01T00:00:00Z'}}})
+ r=await f.http('/products/'+id,{method:'PUT',actor:f.admin,body:payload});assert.equal(r.status,200)
+ p=await f.products.get(id);assert.equal(p.variants.length,2)
+ const second=p.variants.find(v=>v.id!==f.normal.variant)
+ assert.deepEqual([second.optionValue,second.sku,second.regularPrice,second.salePrice,second.stockQuantity],['100 ml','RF-100',4500,3500,3]);assert.equal(Date.parse(second.saleStartsAt),Date.parse(future))
+ const edited=toProductPayload({...p,variantEditBaseline:baseline(p),expectedRevision:p.catalogRevision,
+  variations:[{id:second.id,name:'150 ml',sku:'RF-150',price:4800,salePrice:3600,stock:2,active:true}],
+  saleScheduleEdits:{[f.normal.variant]:{saleEndsAt:'2099-04-01T00:00:00Z'}}})
+ r=await f.http('/products/'+id,{method:'PUT',actor:f.admin,body:edited});assert.equal(r.status,200)
+ p=await f.products.get(id);v=p.variants.find(v=>v.id===second.id)
+ assert.deepEqual([v.optionValue,v.sku,v.regularPrice,v.salePrice,v.stockQuantity],['150 ml','RF-150',4800,3600,2]);assert.equal(Date.parse(v.saleStartsAt),Date.parse(future))
+ assert.deepEqual((await f.db.query('select to_jsonb(v) value from product_variants v where product_id<>$1 order by id',[id])).rows,outside)
+ const before=await administrationState(f.db)
+ const stale=await f.http('/products/'+id,{method:'PUT',actor:f.admin,body:edited});assert.equal(stale.status,409);assert.equal(stale.body.error.code,'CATALOG_STALE');assert.deepEqual(await administrationState(f.db),before)
+})
 
 test('Scheduled sales backend and HTTP contracts against owned native PG17',{timeout:180000},async t=>{
  async function scenario(name,fn){let ok=false;await t.test(name,{timeout:30000},async s=>{await fn(s);ok=true});if(!ok)throw Error('Critical backend verification failure: '+name)}
@@ -233,5 +283,168 @@ test('Scheduled sales backend and HTTP contracts against owned native PG17',{tim
    try{await assert.rejects(()=>f.db.query('select catalog_sale_prices_009()'),e=>e.code==='42501')}finally{await f.db.query('reset role')}
   }
   for(const query of ['','?ids=bad','?ids='+f.normal.variant+','+f.normal.variant,'?ids='+f.normal.variant+'&pricingAt='+future])assert.equal((await f.http('/catalog/variant-prices'+query)).status,400)
+ })
+})
+
+test('Controlled scheduled-sale administration enabled and disabled native acceptance',{timeout:180000},async t=>{
+ async function scenario(name,fn){let ok=false;await t.test(name,{timeout:60000},async s=>{await fn(s);ok=true});if(!ok)throw Error('Critical activation verification failure: '+name)}
+ await scenario('Chrome controls use real authorized capability, backend persistence and native PG17',async s=>{
+  const f=await harness(s,{enabled:true});await scheduledSalesBrowser(s,f)
+ })
+ await scenario('Capability is authenticated, permission-scoped, default-disabled and fails closed on RPC loss',async s=>{
+  for(const enabled of [false,true]){
+   const f=await harness(s,{enabled});assert.equal((await f.http('/products/sale-capabilities')).status,401)
+   assert.equal((await f.http('/products/sale-capabilities',{actor:f.reader})).status,403)
+   const r=await f.http('/products/sale-capabilities',{actor:f.admin});assert.equal(r.status,200);assert.equal(r.headers.get('cache-control'),'no-store');assert.deepEqual(r.body.data,{scheduledSaleWrites:enabled})
+   if(enabled){f.client.rpc=async()=>({error:{message:'private'}});assert.equal((await f.http('/products/sale-capabilities',{actor:f.admin})).body.data.scheduledSaleWrites,false)
+    const before=await state014(f.db),v=await variantInput(f.db,f.normal.variant,{salePrice:2450,saleStartsAt:future})
+    const r=await f.http('/products/'+f.normal.product,{method:'PUT',actor:f.admin,body:{variants:[v],expectedRevision:'0'}});assert.equal(r.status,503);assert.equal(r.body.error.code,'SALE_SCHEDULING_UNAVAILABLE');assert.deepEqual(await state014(f.db),before)
+   }
+  }
+ })
+ await scenario('Request overrides cannot enable scheduling; direct default services and legacy aliases stay guarded',async s=>{
+  const f=await harness(s),before=await state014(f.db),v=await variantInput(f.db,f.normal.variant,{salePrice:2450,saleStartsAt:future})
+  for(const body of [{variants:[v]},{variations:[{name:'50 ml',sku:v.sku,price:2900,salePrice:2450,saleStartsAt:future,stock:12,active:true}]},{variants:[v],scheduledSaleWrites:true}]){
+   const r=await f.http('/products/'+f.normal.product+'?scheduledSaleWrites=true',{actor:f.admin,method:'PUT',body});assert([400,409].includes(r.status))
+  }
+  await assert.rejects(()=>new ProductAdminService(f.client).update(f.normal.product,{variants:[v]},{userId:f.admin}),{status:409})
+  assert.deepEqual(await state014(f.db),before)
+ })
+ for(const start of [future,past])await scenario('Disabled persisted '+(start===future?'future':'active')+' windows reject price-only canonical, aliases, tester and fixed-pack mutations without any database effects',async s=>{
+  const f=await harness(s)
+  await updateStandard(f,{salePrice:2450.25,saleStartsAt:start,saleEndsAt:future===start?'2099-02-01T00:00:00Z':future})
+  await updateTester(f,f.tester,{salePrice:200,saleStartsAt:start})
+  await updatePack(f,f.fixed,{fixedSalePrice:400,fixedSaleStartsAt:start})
+  const p=await f.products.get(f.normal.product),tester=await f.products.get(f.tester.product.id),pack=await f.packs.get(f.fixed.product.id)
+  const v=await variantInput(f.db,f.normal.variant,{salePrice:2300.25}),tv=await variantInput(f.db,f.tester.tester.variant_id,{salePrice:190})
+  const cases=[
+   ['/products/'+p.id,'PUT',{variants:[v],expectedRevision:p.catalogRevision}],
+   ['/products/'+p.id,'PUT',{variants:[{...v,id:undefined}],expectedRevision:p.catalogRevision}],
+   ['/products/'+p.id,'PUT',{salePrice:2300.25}],
+   ['/products/'+p.id,'PUT',{variations:[{id:v.id,name:v.optionValue,sku:v.sku,price:v.regularPrice,salePrice:2300.25,stock:v.stockQuantity,active:true}],expectedRevision:p.catalogRevision}],
+   ['/products/'+tester.id,'PUT',{variants:[tv],expectedRevision:tester.catalogRevision}],
+   ['/products/'+tester.id,'PUT',{salePrice:190,expectedRevision:tester.catalogRevision}],
+   ['/packs/'+pack.id,'PATCH',{product:{},definition:{fixedSalePrice:390},expectedRevision:pack.catalogRevision,expectedDefinitionRevision:pack.definitionRevision}],
+   ['/products/'+p.id,'PUT',{variants:[{...v,saleStartsAt:null,saleEndsAt:null}],expectedRevision:p.catalogRevision}],
+   ['/packs/'+pack.id,'PATCH',{product:{},definition:{fixedSalePrice:390,fixedSaleStartsAt:null,fixedSaleEndsAt:null},expectedRevision:pack.catalogRevision,expectedDefinitionRevision:pack.definitionRevision}],
+   ['/products/'+p.id,'PUT',{variants:[{...v,salePrice:2450.25,saleEndsAt:'2099-03-01T00:00:00Z'}],expectedRevision:p.catalogRevision}],
+  ]
+  const before=await administrationState(f.db)
+  for(const [path,method,body]of cases){
+   const r=await f.http(path,{method,body,actor:f.admin});assert.equal(r.status,409);assert.equal(r.body.error.code,'SALE_SCHEDULING_DISABLED')
+   assert.deepEqual(await administrationState(f.db),before,'Rejected operation preserves prices, bounds, stock, revisions, audit and pack definitions')
+  }
+  for(const opts of [{actor:f.reader},{actor:'customer'},{actor:f.admin,csrf:false},{actor:f.admin,requestOrigin:'https://evil.example.invalid'}]){
+   const r=await f.http('/products/'+p.id,{method:'PUT',body:{salePrice:2300.25},...opts});assert([401,403].includes(r.status));assert.deepEqual(await administrationState(f.db),before)
+  }
+  for(const [method,path,body]of [['PUT','/products/'+p.id,{salePrice:2300.25,scheduledSaleWrites:true}],['PATCH','/packs/'+pack.id,{product:{},definition:{fixedSalePrice:390,scheduledSaleWrites:true},expectedRevision:pack.catalogRevision,expectedDefinitionRevision:pack.definitionRevision}]]){
+   assert.equal((await f.http(path+'?scheduledSaleWrites=true',{method,body,actor:f.admin})).status,400);assert.deepEqual(await administrationState(f.db),before)
+  }
+ })
+ await scenario('Disabled metadata, same-price echoes, explicit null clearing and genuine immediate sales remain supported',async s=>{
+  const f=await harness(s),actor={userId:f.admin,requestId:'disabled-controls'}
+  await updateStandard(f,{salePrice:2450.25,saleStartsAt:future})
+  let dto=await f.products.get(f.normal.product),v=await variantInput(f.db,f.normal.variant)
+  let r=await f.http('/products/'+dto.id,{method:'PUT',actor:f.admin,body:{description:'Copy only',variants:[v],expectedRevision:dto.catalogRevision}});assert.equal(r.status,200)
+  assert.equal(r.body.data.variants[0].salePrice,2450.25);assert.equal(Date.parse(r.body.data.variants[0].saleStartsAt),Date.parse(future))
+  r=await f.http('/products/'+dto.id,{method:'PUT',actor:f.admin,body:{salePrice:0,expectedRevision:r.body.data.catalogRevision}});assert.equal(r.status,200)
+  assert.deepEqual([r.body.data.variants[0].salePrice,r.body.data.variants[0].saleStartsAt,r.body.data.variants[0].saleEndsAt],[null,null,null])
+  r=await f.http('/products/'+dto.id,{method:'PUT',actor:f.admin,body:{salePrice:2300.25}});assert.equal(r.status,200);assert.equal(r.body.data.variants[0].salePrice,2300.25)
+  await updateTester(f,f.tester,{salePrice:200,saleStartsAt:future})
+  dto=await f.products.get(f.tester.product.id)
+  const saved=await f.products.update(dto.id,{salePrice:null,expectedRevision:dto.catalogRevision},actor)
+  assert.deepEqual([saved.variants[0].salePrice,saved.variants[0].saleStartsAt,saved.variants[0].saleEndsAt],[null,null,null])
+  assert.equal(saved.variants[0].regularPrice,dto.variants[0].regularPrice);assert.equal(saved.variants[0].stockQuantity,dto.variants[0].stockQuantity)
+  const pack=await f.packs.get(f.fixed.product.id),physical=(await f.db.query('select to_jsonb(v) value from product_variants v order by id')).rows
+  const immediate=await f.packs.save(pack.id,{product:{},definition:{fixedSalePrice:390},expectedRevision:pack.catalogRevision,expectedDefinitionRevision:pack.definitionRevision},actor)
+  assert.equal(immediate.fixedSalePrice,390);assert.deepEqual((await f.db.query('select to_jsonb(v) value from product_variants v order by id')).rows,physical)
+ })
+ for(const kind of ['canonical','legacy without caller revision','tester','pack'])await scenario('Concurrent '+kind+' schedule change after policy read is rejected under actual PostgreSQL row locks',async s=>{
+  const f=await harness(s),holder=await additional(s,f.db),observer=await additional(s,f.db)
+  f.db.nativePid=(await f.db.query('select pg_backend_pid() n')).rows[0].n
+  const id=kind==='tester'?f.tester.product.id:kind==='pack'?f.fixed.product.id:f.normal.product
+  const dto=kind==='pack'?await f.packs.get(id):await f.products.get(id)
+  const body=kind==='pack'?{product:{},definition:{fixedSalePrice:390},expectedRevision:dto.catalogRevision,expectedDefinitionRevision:dto.definitionRevision}:
+   kind==='legacy without caller revision'?{salePrice:2300.25}:kind==='tester'?{salePrice:190,expectedRevision:dto.catalogRevision}:
+   {variants:[await variantInput(f.db,f.normal.variant,{salePrice:2300.25})],expectedRevision:dto.catalogRevision}
+  const rpc=kind==='pack'?'save_tester_pack':kind==='tester'?'save_tester_product':'save_catalog_product'
+  let reach,release;const reached=new Promise(r=>reach=r),gate=new Promise(r=>release=r),original=f.client.rpc.bind(f.client)
+  f.client.rpc=async(name,args)=>{if(name===rpc){reach();await gate}return original(name,args)}
+  const pending=f.http((kind==='pack'?'/packs/':'/products/')+id,{method:kind==='pack'?'PATCH':'PUT',actor:f.admin,body})
+  let committed=false
+  try{
+   await reached;await holder.query('begin')
+   const hf={...f,db:holder}
+   if(kind==='pack')await updatePack(hf,f.fixed,{fixedSalePrice:400,fixedSaleStartsAt:future})
+   else if(kind==='tester')await updateTester(hf,f.tester,{salePrice:200,saleStartsAt:future})
+   else await updateStandard(hf,{salePrice:2450.25,saleStartsAt:future})
+   release();await waitBlocked(observer,f.db,holder)
+   const before=await administrationState(holder)
+   await holder.query('commit');committed=true
+   const r=await pending;assert.equal(r.status,409);assert.equal(r.body.error.code,'CATALOG_STALE')
+   assert.deepEqual(await administrationState(f.db),before,'Losing request cannot change concurrent committed schedule or audit/inventory state')
+  }finally{release();if(!committed)await holder.query('rollback');await pending}
+ })
+ await scenario('Enabled product schedules preserve microseconds, regular prices, inventory, revisions and audit attribution',async s=>{
+  const f=await harness(s,{enabled:true}),id=f.normal.product,v=await variantInput(f.db,f.normal.variant,{salePrice:2450.25,saleStartsAt:'2099-01-01T05:00:00.123456+05:00',saleEndsAt:'2099-02-01T00:00:00.654321Z'})
+  let prior=await f.products.get(id),r=await f.http('/products/'+id,{method:'PUT',actor:f.admin,body:{variants:[v],expectedRevision:prior.catalogRevision}});assert.equal(r.status,200)
+  assert.equal(timestampMicros(r.body.data.variants[0].saleStartsAt),timestampMicros(v.saleStartsAt),'Writer JSON preserves all microseconds')
+  const stored=(await f.db.query("select to_jsonb(v)->>'sale_starts_at' value from product_variants v where id=$1",[f.normal.variant])).rows[0].value
+  assert.equal(timestampMicros(stored),timestampMicros(v.saleStartsAt),'Native persisted JSON retains all microseconds')
+  let dto=(await f.http('/products/'+id,{actor:f.admin})).body.data
+  assert.deepEqual([dto.variants[0].regularPrice,dto.variants[0].salePrice,dto.variants[0].effectivePrice,dto.variants[0].saleActive,dto.variants[0].stockQuantity,dto.variants[0].standardManualAvailable],[2900,2450.25,2900,false,12,true])
+  assert.equal(timestampMicros(dto.variants[0].saleStartsAt),timestampMicros(v.saleStartsAt));assert.equal(timestampMicros(dto.variants[0].saleEndsAt),timestampMicros(v.saleEndsAt))
+  const before=await state014(f.db)
+  assert.equal((await f.http('/products/'+id,{method:'PUT',actor:f.admin,body:{variants:[v],expectedRevision:prior.catalogRevision}})).status,409)
+  for(const patch of [{salePrice:3000},{salePrice:2450.001},{saleStartsAt:future,saleEndsAt:past}])assert.equal((await f.http('/products/'+id,{method:'PUT',actor:f.admin,body:{variants:[{...v,...patch}],expectedRevision:dto.catalogRevision}})).status,400)
+  for(const opts of [{},{actor:f.reader},{actor:'customer'},{actor:f.admin,csrf:false},{actor:f.admin,requestOrigin:'https://evil.example.invalid'}])assert([401,403].includes((await f.http('/products/'+id,{method:'PUT',body:{variants:[v],expectedRevision:dto.catalogRevision},...opts})).status))
+  assert.deepEqual(await state014(f.db),before)
+  r=await f.http('/products/'+id,{method:'PUT',actor:f.admin,body:{variants:[{...v,saleEndsAt:'2099-03-01T00:00:00Z'}],expectedRevision:dto.catalogRevision}});assert.equal(r.status,200)
+  r=await f.http('/products/'+id,{method:'PUT',actor:f.admin,body:{variants:[{...v,salePrice:null,saleStartsAt:null,saleEndsAt:null}],expectedRevision:r.body.data.catalogRevision}});assert.equal(r.status,200);assert.deepEqual([r.body.data.variants[0].salePrice,r.body.data.variants[0].saleStartsAt,r.body.data.variants[0].saleEndsAt],[null,null,null])
+  const audit=(await f.db.query("select admin_id,request_id from admin_audit_logs where action='product.update' order by created_at desc limit 1")).rows[0];assert.equal(audit.admin_id,f.admin);assert.equal(audit.request_id,'scheduled-api-native-request')
+ })
+ await scenario('Enabled tester and fixed pack schedules retain independent pricing; configurable parents reject own prices',async s=>{
+  const f=await harness(s,{enabled:true}),tester=await f.products.get(f.tester.product.id),v=await variantInput(f.db,f.tester.tester.variant_id,{salePrice:200.25,saleStartsAt:past,saleEndsAt:future})
+  let r=await f.http('/products/'+tester.id,{method:'PUT',actor:f.admin,body:{variants:[v],expectedRevision:tester.catalogRevision}});assert.equal(r.status,200)
+  const pack=await f.packs.get(f.fixed.product.id);r=await f.http('/packs/'+pack.id,{method:'PATCH',actor:f.admin,body:{product:{},definition:{fixedSalePrice:400.25,fixedSaleStartsAt:past,fixedSaleEndsAt:future},expectedRevision:pack.catalogRevision,expectedDefinitionRevision:pack.definitionRevision}});assert.equal(r.status,200)
+  assert.equal(r.body.data.effectivePrice,400.25);assert.equal((await f.products.get(tester.id)).variants[0].salePrice,200.25)
+  assert.equal((await quoteV2(f.db,quoteRequest([configuredLine(f)]))).subtotal,400.50)
+  const config=await f.packs.get(f.configurable.product.id),before=await state014(f.db)
+  assert.equal((await f.http('/packs/'+config.id,{method:'PATCH',actor:f.admin,body:{product:{},definition:{fixedSalePrice:2,fixedSaleStartsAt:future},expectedRevision:config.catalogRevision,expectedDefinitionRevision:config.definitionRevision}})).status,400);assert.deepEqual(await state014(f.db),before)
+ })
+ await scenario('Enabled omitted-bound price edits persist for standard, tester and fixed-pack schedules and capability failure rejects them',async s=>{
+  const f=await harness(s,{enabled:true})
+  await updateStandard(f,{salePrice:2450.25,saleStartsAt:future});await updateTester(f,f.tester,{salePrice:200,saleStartsAt:past});await updatePack(f,f.fixed,{fixedSalePrice:400,fixedSaleStartsAt:future})
+  for(const [id,amount]of [[f.normal.product,2300.25],[f.tester.product.id,190]]){
+   const p=await f.products.get(id),prior=p.variants[0],r=await f.http('/products/'+id,{method:'PUT',actor:f.admin,body:{salePrice:amount,expectedRevision:p.catalogRevision}})
+   assert.equal(r.status,200)
+   const v=(await f.products.get(id)).variants[0]
+   assert.deepEqual([v.salePrice,v.saleStartsAt,v.saleEndsAt,v.regularPrice,v.stockQuantity,v.standardManualAvailable],[amount,prior.saleStartsAt,prior.saleEndsAt,prior.regularPrice,prior.stockQuantity,prior.standardManualAvailable])
+  }
+  const pack=await f.packs.get(f.fixed.product.id),r=await f.http('/packs/'+pack.id,{method:'PATCH',actor:f.admin,body:{product:{},definition:{fixedSalePrice:390},expectedRevision:pack.catalogRevision,expectedDefinitionRevision:pack.definitionRevision}})
+  assert.equal(r.status,200);assert.equal(r.body.data.fixedSalePrice,390);assert.equal(r.body.data.fixedSaleStartsAt,pack.fixedSaleStartsAt);assert.equal(r.body.data.fixedRegularPrice,450)
+  const base=f.client.rpc.bind(f.client);f.client.rpc=(name,args)=>name==='catalog_sale_prices_009'?Promise.resolve({error:{message:'private capability failure'}}):base(name,args)
+  const dto=await f.products.get(f.normal.product),before=await administrationState(f.db)
+  const blocked=await f.http('/products/'+dto.id,{method:'PUT',actor:f.admin,body:{salePrice:2200,expectedRevision:dto.catalogRevision}})
+  assert.equal(blocked.status,503);assert.equal(blocked.body.error.code,'SALE_SCHEDULING_UNAVAILABLE');assert.deepEqual(await administrationState(f.db),before)
+ })
+ await scenario('API-saved boundaries govern public pricing and stale V1/V2 confirmations without changing historical orders',async s=>{
+  const f=await harness(s,{enabled:true}),id=f.normal.product,rq=v1Request(f.normal.variant),old=await quoteV1(f.db,rq),historical=await placeV1(f.db,old,rq)
+  const oldOrder=(await f.db.query('select to_jsonb(o) value from orders o where id=$1',[historical.id])).rows[0].value
+  const q1=await quoteV1(f.db,rq),request=await requestV2(f.db,[normalLine(f.normal.variant)]),dto=await f.products.get(id)
+  const start=await deadline(f.db),end=new Date(Date.parse(start)+2500).toISOString(),v=await variantInput(f.db,f.normal.variant,{salePrice:2450.25,saleStartsAt:start,saleEndsAt:end})
+  assert.equal((await f.http('/products/'+id,{method:'PUT',actor:f.admin,body:{variants:[v],expectedRevision:dto.catalogRevision}})).status,200)
+  const beforeCheckout=await state014(f.db)
+  const url='/catalog/variant-prices?ids='+f.normal.variant;assert.equal((await f.http(url)).body.data.items[0].effectivePrice,2900)
+  await waitClock(f.db,start);assert.equal((await f.http(url)).body.data.items[0].effectivePrice,2450.25)
+  const retired={outcome:'retired',code:'QUOTE_CHANGED',idempotencyKey:q1.idempotencyKey}
+  assert.deepEqual(await placeV1(f.db,q1,rq),retired)
+  assert.equal((await f.db.query('select state from checkout_v1_attempts where token=$1',['checkout:'+q1.idempotencyKey])).rows[0].state,'retired')
+  assert.deepEqual(await placeV1(f.db,q1,rq),retired)
+  await assert.rejects(()=>orderV2(f.db,request),/V2_QUOTE_CHANGED/)
+  await waitClock(f.db,end);assert.equal((await f.http(url)).body.data.items[0].effectivePrice,2900)
+  assert.deepEqual((await f.db.query('select to_jsonb(o) value from orders o where id=$1',[historical.id])).rows[0].value,oldOrder)
+  assert.equal((await f.db.query('select count(*)::int n from orders')).rows[0].n,1);assert.equal((await f.db.query('select count(*)::int n from payments')).rows[0].n,1)
+  assert.deepEqual(await state014(f.db),beforeCheckout)
  })
 })

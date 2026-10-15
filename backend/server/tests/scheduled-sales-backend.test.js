@@ -8,6 +8,45 @@ import {timestampMicros} from '../schemas/saleSchedule.js'
 import {assertSchedulingDisabled,ProductAdminService} from '../services/productAdminService.js'
 import {batchSalePrices,priceDto} from '../services/catalogPricingService.js'
 import {toProductColumns} from '../mappers/productAdminMapper.js'
+import {createSaleSchedulingPolicy,saleSchedulingConfigured,scheduledPriceMutation} from '../services/saleSchedulingPolicy.js'
+
+test('Persisted schedule classification gates omitted-bound price changes across canonical and legacy identities',async()=>{
+ const v={id:randomUUID(),optionName:'Size',optionValue:'50 ml',sku:'RF-50',regularPrice:2900,salePrice:2450.25,stockQuantity:12,saleStartsAt:'2099-01-01T00:00:00Z',saleEndsAt:null}
+ const existing={variants:[v]},policy=createSaleSchedulingPolicy(null)
+ for(const input of [
+  {variants:[{...v,saleStartsAt:undefined,salePrice:2300.25}]},
+  {variants:[{...v,id:undefined,saleStartsAt:undefined,salePrice:2300.25}]},
+  {variations:[{id:v.id,name:'50 ml',sku:v.sku,price:2900,salePrice:2300.25,stock:12,active:true}]},
+  {salePrice:2300.25},
+  {variants:[{...v,salePrice:2300.25,saleStartsAt:null,saleEndsAt:null}]},
+ ]) await assert.rejects(()=>policy.assertAllowed(input,existing),{status:409,code:'SALE_SCHEDULING_DISABLED'})
+ for(const input of [{name:'Metadata'},{salePrice:2450.25},{salePrice:null},{salePrice:0},{variants:[{...v,salePrice:null,saleStartsAt:null}]}])await policy.assertAllowed(input,existing)
+ assert.equal(scheduledPriceMutation({salePrice:2300.25},{variants:[{...v,saleStartsAt:null}]}),false)
+ const pack={fixedSalePrice:400,fixedSaleStartsAt:v.saleStartsAt,fixedSaleEndsAt:null}
+ await assert.rejects(()=>policy.assertAllowed({definition:{fixedSalePrice:390}},pack),{status:409})
+ await assert.rejects(()=>policy.assertAllowed({definition:{fixedSalePrice:390,fixedSaleStartsAt:null,fixedSaleEndsAt:null}},pack),{status:409})
+ await policy.assertAllowed({definition:{fixedSalePrice:null}},pack)
+ const unavailable=createSaleSchedulingPolicy(null,{enabled:true})
+ await assert.rejects(()=>unavailable.assertAllowed({salePrice:2300.25},existing),{status:503,code:'SALE_SCHEDULING_UNAVAILABLE'})
+ await assert.rejects(()=>policy.assertAllowed({variations:[{name:'50 ml',sku:'invalid sku',price:2900,salePrice:2000,stock:12,active:true}]},existing),{status:400,code:'INVALID_REQUEST'})
+})
+
+test('Trusted scheduling configuration accepts only exact true and fails closed on missing database capabilities',async()=>{
+ for(const value of [undefined,null,false,true,'TRUE','1','true ','enabled','false'])assert.equal(saleSchedulingConfigured({ADMIN_SALE_SCHEDULING_ENABLED:value}),false)
+ assert.equal(saleSchedulingConfigured({ADMIN_SALE_SCHEDULING_ENABLED:'true'}),true)
+ const input={variants:[{saleStartsAt:'2099-01-01T00:00:00Z'}],scheduledSaleWrites:true}
+ for(const enabled of [undefined,false,'true',1]){
+  const policy=createSaleSchedulingPolicy({rpc(){throw Error('Disabled must not probe')}},{enabled})
+  assert.equal(await policy.available(),false);await assert.rejects(()=>policy.assertAllowed(input),{status:409,code:'SALE_SCHEDULING_DISABLED'})
+ }
+ for(const client of [null,{rpc:async()=>{throw Error('private')}},{rpc:async()=>({error:{message:'private'}})},{rpc:async()=>({data:{pricingAt:'bad',variants:[],packs:[]}})}]){
+  const policy=createSaleSchedulingPolicy(client,{enabled:true});assert.equal(await policy.available(),false)
+  await assert.rejects(()=>policy.assertAllowed(input),{status:503,code:'SALE_SCHEDULING_UNAVAILABLE'})
+ }
+ const calls=[],policy=createSaleSchedulingPolicy({rpc:async(name,args)=>{calls.push({name,args});return {data:{pricingAt:'2026-01-01T00:00:00Z',variants:[],packs:[]}}}},{enabled:true})
+ assert.equal(await policy.available(),true);await policy.assertAllowed(input)
+ assert(calls.every(c=>c.name==='catalog_sale_prices_009'&&c.args.p_variant_ids.length===0&&c.args.p_pack_ids.length===0))
+})
 
 const start='2099-01-01T00:00:00Z',end='2099-02-01T00:00:00+00:00'
 const variant=(changes={})=>({optionName:'Size',optionValue:'50 ml',sku:'RF-SCHEDULE',regularPrice:2900,salePrice:2450,stockQuantity:12,...changes})

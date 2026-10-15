@@ -4,6 +4,15 @@ export interface AdminSaleSnapshot {
   saleStartsAt?: string | null; saleEndsAt?: string | null
 }
 
+export function validatedSalePatch(original: AdminSaleSnapshot, edited: AdminSaleSnapshot) {
+  const merged = {...original, ...edited}, sale = merged.salePrice
+  if (sale != null && (!Number.isFinite(sale) || sale <= 0 || sale >= Number(original.regularPrice)
+    || Math.abs(sale * 100 - Math.round(sale * 100)) > 0.001)) throw new Error('Sale price must be a positive PKR amount with two decimals, below the regular price.')
+  const bounds = saleSchedulePatch(original, edited, sale == null)
+  if (sale == null && (edited.saleStartsAt || edited.saleEndsAt)) throw new Error('A schedule requires a sale price.')
+  return {...bounds, salePrice:sale ?? null}
+}
+
 /** Validate without converting/reformatting the original offset or fractional digits. */
 export function saleTimestampMicros(value: string): bigint {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})$/.exec(value)

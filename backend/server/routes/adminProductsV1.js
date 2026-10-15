@@ -7,6 +7,7 @@ import {
   sendCode,
 } from '../middleware/authSecurity.js'
 import { ProductAdminService, ProductApiError } from '../services/productAdminService.js'
+import {createSaleSchedulingPolicy} from '../services/saleSchedulingPolicy.js'
 import {
   createProductSchema,
   listProductsSchema,
@@ -14,9 +15,9 @@ import {
   updateProductSchema,
 } from '../schemas/productAdmin.js'
 
-export function createAdminProductsV1Router(runtime, { client = runtime.repository.client, logger = console } = {}) {
+export function createAdminProductsV1Router(runtime, { client = runtime.repository.client, logger = console, saleScheduling = createSaleSchedulingPolicy(client) } = {}) {
   const router = Router()
-  const service = new ProductAdminService(client, logger)
+  const service = new ProductAdminService(client, logger, {saleScheduling})
   const originGuard = createOriginGuard(runtime.config)
   const csrf = requireAuthenticatedCsrf(runtime.config)
 
@@ -39,6 +40,9 @@ export function createAdminProductsV1Router(runtime, { client = runtime.reposito
   router.get('/', permit('products.read'), route(async (req, res) => {
     const filters = parse(listProductsSchema, req.query)
     res.json({ data: await service.list(filters), meta: { requestId: req.requestId } })
+  }))
+  router.get('/sale-capabilities', permit('products.manage'), route(async (req, res) => {
+    res.json({data: {scheduledSaleWrites: await saleScheduling.available()}, meta: {requestId: req.requestId}})
   }))
   router.get('/:id', permit('products.read'), route(async (req, res) => {
     const id = parse(productIdSchema, req.params.id)

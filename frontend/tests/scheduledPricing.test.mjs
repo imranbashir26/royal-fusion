@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import {updateProductSchema} from '../../backend/server/schemas/productAdmin.js'
 import {randomUUID} from 'node:crypto'
 import {createVariantPriceLoader,applyVariantPrices} from '../src/services/catalogPricing.ts'
 import {productPricing,productDisplayPrice,resolveCartItem} from '../src/services/productVariants.ts'
@@ -287,4 +288,70 @@ test('Fixed pack price ownership, component references, null clearing and config
  const configurable=toPackPayload({...draft,mode:'configurable'})
  assert.equal('fixedSalePrice' in configurable.definition,false);assert.equal(configurable.definition.allowedVariants[0].testerVariantId,variantId)
  assert.equal(configurable.definition.minimumUnits,2)
+})
+
+test('Activated schedule serialization preserves canonical ownership, untouched precision and clear semantics',()=>{
+ const original={id:variantId,productId,optionName:'Size',optionValue:'50 ml',sku:'RF-SCHEDULE',regularPrice:2900,salePrice:2450.25,saleStartsAt:'2099-01-01T05:00:00.123456+05:00',saleEndsAt:'2099-02-01T00:00:00.654321Z',stockQuantity:12,active:true,available:true,standardManualAvailable:false,displayOrder:0,effectivePrice:2900,saleActive:false}
+ const form={...productRow,price:2900,variants:[original],saleScheduleEdits:{[variantId]:{saleEndsAt:'2099-03-01T00:00:00.654321Z'}}}
+ const payload=toProductPayload(form),v=payload.variants[0]
+ assert.equal(v.salePrice,2450.25);assert.equal(v.saleEndsAt,'2099-03-01T00:00:00.654321Z');assert.equal(Object.hasOwn(v,'saleStartsAt'),false)
+ assert.equal(v.standardManualAvailable,false);assert.equal(v.stockQuantity,12);assert.equal('effectivePrice' in v,false);assert.equal('salePrice' in payload,false)
+ assert.equal(updateProductSchema.safeParse({...payload,expectedRevision:'1'}).success,true)
+ const clear=toProductPayload({...form,saleScheduleEdits:{[variantId]:{salePrice:null}}}).variants[0];assert.deepEqual([clear.salePrice,clear.saleStartsAt,clear.saleEndsAt],[null,null,null])
+ assert.throws(()=>toProductPayload({...form,saleScheduleEdits:{[variantId]:{salePrice:3000}}}),/Sale price/)
+ assert.throws(()=>toProductPayload({...form,saleScheduleEdits:{[variantId]:{saleEndsAt:'2000-01-01T00:00:00Z'}}}),/Sale end/)
+})
+
+const combinedVariant = () => ({id:variantId,optionName:'Size',optionValue:'50 ml',sku:'RF-50',regularPrice:2900,salePrice:2450.25,saleStartsAt:'2099-01-01T00:00:00.123456Z',saleEndsAt:'2099-02-01T00:00:00Z',stockQuantity:12,active:true,standardManualAvailable:false,displayOrder:0})
+const combinedForm = () => {
+ const v=combinedVariant(),aliases={price:2900,salePrice:2450.25,stockQuantity:12,sku:'RF-50',bottleSize:'50 ml',variations:[]}
+ return {...aliases,variants:[v],expectedRevision:'7',variantEditBaseline:aliases,saleScheduleEdits:{[variantId]:{saleEndsAt:'2099-03-01T00:00:00Z'}}}
+}
+test('Combined admin reproduction serializes current price, stock and SKU alongside the schedule',()=>{
+ const p=toProductPayload({...combinedForm(),price:3300,stockQuantity:5,sku:'RF-CHANGED'}),v=p.variants[0]
+ assert.deepEqual([v.regularPrice,v.stockQuantity,v.sku],[3300,5,'RF-CHANGED'])
+ assert.equal(v.id,variantId);assert.equal(p.expectedRevision,'7');assert.equal(v.standardManualAvailable,false)
+ assert.equal('saleStartsAt' in v,false);assert.equal(v.saleEndsAt,'2099-03-01T00:00:00Z')
+ assert.equal(updateProductSchema.safeParse(p).success,true)
+})
+test('Combined sale and size edits preserve canonical ownership and reject conflicting price controls',()=>{
+ const form=combinedForm(),p=toProductPayload({...form,price:3300,salePrice:3000,bottleSize:'100 ml'})
+ assert.deepEqual([p.variants[0].regularPrice,p.variants[0].salePrice,p.variants[0].optionValue],[3300,3000,'100 ml'])
+ assert.throws(()=>toProductPayload({...form,salePrice:2300,saleScheduleEdits:{[variantId]:{salePrice:2200}}}),/Conflicting sale/)
+ const cleared=toProductPayload({...form,salePrice:null,saleScheduleEdits:{[variantId]:{salePrice:null,saleStartsAt:null,saleEndsAt:null}}}).variants[0]
+ assert.deepEqual([cleared.salePrice,cleared.saleStartsAt,cleared.saleEndsAt],[null,null,null])
+})
+test('Multi-variant variation edits and schedule edits retain IDs, unrelated rows and manual intent',()=>{
+ const form=combinedForm(),second={...combinedVariant(),id:secondVariantId,optionValue:'100 ml',sku:'RF-100',stockQuantity:8,displayOrder:1}
+ const p=toProductPayload({...form,variants:[combinedVariant(),second],variations:[{id:secondVariantId,name:'150 ml',sku:'RF-150',price:4500,salePrice:3200,stock:3,active:false}]})
+ assert.equal(p.variants.length,2)
+ const v=p.variants.find(v=>v.id===secondVariantId)
+ assert.deepEqual([v.optionValue,v.regularPrice,v.salePrice,v.stockQuantity,v.sku,v.active,v.standardManualAvailable],['150 ml',4500,3200,3,'RF-150',false,false])
+ assert.equal(p.variants.find(v=>v.id===variantId).stockQuantity,12)
+ assert.throws(()=>toProductPayload({...form,variants:[combinedVariant(),second],stockQuantity:5}),/Multi-variant/)
+})
+test('Stock-only, SKU-only and legacy unscheduled payloads keep their established aliases',()=>{
+ for(const patch of [{stockQuantity:5},{sku:'RF-CHANGED'},{price:3300},{bottleSize:'100 ml'}]){
+  const form={...combinedForm(),...patch};delete form.saleScheduleEdits
+  const p=toProductPayload(form)
+  for(const [key,value]of Object.entries(patch))assert.equal(p[key],value)
+  assert.equal('variants' in p,false);assert.equal('variantEditBaseline' in p,false)
+ }
+})
+test('Combined variation additions and explicit bounds serialize, while unsupported image and conflicting bounds fail visibly',()=>{
+ const form=combinedForm(),v=combinedVariant(),variation={id:v.id,name:'100 ml',sku:v.sku,price:3300,salePrice:2450.25,stock:5,active:true,saleStartsAt:'2099-01-02T00:00:00.123456Z'}
+ const p=toProductPayload({...form,variations:[variation,{name:'150 ml',sku:'RF-150',price:4500,salePrice:3500,stock:3,active:true,saleStartsAt:'2099-01-01T00:00:00Z'}]})
+ assert.equal(p.variants.length,2);assert.equal(p.variants[0].id,variantId);assert.equal(p.variants[0].saleStartsAt,variation.saleStartsAt)
+ assert.equal(p.variants[1].id,undefined);assert.equal(p.variants[1].saleStartsAt,'2099-01-01T00:00:00Z');assert.equal(updateProductSchema.safeParse(p).success,true)
+ assert.throws(()=>toProductPayload({...form,variations:[{...variation,image:'/changed.webp'}]}),/image edits cannot be combined/)
+ assert.throws(()=>toProductPayload({...form,variations:[{...variation,saleEndsAt:'2099-04-01T00:00:00Z'}]}),/Conflicting schedule/)
+})
+
+test('Activated fixed-pack and new-variant contracts preserve ownership and atomic clearing',()=>{
+ const fields={name:'Baraan',slug:'baraan',sku:'RF-NEW',price:2900,salePrice:null,stockQuantity:12,bottleSize:'50 ml',scentFamily:'Woody',image:'/fixture.webp',saleScheduleEdits:{new:{salePrice:2450.25,saleStartsAt:'2099-01-01T05:00:00.123456+05:00'}}}
+ const created=toProductPayload(fields);assert.equal(created.variants[0].regularPrice,2900);assert.equal(created.variants[0].saleStartsAt,'2099-01-01T05:00:00.123456+05:00');assert.equal(updateProductSchema.safeParse(created).success,true)
+ const draft={id:productId,name:'Fixed',slug:'fixed',sku:'RF-FIX',image:'/fixture.webp',gallery:'',description:'',shortDescription:'',scentFamily:'Woody',categoryId:'',status:'Draft',mode:'fixed',regular:'450',sale:'400',maximum:'',manualAvailable:true,members:[{testerVariantId:variantId,quantityPerPack:2,displayOrder:0}],catalogRevision:'7',definitionRevision:'8',pricing:{saleStartsAt:'2099-01-01T05:00:00.123456+05:00',saleEndsAt:'2099-02-01T00:00:00.654321Z'},scheduleEdits:{salePrice:390.25,saleEndsAt:'2099-03-01T00:00:00.654321Z'}}
+ const pack=toPackPayload(draft);assert.equal(pack.definition.fixedSalePrice,390.25);assert.equal(pack.definition.fixedSaleEndsAt,'2099-03-01T00:00:00.654321Z');assert.equal('fixedSaleStartsAt' in pack.definition,false);assert.equal(pack.expectedDefinitionRevision,'8');assert.deepEqual(pack.definition.components,[{testerVariantId:variantId,quantityPerPack:2,displayOrder:0}])
+ const clear=toPackPayload({...draft,scheduleEdits:{salePrice:null}});assert.deepEqual([clear.definition.fixedSalePrice,clear.definition.fixedSaleStartsAt,clear.definition.fixedSaleEndsAt],[null,null,null])
+ const config=toPackPayload({...draft,mode:'configurable'});for(const key of ['fixedSalePrice','fixedSaleStartsAt','fixedSaleEndsAt'])assert.equal(key in config.definition,false)
 })

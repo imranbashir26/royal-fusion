@@ -1,7 +1,7 @@
-# Scheduled sale pricing: Stage 2G.3 contract
+# Scheduled sale pricing and controlled administration
 
-Requires the exact Release 009 database foundation. No frontend integration or
-production activation is included. Missing pricing objects return 503; raw sale
+Requires the exact Release 009 database foundation. Production activation is
+separately authorized. Missing pricing objects return 503; raw sale
 amounts are never used as a fallback price resolver.
 
 The tester API fixture now installs the real post-009 schema in owned native
@@ -25,20 +25,58 @@ positive PKR values with at most two decimal places, strictly below regular
 prices. No percentage sale inputs exist. Existing variant zero-to-null clearing
 remains supported; fixed pack zero prices remain invalid.
 
-**Activation gate:** every normal service write rejects non-null schedule bounds
-with HTTP 409 / `SALE_SCHEDULING_DISABLED`, including direct service calls and
-legacy variations. There is no environment or request override. Stage 2G.4 must
-verify the frontend's active-price mapping, boundary refresh, admin omission/null
-round trips, and coordinated rollout before a separately reviewed activation
-change. Normal unscheduled sales, metadata editing, explicit null bounds, and
+**Activation gate (Stage 2G.7):** trusted server composition reads only
+`ADMIN_SALE_SCHEDULING_ENABLED`. Only the exact string `true` configures
+scheduling; missing, false, malformed, differently cased or padded values do not.
+No deployment/environment setting is changed by this implementation. This switch
+is independent of customer ordering. Do not set it in production without the
+separate Release 009 preflight, coordinated deployment and activation approval.
+
+Product and pack services default to disabled when constructed without a trusted
+policy. Both route factories receive the same policy from server composition;
+request bodies, query strings, cookies and VITE settings cannot select a policy.
+Disabled non-null bounds return 409 / `SALE_SCHEDULING_DISABLED`, including
+canonical variants, legacy variations, testers and fixed packs. Configured
+writes probe the service-only Release 009 pricing RPC before mutating anything;
+missing/error/malformed capabilities fail closed with a sanitized 503 /
+`SALE_SCHEDULING_UNAVAILABLE`. There is no persistent capability cache.
+
+`GET /api/v1/admin/products/sale-capabilities` requires administrator identity and
+`products.manage`, returns only `{scheduledSaleWrites: boolean}`, and is no-store.
+It reports false if disabled or if the database capability probe fails. The UI
+also defaults to disabled on failed/malformed reads. An already-open editor may
+retain an old capability; the service always enforces the current server policy.
+Normal unscheduled sales, metadata editing, explicit null bounds, and
 sale clearing remain available. An echoed non-null schedule is also gated; omit
 unchanged schedule fields when editing an existing scheduled record's metadata.
+Price-only changes to an existing scheduled sale are also gated, even when both
+bounds are omitted or explicitly null. Services inspect persisted canonical
+state and bind the write to that state through the writer's locked revision
+check. A caller-supplied revision must match the inspected revision; legacy
+price-only writes without a caller token are pinned to the inspected revision.
+Existing mandatory caller revisions for canonical inventory/tester/pack writes
+remain required. Clearing the sale still clears its entire schedule atomically;
+null bounds cannot be combined with a changed non-null amount to evade the gate.
 
 Omitted bounds reach SQL omitted and preserve stored bounds. Explicit null
 clears that bound. Clearing the sale clears both bounds atomically in Release
 009. Complete structured variant rows retain the existing required price/stock
 contract; they are not partial variant patches. Canonical UUIDs, optimistic
 revisions, manual availability, permissions, and audit attribution are retained.
+Enabled editors submit exact fixed amounts and offset-aware ISO text; the
+timezone hint is Asia/Karachi / UTC+05:00. They do not convert untouched timestamps
+through datetime-local or a millisecond Date representation. Changed bounds are
+sent explicitly, unchanged bounds omitted, and clearing a sale clears its window.
+Canonical variant rows retain IDs, regular price, inventory and manual intent,
+with optimistic product revisions. Fixed packs retain definition revisions and
+own their pricing independently of components. Configurable parents have no own
+sale controls. No new database migration, grants or public mutation route exists.
+Combined product-form edits merge changed single-variant convenience values into
+the canonical schedule rows using the editor's original snapshot. Variation
+rows retain canonical UUIDs and manual availability. Conflicting price controls
+or ambiguous multi-variant aggregate edits produce visible errors before any
+request; administrators must use explicit variation rows for those variants.
+
 Admin variant DTOs return the **configured** `salePrice`, `saleStartsAt`, and
 `saleEndsAt`. Admin pack DTOs return configured `fixedSalePrice`,
 `fixedSaleStartsAt`, `fixedSaleEndsAt`, and `configuredSalePrice`.

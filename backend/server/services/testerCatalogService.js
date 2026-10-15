@@ -1,12 +1,13 @@
 import { toProductColumns } from '../mappers/productAdminMapper.js'
-import { ProductApiError, ProductAdminService, assertSchedulingDisabled } from './productAdminService.js'
+import { ProductApiError, ProductAdminService } from './productAdminService.js'
 import {batchSalePrices} from './catalogPricingService.js'
 import {packDefinitionSchema} from '../schemas/testerCatalog.js'
-import {toSaleTimestamp} from '../schemas/saleSchedule.js'
+import {scheduledWriteRequested,toSaleTimestamp} from '../schemas/saleSchedule.js'
+import {createSaleSchedulingPolicy} from './saleSchedulingPolicy.js'
 
 const tables = ['tester_pack_components','tester_pack_allowed_variants']
 export class TesterCatalogService {
-  constructor(client,logger=console,{requestId}={}) { this.client=client; this.logger=logger; this.requestId=requestId }
+  constructor(client,logger=console,{requestId,saleScheduling=createSaleSchedulingPolicy(client)}={}) { this.client=client; this.logger=logger; this.requestId=requestId; this.saleScheduling=saleScheduling }
   requireClient() { if(!this.client) throw new ProductApiError(503,'TESTER_SERVICE_UNAVAILABLE','Tester catalog is unavailable.'); return this.client }
   async read(table,filters,columns='*') {
     const large=filters.findIndex(([op,,v])=>op==='in' && v.length>100)
@@ -89,8 +90,12 @@ export class TesterCatalogService {
     })
   }
   async save(id,input,actor) {
-    assertSchedulingDisabled(input)
+    await this.saleScheduling.assertAllowed(input)
     const existing=id?await this.get(id):null
+    if(existing){
+      if(input.expectedRevision!==existing.catalogRevision || input.expectedDefinitionRevision!==existing.definitionRevision) throw new ProductApiError(409,'CATALOG_STALE','Catalog changed. Reopen before saving.')
+      if(!scheduledWriteRequested(input)) await this.saleScheduling.assertAllowed(input,existing)
+    }
     const definition={...(existing?{mode:existing.mode,fixedRegularPrice:existing.fixedRegularPrice,fixedSalePrice:existing.fixedSalePrice,fixedSaleStartsAt:existing.fixedSaleStartsAt,fixedSaleEndsAt:existing.fixedSaleEndsAt}:{}),...input.definition}
     if(input.definition.fixedSalePrice===null){definition.fixedSaleStartsAt=null;definition.fixedSaleEndsAt=null}
     if(!packDefinitionSchema.safeParse(definition).success)throw new ProductApiError(400,'INVALID_REQUEST','Pack prices or schedule are invalid.')
