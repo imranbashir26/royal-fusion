@@ -1,3 +1,4 @@
+import {AdminBulkSales} from './AdminBulkSales'
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useAdminAuth } from './AdminAuthProvider'
@@ -30,6 +31,7 @@ export function AdminTesterPacksPage() {
  return <section className="space-y-5">
   <div className="flex justify-between"><h1 className="font-serif text-3xl">Tester Packs</h1>{manage&&<button className={inputClass+' max-w-40'} disabled={busy} onClick={()=>{setError('');setDraft(empty())}}>Create pack</button>}</div>
   <p>Catalog foundation only. Pack purchasing remains unavailable. Inventory belongs to individual 5 ml testers.</p>
+  {manage&&<AdminBulkSales scope="packs" items={packs}/>}
   {error&&<p role="alert" className="text-red-700">{error}</p>}
   <table className="w-full text-left"><thead><tr><th>Name</th><th>Mode</th><th>Status</th><th>Definition</th><th>Availability</th><th>Actions</th></tr></thead><tbody>{packs.map(p=><tr key={p.id}><td>{p.name}</td><td>{p.mode}</td><td>{p.status}</td><td>{p.definitionRevision}</td><td>{p.diagnostics.hiddenOrInactiveCount>0?`${p.diagnostics.hiddenOrInactiveCount} hidden/inactive; `:''}{p.available?'Available':'Unavailable'}{p.availablePackCount!=null?` (${p.availablePackCount})`:''}</td><td><button disabled={busy} onClick={()=>void open(p.id)}>{manage?'Edit':'View'}</button>{manage&&<button className="ml-4" disabled={busy||p.status==='Archived'} onClick={()=>void archive(p)}>Archive</button>}</td></tr>)}</tbody></table>
   <div className="flex gap-3"><button disabled={page<=1||busy} onClick={()=>setPage(p=>p-1)}>Previous</button><span>Page {page} of {Math.max(1,pages)}</span><button disabled={page>=pages||busy} onClick={()=>setPage(p=>p+1)}>Next</button></div>

@@ -1,3 +1,4 @@
+import {AdminBulkSales} from './AdminBulkSales'
 import { Edit, Plus, Search, Trash2 } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -287,6 +288,8 @@ function ConfiguredResourcePage({ config }: { config: AdminResourceConfig }) {
           </select>
         </div>
       </div>
+
+      {isProduct && canEdit && <AdminBulkSales scope="products" items={filteredItems.map(item => ({id:item.id, name:String(item.name ?? item.id)}))} />}
 
       {error && <Alert tone="error">{error}</Alert>}
       {success && <Alert tone="success">{success}</Alert>}
