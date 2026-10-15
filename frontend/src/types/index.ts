@@ -32,6 +32,14 @@ export interface ProductVariant {
   sku: string
   regularPrice: number
   salePrice: number | null
+  /** Public database snapshot; absent only in legacy/prototype catalogs. */
+  effectivePrice?: number
+  saleActive?: boolean
+  pricingAt?: string
+  validUntil?: string | null
+  /** Conservative monotonic refresh deadline, never a price resolution clock. */
+  pricingExpiresAt?: number
+  pricingStale?: boolean
   stockQuantity: number
   active: boolean
   available: boolean

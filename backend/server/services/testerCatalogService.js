@@ -1,5 +1,8 @@
 import { toProductColumns } from '../mappers/productAdminMapper.js'
-import { ProductApiError, ProductAdminService } from './productAdminService.js'
+import { ProductApiError, ProductAdminService, assertSchedulingDisabled } from './productAdminService.js'
+import {batchSalePrices} from './catalogPricingService.js'
+import {packDefinitionSchema} from '../schemas/testerCatalog.js'
+import {toSaleTimestamp} from '../schemas/saleSchedule.js'
 
 const tables = ['tester_pack_components','tester_pack_allowed_variants']
 export class TesterCatalogService {
@@ -47,7 +50,8 @@ export class TesterCatalogService {
     const ids=registry.map(r=>r.variant_id), products=registry.map(r=>r.tester_product_id)
     if(!ids.length) return []
     const [vs,ps]=await Promise.all([this.read('product_variants',[['in','id',ids]]),this.read('products',[['in','id',products],['eq','commerce_kind','tester']])])
-    return registry.map(r=>option(r,vs.find(v=>v.id===r.variant_id),ps.find(p=>p.id===r.tester_product_id))).filter(Boolean)
+    const prices=await batchSalePrices(this.requireClient(),ids)
+    return registry.map(r=>option(r,vs.find(v=>v.id===r.variant_id),ps.find(p=>p.id===r.tester_product_id),prices.variants.get(r.variant_id))).filter(Boolean)
   }
   async hydrate(products,isPublic) {
     if(!products.length) return []
@@ -56,7 +60,8 @@ export class TesterCatalogService {
     const variantIds=[...new Set([...components,...allowed].map(m=>m.tester_variant_id))]
     const registry=variantIds.length?await this.read('tester_variants',[['in','variant_id',variantIds]]):[]
     const [vs,ps]=registry.length?await Promise.all([this.read('product_variants',[['in','id',variantIds]]),this.read('products',[['in','id',registry.map(r=>r.tester_product_id)],['eq','commerce_kind','tester']])]):[[],[]]
-    const options=new Map(registry.map(r=>[r.variant_id,option(r,vs.find(v=>v.id===r.variant_id),ps.find(p=>p.id===r.tester_product_id))]))
+    const prices=await batchSalePrices(this.requireClient(),variantIds,ids)
+    const options=new Map(registry.map(r=>[r.variant_id,option(r,vs.find(v=>v.id===r.variant_id),ps.find(p=>p.id===r.tester_product_id),prices.variants.get(r.variant_id))]))
     const [latestProducts,latestDefinitions]=await Promise.all([this.read('products',[['in','id',ids]],'id,catalog_revision,status,active,commerce_kind'),this.read('tester_packs',[['in','product_id',ids]])])
     if(products.some(p=>!latestProducts.some(n=>n.id===p.id && String(n.catalog_revision)===String(p.catalog_revision))) || defs.some(d=>!latestDefinitions.some(n=>n.product_id===d.product_id && n.definition_fingerprint===d.definition_fingerprint && String(n.definition_revision)===String(d.definition_revision)))) throw this.failure(null,'catalog_changed','tester_packs')
     return products.map(p=>{
@@ -68,10 +73,14 @@ export class TesterCatalogService {
       const count=d.mode==='fixed'?(complete?Math.min(...memberships.map(m=>Math.floor(options.get(m.tester_variant_id).stockQuantity/m.quantity_per_pack))):0):null
       const available=Boolean(p.active && p.status==='Published' && d.manual_available && (d.mode==='fixed'?complete && count>0:eligible.some(m=>options.get(m.tester_variant_id).stockQuantity>=d.minimum_units) || eligible.reduce((n,m)=>n+options.get(m.tester_variant_id).stockQuantity,0)>=d.minimum_units))
       const visible=isPublic?(d.mode==='fixed'?(complete?memberships:[]):eligible):memberships
+      const pricing=prices.packs.get(p.id)
       return {id:p.id,packId:p.id,commerceKind:'tester_pack',name:p.name,slug:p.slug,sku:p.sku,image:p.main_image_url,gallery:p.gallery_urls,
         description:p.description,shortDescription:p.short_description,scentFamily:p.scent_family,categoryId:p.category_id,
         status:p.status,active:p.active,catalogRevision:String(p.catalog_revision),mode:d.mode,definitionRevision:String(d.definition_revision),
-        minimumUnits:d.minimum_units,maximumUnits:d.maximum_units,fixedRegularPrice:numberOrNull(d.fixed_regular_price),fixedSalePrice:numberOrNull(d.fixed_sale_price),
+        minimumUnits:d.minimum_units,maximumUnits:d.maximum_units,fixedRegularPrice:numberOrNull(d.fixed_regular_price),
+        ...pricing,regularPrice:d.mode==='fixed'?pricing.regularPrice:null,
+        fixedSalePrice:isPublic?pricing.salePrice:numberOrNull(d.fixed_sale_price),
+        ...(!isPublic?{configuredSalePrice:numberOrNull(d.fixed_sale_price),fixedSaleStartsAt:toSaleTimestamp(d.fixed_sale_starts_at),fixedSaleEndsAt:toSaleTimestamp(d.fixed_sale_ends_at)}:{}),
         manualAvailable:d.manual_available,available,availablePackCount:count,purchasable:false,
         diagnostics:!isPublic?{structurallyComplete:d.mode==='fixed'?complete:eligible.length>0,hiddenOrInactiveCount:memberships.length-eligible.length}:undefined,
         components:d.mode==='fixed'?visible.map(m=>({...safeOption(options.get(m.tester_variant_id),isPublic),testerVariantId:m.tester_variant_id,quantityPerPack:m.quantity_per_pack,displayOrder:m.display_order})):[],
@@ -80,8 +89,13 @@ export class TesterCatalogService {
     })
   }
   async save(id,input,actor) {
+    assertSchedulingDisabled(input)
+    const existing=id?await this.get(id):null
+    const definition={...(existing?{mode:existing.mode,fixedRegularPrice:existing.fixedRegularPrice,fixedSalePrice:existing.fixedSalePrice,fixedSaleStartsAt:existing.fixedSaleStartsAt,fixedSaleEndsAt:existing.fixedSaleEndsAt}:{}),...input.definition}
+    if(input.definition.fixedSalePrice===null){definition.fixedSaleStartsAt=null;definition.fixedSaleEndsAt=null}
+    if(!packDefinitionSchema.safeParse(definition).success)throw new ProductApiError(400,'INVALID_REQUEST','Pack prices or schedule are invalid.')
     const columns=toProductColumns(input.product)
-    if(Object.hasOwn(input.product,'categoryId')) await new ProductAdminService(this.client,this.logger).assignCategory(columns,input.product.categoryId,id?(await this.get(id)).categoryId:null)
+    if(Object.hasOwn(input.product,'categoryId')) await new ProductAdminService(this.client,this.logger).assignCategory(columns,input.product.categoryId,existing?.categoryId??null)
     if(columns.status==='Archived') columns.active=false
     if(columns.status==='Published') columns.active=true
     const {data,error}=await this.requireClient().rpc('save_tester_pack',{p_product_id:id,p_patch:columns,p_definition:input.definition,
@@ -101,10 +115,12 @@ export class TesterCatalogService {
   }
 }
 function numberOrNull(n) { return n==null?null:Number(n) }
-function option(r,v,p) {
+function option(r,v,p,pricing) {
   if(!v||!p||v.product_id!==r.tester_product_id) return null
   const regular=Number(v.regular_price),sale=numberOrNull(v.sale_price)
   const publicEligible=Boolean(Number(r.volume_ml)===5 && v.option_name==='Size' && v.option_value==='5 ml' && p.status==='Published' && p.active && v.active && r.manual_available===true && v.available && v.stock_quantity>0 && Number.isFinite(regular) && regular>0 && (sale===null||sale>0&&sale<regular))
-  return {testerVariantId:v.id,productId:p.id,name:p.name,sku:v.sku,image:p.main_image_url,volumeMl:Number(r.volume_ml),regularPrice:regular,salePrice:sale,price:sale??regular,stockQuantity:v.stock_quantity,publicEligible,sourceProductId:r.source_product_id}
+  if(!pricing)throw new ProductApiError(503,'CATALOG_PRICING_UNAVAILABLE','Catalog pricing is temporarily unavailable.')
+  return {testerVariantId:v.id,productId:p.id,name:p.name,sku:v.sku,image:p.main_image_url,volumeMl:Number(r.volume_ml),...pricing,
+    salePrice:sale,configuredSalePrice:sale,saleStartsAt:toSaleTimestamp(v.sale_starts_at),saleEndsAt:toSaleTimestamp(v.sale_ends_at),stockQuantity:v.stock_quantity,publicEligible,sourceProductId:r.source_product_id}
 }
-function safeOption(o,isPublic) { if(!o) return {unavailable:true}; if(!isPublic)return o; const {publicEligible,sourceProductId,...safe}=o; return safe }
+function safeOption(o,isPublic) { if(!o) return {unavailable:true}; if(!isPublic)return o; const {publicEligible,sourceProductId,configuredSalePrice,saleStartsAt,saleEndsAt,...safe}=o; return {...safe,salePrice:o.saleActive?o.effectivePrice:null} }

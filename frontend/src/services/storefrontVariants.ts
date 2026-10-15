@@ -1,9 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { mapProductVariant, type SupabaseVariantRow } from './productionMappers.ts'
 import type { ProductVariant } from '../types/index.ts'
+import {applyVariantPrices, loadVariantPrices} from './catalogPricing.ts'
 
 /** Chunk IDs and page rows to avoid silently truncating at the public API row limit. */
-export async function loadPublicVariants(client: SupabaseClient, productIds: string[]): Promise<ProductVariant[]> {
+export async function loadPublicVariants(client: SupabaseClient, productIds: string[], prices = loadVariantPrices): Promise<ProductVariant[]> {
   const variants: ProductVariant[] = []
   const ids = [...new Set(productIds)]
   for (let offset = 0; offset < ids.length; offset += 100) {
@@ -20,5 +21,5 @@ export async function loadPublicVariants(client: SupabaseClient, productIds: str
       if (rows.length < 500) break
     }
   }
-  return variants
+  return applyVariantPrices(variants, await prices(variants.map(variant => variant.id)))
 }

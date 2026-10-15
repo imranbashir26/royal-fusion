@@ -42,7 +42,7 @@ export function createAdminProductsV1Router(runtime, { client = runtime.reposito
   }))
   router.get('/:id', permit('products.read'), route(async (req, res) => {
     const id = parse(productIdSchema, req.params.id)
-    res.json({ data: await service.get(id), meta: { requestId: req.requestId } })
+    res.json({ data: await service.getWithPricing(id), meta: { requestId: req.requestId } })
   }))
   router.post('/', permit('products.manage'), originGuard, csrf, route(async (req, res) => {
     const input = parse(createProductSchema, req.body)

@@ -12,6 +12,7 @@ import { mapPublicSettingsRows, type PublicSettingsRow } from './publicSettingsM
 import { getSupabaseClient } from './supabaseClient'
 import { loadNormalProductRows } from './normalCatalog'
 import { loadPublicVariants } from './storefrontVariants'
+import {defaultVariant, variantPrice} from './productVariants'
 import { mapPublicSeoRows, staticSeoPaths } from './storefrontSeo'
 
 export const supabaseStorefrontService = {
@@ -36,8 +37,11 @@ export const supabaseStorefrontService = {
       list.push(variant)
       byProduct.set(variant.productId, list)
     }
-    return products.map((product) => ({ ...product, variants: byProduct.get(product.id) ?? [],
-      variantIdentityScope: 'public' as const }))
+    return products.map((product) => {
+      const result = {...product, variants: byProduct.get(product.id) ?? [], variantIdentityScope: 'public' as const}
+      const variant = defaultVariant(result)
+      return {...result, ...(variant ? {price:variantPrice(variant), oldPrice:variant.regularPrice} : {oldPrice:undefined})}
+    })
   },
 
   async getCategories(): Promise<Category[] | null> {

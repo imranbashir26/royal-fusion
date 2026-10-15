@@ -34,7 +34,9 @@ export function testerSqlClient(db) {
  return {...read,async rpc(name,args) {
   try {
    let r
-   if(name==='save_tester_pack') r=await db.query('select public.save_tester_pack($1,$2::jsonb,$3::jsonb,$4,$5,$6,$7) result',[args.p_product_id,JSON.stringify(args.p_patch),JSON.stringify(args.p_definition),args.p_expected_revision,args.p_expected_definition_revision,args.p_actor_id,args.p_request_id])
+   if(name==='catalog_sale_prices_009')r=await db.query('select public.catalog_sale_prices_009($1::uuid[],$2::uuid[]) result',[args.p_variant_ids,args.p_pack_ids])
+   else if(name==='save_catalog_product')r=await db.query('select public.save_catalog_product($1,$2::jsonb,$3::jsonb,$4) result',[args.p_product_id,JSON.stringify(args.p_patch),args.p_variants==null?null:JSON.stringify(args.p_variants),args.p_expected_revision??null])
+   else if(name==='save_tester_pack') r=await db.query('select public.save_tester_pack($1,$2::jsonb,$3::jsonb,$4,$5,$6,$7) result',[args.p_product_id,JSON.stringify(args.p_patch),JSON.stringify(args.p_definition),args.p_expected_revision,args.p_expected_definition_revision,args.p_actor_id,args.p_request_id])
    else if(name==='save_tester_product')r=await db.query('select public.save_tester_product($1,$2::jsonb,$3::jsonb,$4,$5,$6,$7) result',[args.p_product_id,JSON.stringify(args.p_patch),JSON.stringify(args.p_variant),args.p_source_product_id,args.p_expected_revision,args.p_actor_id,args.p_request_id])
    else if(name==='save_normal_collection_products')r=await db.query('select public.save_normal_collection_products($1,$2::uuid[],$3,$4) result',[args.p_collection_id,args.p_product_ids,args.p_actor_id,args.p_request_id])
    else return read.rpc(name,args)

@@ -95,7 +95,7 @@ after(async () => {
 })
 
 export async function pageFixture(t, { admin = null, webLocks = true, checkout = null, variants = [variantRow, otherVariant], legacy, wishlist = false, products = [productRow, otherProduct], variantError = false } = {}) {
-  const catalog = { products, variants, variantError, productError: false }
+  const catalog = { products, variants, variantError, productError: false, priceError:false, priceOverrides:{}, priceReads:[] }
   const context = await browser.newContext({ serviceWorkers: 'block' })
   t.after(() => context.close())
   await context.addInitScript(({ webLocks, legacy, wishlist, productId }) => {
@@ -159,6 +159,14 @@ export async function pageFixture(t, { admin = null, webLocks = true, checkout =
       return route.fulfill({json:{data:quote}})
     }
     const fulfill = (body) => route.fulfill({ json: body, headers: { 'access-control-allow-origin': '*' } })
+    if (url.pathname.endsWith('/v2/public/catalog/variant-prices')) {
+      catalog.priceReads.push(url.search)
+      if(catalog.priceError)return route.fulfill({status:503,json:{error:{code:'CATALOG_PRICING_UNAVAILABLE'}}})
+      const requested=url.searchParams.get('ids').split(',')
+      return fulfill({data:{currency:'PKR',items:catalog.variants.filter(v=>requested.includes(v.id)&&v.active&&v.available&&catalog.products.some(p=>p.id===v.product_id)).map(v=>({
+        variantId:v.id,productId:v.product_id,regularPrice:Number(v.regular_price),effectivePrice:Number(v.sale_price??v.regular_price),price:Number(v.sale_price??v.regular_price),salePrice:v.sale_price==null?null:Number(v.sale_price),saleActive:v.sale_price!=null,pricingAt:new Date().toISOString(),validUntil:null,...catalog.priceOverrides[v.id],
+      }))}})
+    }
     if (url.hostname === 'catalog.invalid') {
       const table = url.pathname.split('/').at(-1)
       if (table === 'products') {

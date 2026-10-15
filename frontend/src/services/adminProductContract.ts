@@ -38,7 +38,7 @@ export function productErrorMessage(error: unknown): string {
       ? 'The request could not be verified. Refresh the page and try again.'
       : 'You do not have permission to manage products.'
     case 404: return 'This product no longer exists. Refresh the list.'
-    case 409: return code === 'CATALOG_STALE' ? 'Catalog or stock changed. Close this form and reopen the product before saving.' : 'A product with this slug or SKU already exists. Choose a unique slug and SKU.'
+    case 409: return code === 'SALE_SCHEDULING_DISABLED' ? 'Scheduled-sale submissions are unavailable. Reopen the editor and leave schedule bounds unchanged.' : code === 'CATALOG_STALE' ? 'Catalog or stock changed. Close this form and reopen the product before saving.' : 'A product with this slug or SKU already exists. Choose a unique slug and SKU.'
     default: return 'The product service is unavailable. Try again later.'
   }
 }

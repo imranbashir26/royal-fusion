@@ -14,13 +14,15 @@ import {toProductDto} from '../mappers/productAdminMapper.js'
 import {CheckoutQuoteService} from '../services/checkoutQuoteService.js'
 import {isNormalJsonProduct} from '../routes/public.js'
 import {createPackSchema,updatePackSchema} from '../schemas/testerCatalog.js'
-import {testerBaseline,applyTesterMigration,testerFixture,savePack,productPatch,saveTester,variantPatch,testerSqlClient} from './support/testerCatalogDatabase.js'
+import {salesFixture,v1Request,quoteV1,placeV1} from './support/scheduledSalesDatabase.js'
+import {testerFixture,savePack,productPatch,saveTester,variantPatch,testerSqlClient} from './support/testerCatalogDatabase.js'
 let db,admin,client,service,tester,pack,server,base
+const nativeCleanup=[]
 const origin='https://catalog.example.invalid'
 const config=createAuthConfig({NODE_ENV:'test',CLIENT_ORIGIN:origin,AUTH_CSRF_SECRET:'synthetic-catalog-csrf-secret-123456789',ADMIN_AUTH_PROVIDER:'prototype',CUSTOMER_AUTH_PROVIDER:'prototype',ENABLE_ADMIN_MFA:'false'})
 const names=getAuthCookieNames(config)
 before(async()=>{
- ({db,admin}=await testerBaseline());await applyTesterMigration(db);client=testerSqlClient(db);service=new TesterCatalogService(client,{error(){}})
+ ({db,admin}=await salesFixture({after:fn=>nativeCleanup.push(fn)}));client=testerSqlClient(db);service=new TesterCatalogService(client,{error(){}})
  tester=await testerFixture(db,admin);const p=productPatch();delete p.price
  pack=await savePack(db,admin,null,p,{mode:'fixed',fixedRegularPrice:500,components:[{testerVariantId:tester.tester.variant_id,quantityPerPack:2,displayOrder:0}]})
  const runtime={config,repository:{client},sessionService:{restore:async({accessToken})=>{if(!accessToken)throw Object.assign(new Error('Required'),{code:'AUTH_REQUIRED'});return {record:{sessionClass:accessToken==='customer'?'customer':'administrator',mfaAssurance:'aal2'},identity:{id:accessToken,assuranceLevel:'aal2'}}}},adminAuthorization:{resolve:async id=>id===admin?{userId:admin,permissions:['*']}:null}}
@@ -30,7 +32,7 @@ before(async()=>{
  app.use(authErrorHandler(config));app.use((e,req,res,_next)=>res.status(e.status||500).json({error:{code:'SAFE_FAILURE',requestId:req.requestId}}))
  server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));base=`http://127.0.0.1:${server.address().port}/api/v2`
 })
-after(async()=>{if(server)await new Promise(r=>server.close(r));if(db)await db.close()})
+after(async()=>{if(server)await new Promise(r=>server.close(r));for(const cleanup of nativeCleanup)await cleanup()})
 async function http(path,{method='GET',actor,body,csrf=true,requestOrigin=origin}={}){
  const headers={'Content-Type':'application/json','X-Request-ID':'tester-http-request-id'}
  if(actor){const token=getSessionCsrfToken('synthetic-handle',config);headers.Cookie=`${names.access}=${actor}; ${names.refresh}=refresh; ${names.session}=synthetic-handle; ${names.csrf}=${token}`;if(csrf)headers['X-RF-CSRF']=token}
@@ -183,9 +185,10 @@ async function availabilityFixture(stock=1) {
  const update=async patch=>{const latest=await normal.get(t.id);return normal.update(t.id,{...patch,expectedRevision:latest.catalogRevision},actor)}
  const checkout=async()=>{
   await db.exec("insert into public.shipping_methods(code,name,base_fee) values('tester-provenance','Tester provenance fixture',250) on conflict do nothing")
-  const r=await db.query('select public.create_order_transaction($1,$2::jsonb,$3::jsonb,$4::jsonb,$5,null,null,null) receipt',[
-   `checkout:${randomUUID()}`,JSON.stringify([{variantId:t.variants[0].id,quantity:1}]),JSON.stringify({name:'Synthetic customer',email:'tester-provenance@example.invalid',phone:'03001234567'}),JSON.stringify({address:'Synthetic fixture street',city:'Lahore',province:'Punjab',notes:''}),'Cash on Delivery'])
-  return r.rows[0].receipt.id
+  // This fixture now includes Release 009 and the 007/008 issued-confirmation fence.
+  const input={...v1Request(t.variants[0].id),email:'tester-provenance@example.invalid',shipping:{city:'Lahore',province:'Punjab'}}
+  const quote=await quoteV1(db,input),receipt=await placeV1(db,quote,input)
+  return receipt.id
  }
  const cancel=async id=>{
   const expectedRevision=String((await db.query('select revision from public.orders where id=$1',[id])).rows[0].revision)

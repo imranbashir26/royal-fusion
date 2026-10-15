@@ -2,10 +2,11 @@
 // clusters; unit includes the existing embedded PGlite SQL regressions.
 export const nativeGroups={
  all:['orders-v2.test.js','checkout-v2-sql.test.js','checkout-v2-limits.test.js','tester-catalog-api.test.js'],
- acceptance:['post014-default-acl-hardening.test.js','standard-availability-native.test.js','checked-v1-native.test.js','checked-v1-api-native.test.js','checkout-retirement-native.test.js'],
+ acceptance:['post014-default-acl-hardening.test.js','standard-availability-native.test.js','checked-v1-native.test.js','checked-v1-api-native.test.js','checkout-retirement-native.test.js','scheduled-sales-native.test.js','scheduled-sales-api-native.test.js'],
  compatibility:['checkout-sql.test.js','admin-phase3-checkout.test.js','admin-orders-v2.test.js','customer-account.test.js','fulfillment-v2-sql.test.js'],
 }
 export const unitFiles=[
+ 'scheduled-sales-backend.test.js',
  'admin-categories-v1.test.js','admin-collections-v1.test.js','admin-fulfillment-sql.test.js','admin-media-v1.test.js',
  'admin-orders-v1.test.js','admin-phase3.test.js','admin-products-v1.test.js','auth-backend-cookie-sessions.test.js',
  'auth-contract-foundation.test.js','blog-activation.test.js','blog-domain.test.js','blog-html.test.js','blog-sitemap.test.js',

@@ -20,6 +20,8 @@ export function toProductColumns(input) {
   for (const [field, column] of Object.entries(FIELD_TO_COLUMN)) {
     if (Object.hasOwn(input, field)) columns[column] = input[field]
   }
+  // Legacy display JSON is not a second schedule store. Bounds go only to canonical variants.
+  if (input.variations) columns.variations=input.variations.map(({saleStartsAt,saleEndsAt,...legacy})=>legacy)
   if (Object.hasOwn(input, 'notes')) {
     columns.top_notes = input.notes.top
     columns.middle_notes = input.notes.middle

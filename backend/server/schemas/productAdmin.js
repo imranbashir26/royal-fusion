@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { catalogVariantsSchema } from './catalogVariants.js'
+import {saleTimestamp,validateSaleWindow} from './saleSchedule.js'
 
 const text = (max = 500) => z.string().trim().max(max)
 const requiredText = (max = 180) => text(max).min(1)
@@ -14,7 +15,7 @@ const imageReference = z.string().trim().max(2048).refine((value) => {
   }
 }, 'Use an HTTPS URL or a root-relative path.')
 const notes = z.array(requiredText(80)).max(30)
-const money = z.number().finite().nonnegative().multipleOf(0.01)
+const money = z.number().finite().nonnegative().max(9999999999.99).multipleOf(0.01)
 const optionList = z.array(z.object({
   label: requiredText(80),
   value: requiredText(80),
@@ -25,11 +26,16 @@ const variationList = z.array(z.object({
   name: requiredText(120),
   price: money,
   salePrice: money.nullable().optional(),
+  saleStartsAt: saleTimestamp.nullable().optional(),
+  saleEndsAt: saleTimestamp.nullable().optional(),
   sku: requiredText(80),
   stock: z.number().int().nonnegative(),
   image: imageReference.optional(),
   active: z.boolean(),
-}).strict()).max(50)
+}).strict().superRefine((value,context)=>{
+  validateSaleWindow(value,context)
+  if(value.salePrice!=null&&value.salePrice!==0&&value.salePrice>=value.price)context.addIssue({code:'custom',path:['salePrice'],message:'Sale must be below regular price.'})
+})).max(50)
 
 const fields = z.object({
   commerceKind: z.enum(['standard','tester']),

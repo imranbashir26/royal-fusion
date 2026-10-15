@@ -1,9 +1,11 @@
 import type { PackMember, PackSave } from './testerPacksApi'
+import type {AdminSaleSnapshot} from './saleSchedule'
 export interface PackDraft {
   id: string | null; name: string; slug: string; sku: string; image: string; gallery: string;
   description: string; shortDescription: string; scentFamily: string; categoryId: string; status: string;
   mode: 'fixed' | 'configurable'; regular: string; sale: string; maximum: string; manualAvailable: boolean;
   members: PackMember[]; catalogRevision?: string; definitionRevision?: string
+  pricing?: AdminSaleSnapshot
 }
 export function toPackPayload(draft: PackDraft): PackSave {
   if(draft.members.length>100) throw new Error('A pack definition supports at most 100 tester memberships.')

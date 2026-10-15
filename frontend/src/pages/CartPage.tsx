@@ -1,4 +1,5 @@
 import { resolveCartItem } from '../services/productVariants'
+import {ProductPrice} from '../components/products/ProductPrice'
 import { ShoppingBag, Trash2 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { EmptyState } from '../components/common/EmptyState'
@@ -8,7 +9,7 @@ import { ProductBottle } from '../components/products/ProductBottle'
 import { useCartStore } from '../store/cartStore'
 import { useStorefront } from '../storefront/StorefrontProvider'
 import { buttonClasses } from '../utils/buttonClasses'
-import { formatCurrency } from '../utils/format'
+import { formatCheckoutCurrency as formatCurrency } from '../utils/checkoutMoney'
 
 export function CartPage() {
   const location = useLocation()
@@ -28,9 +29,9 @@ export function CartPage() {
   const selectedItems = enrichedItems.filter((item) => selectedLineIdSet.has(item.lineId) && item.eligible)
   const invalidSelection = enrichedItems.some((item) => selectedLineIdSet.has(item.lineId) && !item.eligible)
   const subtotal = selectedItems.reduce(
-    (total, item) => total + item.unitPrice * item.quantity,
+    (total, item) => total + Math.round(item.unitPrice * 100) * item.quantity,
     0,
-  )
+  ) / 100
   const selectedQuantity = selectedItems.reduce((total, item) => total + item.quantity, 0)
   const allSelected =
     enrichedItems.length > 0 && enrichedItems.every((item) => selectedLineIdSet.has(item.lineId))
@@ -106,7 +107,7 @@ export function CartPage() {
                     <p className="mt-1 text-sm text-brownroyal/60">{item.size}</p>
                     {item.variant && <p className="mt-1 text-xs text-brownroyal/60">{item.variant.stockQuantity} in stock</p>}
                     {item.message && <p className="mt-2 text-sm text-burgundy" role="status">{item.message}</p>}
-                    <p className="mt-3 font-bold text-brownroyal">{item.lineAmount === null ? 'Unavailable' : formatCurrency(item.unitPrice)}</p>
+                    <p className="mt-3 font-bold text-brownroyal">{item.lineAmount === null ? 'Unavailable' : <ProductPrice product={products.find(p => p.id === item.productId)!} variant={item.variant} />}</p>
                   </div>
                   <div className="flex items-center justify-between gap-4 md:flex-col md:items-end">
                     <QuantityStepper

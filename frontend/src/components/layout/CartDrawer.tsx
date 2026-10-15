@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom'
 import { useCartStore } from '../../store/cartStore'
 import { useStorefront } from '../../storefront/StorefrontProvider'
 import { buttonClasses } from '../../utils/buttonClasses'
-import { formatCurrency } from '../../utils/format'
+import { formatCheckoutCurrency as formatCurrency } from '../../utils/checkoutMoney'
 import { QuantityStepper } from '../common/QuantityStepper'
 import { ProductBottle } from '../products/ProductBottle'
 
@@ -29,9 +29,9 @@ export function CartDrawer() {
   const selectedItems = enrichedItems.filter((item) => selectedLineIdSet.has(item.lineId) && item.eligible)
   const invalidSelection = enrichedItems.some((item) => selectedLineIdSet.has(item.lineId) && !item.eligible)
   const subtotal = selectedItems.reduce(
-    (total, item) => total + item.unitPrice * item.quantity,
+    (total, item) => total + Math.round(item.unitPrice * 100) * item.quantity,
     0,
-  )
+  ) / 100
   const allSelected =
     enrichedItems.length > 0 && enrichedItems.every((item) => selectedLineIdSet.has(item.lineId))
 

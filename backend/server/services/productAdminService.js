@@ -1,5 +1,7 @@
 import { toProductColumns, toProductDto } from '../mappers/productAdminMapper.js'
 import { toCatalogVariants } from '../schemas/catalogVariants.js'
+import {scheduledWriteRequested,toSaleTimestamp} from '../schemas/saleSchedule.js'
+import {batchSalePrices} from './catalogPricingService.js'
 
 export class ProductApiError extends Error {
   constructor(status, code, message) {
@@ -56,7 +58,33 @@ export class ProductAdminService {
     return result
   }
 
+  // Only the authorized detail route needs this read-only pricing projection.
+  // Keep internal reads and mutation DTOs compatible with their existing contracts.
+  async getWithPricing(id) {
+    const result = await this.get(id)
+    const unavailable = () => new ProductApiError(503, 'CATALOG_PRICING_UNAVAILABLE', 'Catalog pricing is temporarily unavailable.')
+    let prices
+    try {
+      prices = await batchSalePrices(this.requireClient(), result.variants.map(variant => variant.id))
+    } catch {
+      throw unavailable()
+    }
+    const variants = result.variants.map(variant => {
+      const price = prices.variants.get(variant.id)
+      if (!price || price.regularPrice !== variant.regularPrice || !Number.isFinite(price.effectivePrice)) throw unavailable()
+      const {effectivePrice, saleActive, pricingAt, validUntil} = price
+      return {...variant, effectivePrice, saleActive, pricingAt, validUntil}
+    })
+    // Canonical catalog writers advance this revision atomically. A mixed read
+    // must be retried rather than pairing old configuration with newer prices.
+    const {data, error} = await this.requireClient().from('products')
+      .select('catalog_revision').eq('id', id).maybeSingle()
+    if (error || !data || String(data.catalog_revision ?? 0) !== result.catalogRevision) throw unavailable()
+    return {...result, variants}
+  }
+
   async create(input, actor) {
+    assertSchedulingDisabled(input)
     const client = this.requireClient()
     if (input.commerceKind === 'tester') return this.saveTester(null, input, actor)
     let operation = 'product.map'
@@ -92,6 +120,7 @@ export class ProductAdminService {
   }
 
   async update(id, input, actor) {
+    assertSchedulingDisabled(input)
     const client = this.requireClient()
     const existing = await this.get(id)
     if (input.commerceKind && input.commerceKind !== existing.commerceKind) throw new ProductApiError(400, 'INVALID_REQUEST', 'Product kind is immutable.')
@@ -137,6 +166,7 @@ export class ProductAdminService {
   }
 
   async saveTester(id, input, actor, existing = null) {
+    assertSchedulingDisabled(input)
     if (input.variants?.some(variant => Object.hasOwn(variant, 'standardManualAvailable'))) {
       throw new ProductApiError(400, 'INVALID_REQUEST', 'Standard availability does not apply to testers.')
     }
@@ -228,6 +258,7 @@ function catalogDto(data) {
     id: row.id, optionName: row.option_name, optionValue: row.option_value,
     sku: row.sku, regularPrice: Number(row.regular_price),
     salePrice: row.sale_price == null ? null : Number(row.sale_price),
+    saleStartsAt: toSaleTimestamp(row.sale_starts_at), saleEndsAt: toSaleTimestamp(row.sale_ends_at),
     stockQuantity: row.stock_quantity, active: row.active, available: row.available,
     ...(data.product.commerce_kind !== 'tester' && typeof row.standard_manual_available === 'boolean'
       ? { standardManualAvailable: row.standard_manual_available } : {}),
@@ -257,6 +288,10 @@ function databaseError(error) {
     return new ProductApiError(400, 'INVALID_REQUEST', 'Product data violates a database constraint.')
   }
   return new ProductApiError(500, 'PRODUCT_SERVICE_ERROR', 'The product request could not be completed.')
+}
+
+export function assertSchedulingDisabled(input){
+  if(scheduledWriteRequested(input))throw new ProductApiError(409,'SALE_SCHEDULING_DISABLED','Scheduled sale writes await coordinated storefront activation.')
 }
 
 function isAttarCategory(name) {

@@ -1,11 +1,13 @@
 import { adminAuthClient } from './adminAuthClient'
-export interface TesterOption { testerVariantId: string; productId: string; name: string; sku: string; price: number; stockQuantity: number; publicEligible: boolean; sourceProductId?: string | null }
+import type {AdminSaleSnapshot} from './saleSchedule'
+export interface TesterOption extends AdminSaleSnapshot { testerVariantId: string; productId: string; name: string; sku: string; price: number; stockQuantity: number; publicEligible: boolean; sourceProductId?: string | null }
 export interface PackMember { testerVariantId: string; quantityPerPack?: number; active?: boolean; displayOrder: number; name?: string; stockQuantity?: number }
-export interface TesterPack {
+export interface TesterPack extends AdminSaleSnapshot {
   id: string; name: string; slug: string; sku: string; image: string; gallery: string[]; description: string; shortDescription: string; scentFamily: string;
   categoryId: string | null; status: string; active: boolean; mode: 'fixed' | 'configurable';
   catalogRevision: string; definitionRevision: string; minimumUnits: number | null; maximumUnits: number | null;
   fixedRegularPrice: number | null; fixedSalePrice: number | null; manualAvailable: boolean; available: boolean; availablePackCount: number | null;
+  fixedSaleStartsAt?: string | null; fixedSaleEndsAt?: string | null; configuredSalePrice?: number | null
   components: PackMember[]; allowedVariants: PackMember[]; diagnostics: { structurallyComplete: boolean; hiddenOrInactiveCount: number }
 }
 export interface PackSave { product: Record<string, unknown>; definition: Record<string, unknown>; expectedRevision?: string; expectedDefinitionRevision?: string }

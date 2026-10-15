@@ -143,22 +143,27 @@ function queryClient(pages) {
   return { client, calls }
 }
 
+const fixturePrices = async ids => new Map(ids.map(id => [id, {
+  variantId:id,productId,regularPrice:2900,effectivePrice:2900,price:2900,salePrice:null,saleActive:false,
+  pricingAt:'2026-01-01T00:00:00Z',validUntil:null,pricingExpiresAt:Infinity,
+}]))
+
 test('public reader batches products and maps Baraan without per-product requests', async () => {
   const { client, calls } = queryClient([{ data: [variantRow], error: null }])
-  const variants = await loadPublicVariants(client, [productId, 'another-product', productId])
+  const variants = await loadPublicVariants(client, [productId, 'another-product', productId], fixturePrices)
   assert.equal(calls.length, 1)
   assert.equal(calls[0].table, 'product_variants')
   assert.deepEqual(calls[0].ids, [productId, 'another-product'])
   // Public purchases only read active/available variants under the existing RLS.
   assert.ok(calls[0].filters.some(([key, value]) => key === 'active' && value === true))
   assert.ok(calls[0].filters.some(([key, value]) => key === 'available' && value === true))
-  assert.deepEqual(variants, [variant])
+  assert.deepEqual(variants, [{...variant,effectivePrice:2900,saleActive:false,pricingAt:'2026-01-01T00:00:00Z',validUntil:null,pricingExpiresAt:Infinity,pricingStale:false}])
   assert.deepEqual(await loadPublicVariants(client, []), [])
 })
 
 test('public reader handles pagination, ID chunking and failures without synthetic variants', async () => {
   const { client, calls } = queryClient([{ data: Array(500).fill(variantRow), error: null }, { data: [variantRow], error: null }])
-  assert.equal((await loadPublicVariants(client, [productId])).length, 501)
+  assert.equal((await loadPublicVariants(client, [productId], fixturePrices)).length, 501)
   assert.deepEqual(calls[1].range, [500, 999])
   const chunked = queryClient([])
   await loadPublicVariants(chunked.client, Array.from({ length: 101 }, (_, index) => String(index)))

@@ -26,6 +26,7 @@ import { createOrdersV2Router } from './routes/ordersV2.js'
 import { createAdminOrdersV1Router } from './routes/adminOrdersV1.js'
 import { mediaRouter } from './routes/media.js'
 import { createTesterPacksV2Router } from './routes/testerPacksV2.js'
+import { createCatalogPricesV2Router } from './routes/catalogPricesV2.js'
 import { publicRouter } from './routes/public.js'
 import { mountSanityBlogApi } from './services/blogActivation.js'
 import { updateDb, nowIso } from './utils/database.js'
@@ -99,6 +100,7 @@ app.use('/api/v1/customer', createCustomerAccountV1Router(authRuntime))
 app.use(sanitizeBody)
 app.use('/api/v2/admin/tester-packs', createTesterPacksV2Router(authRuntime))
 app.use('/api/v2/public/tester-packs', createTesterPacksV2Router(authRuntime, { publicOnly: true }))
+app.use('/api/v2/public/catalog', createCatalogPricesV2Router(authRuntime))
 app.use('/api/v1/admin/products', createAdminProductsV1Router(authRuntime))
 app.use('/api/v1/admin/categories', createAdminCategoriesV1Router(authRuntime))
 app.use('/api/v1/admin/collections', createAdminCollectionsV1Router(authRuntime))

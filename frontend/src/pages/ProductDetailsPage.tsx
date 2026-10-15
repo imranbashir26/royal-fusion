@@ -11,13 +11,13 @@ import { ProductBottle } from '../components/products/ProductBottle'
 import { ProductGrid } from '../components/products/ProductGrid'
 import { ProductReviewForm } from '../components/products/ProductReviewForm'
 import { collectionNamesForProduct } from '../services/productionMappers'
-import { defaultVariant, isVariantEligible, selectedProductVariant, variantPrice } from '../services/productVariants'
+import { defaultVariant, isVariantEligible, selectedProductVariant } from '../services/productVariants'
+import {ProductPrice} from '../components/products/ProductPrice'
 import { useCartStore } from '../store/cartStore'
 import { useWishlistStore } from '../store/wishlistStore'
 import { useStorefront } from '../storefront/StorefrontProvider'
 import { buttonClasses } from '../utils/buttonClasses'
 import { cn } from '../utils/cn'
-import { formatCurrency } from '../utils/format'
 
 export function ProductDetailsPage() {
   const { products, reviews, collections = [], isLoading, catalogError } = useStorefront()
@@ -36,7 +36,6 @@ export function ProductDetailsPage() {
   const cartItems = useCartStore((state) => state.items)
 
   const selectedVariant = selectedProductVariant(product, selectedVariantId)
-  const price = selectedVariant ? variantPrice(selectedVariant) : product?.price ?? 0
   const alreadyInCart = cartItems.filter((item) => item.variantId === selectedVariant?.id)
     .reduce((total, item) => total + item.quantity, 0)
   const maxQuantity = Math.max(0, Math.min(99, (selectedVariant?.stockQuantity ?? 0) - alreadyInCart))
@@ -144,12 +143,7 @@ export function ProductDetailsPage() {
           </div>
 
           <div className="mt-7 flex items-end gap-3">
-            <p className="text-3xl font-extrabold text-brownroyal">{formatCurrency(price)}</p>
-            {selectedVariant && selectedVariant.regularPrice > price && (
-              <p className="pb-1 text-base text-brownroyal/45 line-through">
-                {formatCurrency(selectedVariant.regularPrice)}
-              </p>
-            )}
+            <div className="text-3xl font-extrabold text-brownroyal"><ProductPrice product={product} variant={selectedVariant ?? product.variants?.find(v => v.id === selectedVariantId)} /></div>
           </div>
 
           <div className="mt-8">

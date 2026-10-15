@@ -28,7 +28,7 @@
     "test:checkout": "node server/scripts/test-backend.mjs full",
     "test:fulfillment": "node --test --test-concurrency=1 server/tests/admin-fulfillment-sql.test.js server/tests/admin-orders-v1.test.js",
     "test:auth-transition": "node server/scripts/test-backend.mjs full",
-    "test:tester-catalog": "node --test --test-concurrency=1 server/tests/tester-catalog-sql.test.js server/tests/tester-catalog-api.test.js",
+    "test:tester-catalog": "node server/scripts/test-backend.mjs full",
     "test:checkout-v2": "node server/scripts/test-backend.mjs full",
     "test:checkout-v2:sql": "node server/scripts/test-backend.mjs full",
     "test:checkout-v2:api": "node server/scripts/test-backend.mjs full",

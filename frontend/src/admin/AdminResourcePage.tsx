@@ -14,6 +14,8 @@ import { AdminMediaUploader } from './AdminMediaUploader'
 import { useAdminAuth } from './AdminAuthProvider'
 import type { AdminField, AdminResourceConfig } from './adminConfig'
 import { resourceConfigs } from './adminConfig'
+import {SaleScheduleFields} from './SaleScheduleFields'
+import type {AdminSaleSnapshot} from '../services/saleSchedule'
 
 type AdminRecord = Record<string, unknown> & { id?: string }
 
@@ -683,6 +685,9 @@ function ProductFormSections({
 
   return (
     <div className="space-y-6">
+      {Array.isArray(form.variants) && form.variants.map((variant: AdminSaleSnapshot & {id: string; optionValue?: string}) => (
+        <SaleScheduleFields key={variant.id} sale={variant} label={`Variant ${variant.optionValue ?? variant.id}`} />
+      ))}
       {sections.map((section) => {
         const sectionFields = section.fields
           .map((fieldName) => fieldMap.get(fieldName))
@@ -1038,6 +1043,7 @@ function AdminFormField({
         className="h-12 w-full rounded-full border border-champagne/35 bg-marble px-4 outline-none focus:border-burgundy"
         onChange={(event) => onChange(type === 'number' ? Number(event.target.value) : event.target.value)}
         min={type === 'number' ? 0 : undefined}
+        step={type === 'number' && ['price','salePrice','oldPrice'].includes(field.name) ? '0.01' : undefined}
         required={field.required}
         type={type === 'number' ? 'number' : type === 'date' ? 'date' : 'text'}
         value={String(value ?? '')}
