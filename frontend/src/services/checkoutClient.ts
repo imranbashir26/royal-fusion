@@ -1,5 +1,6 @@
 import type { CanonicalOrderReceipt, CanonicalOrderRequest, CheckoutQuoteRequest, CheckoutQuoteResponse } from '../types/index.ts'
 import { isVariantId } from './productVariants.ts'
+import { validPricingEvidence } from './checkoutPricing.ts'
 
 export class CheckoutClientError extends Error {
   code: string
@@ -20,7 +21,7 @@ function amounts(value: Record<string, unknown>): boolean {
 export function isOrderReceipt(value: unknown): value is CanonicalOrderReceipt {
   if (!value || typeof value !== 'object') return false
   const row = value as Record<string, unknown>
-  return amounts(row) && isVariantId(row.id) && isVariantId(row.idempotencyKey) && typeof row.orderNumber === 'string' && /^RF-\d{8}-[A-F0-9]{8}$/.test(row.orderNumber)
+  return amounts(row) && validPricingEvidence(row,true) && isVariantId(row.id) && isVariantId(row.idempotencyKey) && typeof row.orderNumber === 'string' && /^RF-\d{8}-[A-F0-9]{8}$/.test(row.orderNumber)
     && ['Pending', 'Confirmed', 'Processing', 'Shipped', 'Delivered', 'Cancelled', 'Returned', 'Refunded'].includes(String(row.status))
     && ['Unpaid', 'Pending', 'Paid', 'Failed', 'Refunded'].includes(String(row.paymentStatus))
     && isPaymentMethod(row.paymentMethod) && typeof row.idempotent === 'boolean'
@@ -28,7 +29,7 @@ export function isOrderReceipt(value: unknown): value is CanonicalOrderReceipt {
 export function isQuote(value: unknown): value is CheckoutQuoteResponse {
   if (!value || typeof value !== 'object') return false
   const row = value as Record<string, unknown>
-  return amounts(row) && isVariantId(row.shippingMethodId) && Array.isArray(row.paymentMethods)
+  return amounts(row) && validPricingEvidence(row) && isVariantId(row.shippingMethodId) && Array.isArray(row.paymentMethods)
     && row.paymentMethods.length > 0 && row.paymentMethods.every(isPaymentMethod) && typeof row.orderingEnabled === 'boolean'
     && (row.quoteFingerprint === undefined || typeof row.quoteFingerprint === 'string' && /^[0-9a-f]{64}$/.test(row.quoteFingerprint))
 }
@@ -47,6 +48,7 @@ export function createCheckoutClient(fetcher: typeof fetch = fetch, baseUrl = im
       const envelope = await response.json().catch(() => null)
       if (!response.ok) throw new CheckoutClientError(envelope?.error?.code ?? 'CHECKOUT_FAILED', envelope?.error?.message ?? 'Checkout could not be completed.', response.status, order && response.status >= 500)
       if (!validate(envelope?.data)) throw new CheckoutClientError('INVALID_RESPONSE', 'The order service returned an invalid response. Your cart has been saved.', 0, order)
+      if (order && envelope.data.pricingOutcome && envelope.data.pricingOutcome.acceptedQuoteFingerprint !== (body as CanonicalOrderRequest).quoteFingerprint) throw new CheckoutClientError('INVALID_RESPONSE', 'The order service returned an invalid confirmation. Retry the same attempt.', 0, true)
       return envelope.data
     } catch (error) {
       if (error instanceof CheckoutClientError) throw error

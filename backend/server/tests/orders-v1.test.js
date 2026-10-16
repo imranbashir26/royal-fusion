@@ -422,3 +422,25 @@ test('unknown transport results never change the checked fingerprint or token on
  await assert.rejects(()=>service.create(request),{code:'CHECKOUT_UNAVAILABLE'});assert.equal((await service.create(request)).idempotent,true)
  assert.deepEqual(client.orderCalls()[0],client.orderCalls()[1]);assert.equal(client.db.orders.length,1)
 })
+
+
+test('retired prototype coupon writer cannot bypass canonical percentage policy',async t=>{
+ const {startIsolatedApi}=await import('./support/isolatedApi.js'),{default:jwt}=await import('jsonwebtoken')
+ const api=await startIsolatedApi({users:[{id:'legacy-coupon-admin',role:'Owner/Admin',status:'Active'}]});t.after(()=>api.stop())
+ const token=jwt.sign({sub:'legacy-coupon-admin'},'x'.repeat(32)),before=await api.readFixtureDb()
+ for(const [method,path]of [['POST','/api/admin/resources/coupons'],['PUT','/api/admin/resources/coupons/coupon-fictional'],['DELETE','/api/admin/resources/coupons/coupon-fictional']]){
+  const r=await fetch(api.baseUrl+path,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},...(method==='DELETE'?{}:{body:JSON.stringify({code:'BYPASS',type:'Free Shipping',discountValue:0})})});assert.equal(r.status,410)
+ }
+ assert.deepEqual(await api.readFixtureDb(),before)
+})
+
+
+test('Release010 V1 projections allowlist SQL evidence and never perform a second price read',async()=>{
+ const body=input({couponCode:'SAFE20'}),quote={subtotal:1000,discount:200,shippingFee:250,total:1050,currency:'PKR',shippingMethodId:methodId,paymentMethods:['Cash on Delivery'],quoteFingerprint:body.quoteFingerprint,idempotencyKey:body.idempotencyKey,
+  lines:[{variantId,quantity:1,unitPrice:1000,lineTotal:1000,futureSalePrice:1}],_prices:[{private:true}],_coupon:{private:true},_shippingMethod:{private:true},
+  pricingOutcome:{policy:'GLOBAL_PERCENTAGE_V1',strategy:'COUPON',regularSubtotal:1000,saleSubtotal:900,couponDiscount:200,couponSubtotal:800,merchandiseTotal:800,requestedCouponCode:'SAFE20',appliedCouponId:customerId,appliedCouponCode:'SAFE20',couponOutcome:'applied',acceptedQuoteFingerprint:body.quoteFingerprint,privateEligibility:'hidden'}}
+ const client={from(){throw Error('Unexpected second catalog read')},rpc:async()=>({data:quote,error:null})},q=await new CheckoutQuoteService(client).quote({items:body.items,shipping:{city:body.shipping.city,province:body.shipping.province},email:body.contact.email,couponCode:body.couponCode})
+ assert.deepEqual(q.lines,[{variantId,quantity:1,unitPrice:1000,lineTotal:1000}]);assert.doesNotMatch(JSON.stringify(q),/privateEligibility|futureSalePrice|_prices|_coupon|_shippingMethod/)
+ const frozen={...quote,id:customerId,orderNumber:'RF-20261016-1234ABCD',status:'Pending',paymentStatus:'Unpaid',paymentMethod:body.paymentMethod,idempotent:false,lines:quote.lines.map(l=>({...l,id:methodId}))}
+ client.rpc=async()=>({data:frozen,error:null});const r=await new OrdersV1Service(client).create(body);assert.deepEqual(r.lines,[{id:methodId,variantId,quantity:1,unitPrice:1000,lineTotal:1000}]);assert.deepEqual(r.pricingOutcome,q.pricingOutcome);assert.doesNotMatch(JSON.stringify(r),/privateEligibility|futureSalePrice|_prices|_coupon|_shippingMethod/)
+})

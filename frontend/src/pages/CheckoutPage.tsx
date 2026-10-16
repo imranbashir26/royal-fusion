@@ -1,3 +1,4 @@
+import { CheckoutPricingDetails, SelectedCheckoutCharges } from '../components/common/CheckoutPricingDetails'
 import { resolveCartItem } from '../services/productVariants'
 import { Landmark, PackageCheck, Wallet } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
@@ -149,7 +150,7 @@ export function CheckoutPage() {
             <method.icon className="mb-3 h-6 w-6" aria-hidden="true" /><span>{method.label}</span>
           </button>)}
         </div></CheckoutPanel>
-        <CheckoutPanel title="Coupon"><Field label="Coupon code" value={couponCode} maxLength={40} required={false} onChange={(value) => setCouponCode(value.toUpperCase())} /></CheckoutPanel>
+        <CheckoutPanel title="Coupon">{couponCode && <button type="button" className="underline" onClick={()=>setCouponCode('')}>Remove coupon</button>}<Field label="Coupon code" value={couponCode} maxLength={40} required={false} onChange={(value) => setCouponCode(value.toUpperCase())} /></CheckoutPanel>
         {checkoutBlocked && <p role="status">{!completionAvailable ? 'Checkout is unavailable in this browser. Your cart has been saved; no order was submitted.' : currentQuote?.orderingEnabled === false ? 'Ordering is temporarily unavailable. Your cart has been saved.' : 'Complete your destination and resolve unavailable items to receive a checkout quote.'}</p>}
         {quoteError && <p role="alert" className="text-burgundy">{quoteError}</p>}
         {quoteNotice && <p role="status" className="text-burgundy">{quoteNotice}</p>}
@@ -162,9 +163,11 @@ export function CheckoutPage() {
         <div className="mt-5 space-y-4">{enrichedItems.map((item) => <div className="border-b border-champagne/20 pb-3" key={item.lineId}>
           <p className="font-semibold">{item.product.name}</p><p>{item.size} x {item.quantity}</p>
           {item.message && <p className="text-burgundy">{item.message}</p>}
-          <p>{item.lineAmount === null ? 'Unavailable' : `Catalog estimate: ${formatCheckoutCurrency(item.lineAmount)}`}</p>
+          {!currentQuote?.lines && <p>{item.lineAmount === null ? 'Unavailable' : `Catalog estimate: ${formatCheckoutCurrency(item.lineAmount)}`}</p>}
           <button type="button" className="text-burgundy underline" aria-label={`Remove ${item.product.name}`} onClick={() => removeItems([item.lineId])}>Remove</button>
         </div>)}</div>
+        {currentQuote?.lines && <SelectedCheckoutCharges label="Quoted item charges" lines={currentQuote.lines.map(line=>({...line,name:enrichedItems.find(item=>item.variantId?.toLowerCase()===line.variantId.toLowerCase())?.product.name}))} />}
+        <CheckoutPricingDetails outcome={currentQuote?.pricingOutcome} />
         <dl className="mt-5 space-y-3">{(['subtotal', 'discount', 'shippingFee', 'total'] as const).map((field) => <div className="flex justify-between" key={field}><dt>{({ subtotal: 'Subtotal', discount: 'Discount', shippingFee: 'Shipping', total: 'Total' })[field]}</dt><dd>{amount(field)}</dd></div>)}</dl>
       </aside>
     </section>

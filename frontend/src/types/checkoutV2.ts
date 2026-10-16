@@ -1,4 +1,4 @@
-import type {CheckoutPaymentMethod,CanonicalOrderReceipt} from './index.ts'
+import type {CheckoutPaymentMethod,CanonicalOrderReceipt,CheckoutPricingOutcome} from './index.ts'
 // Contract types only. No purchasing UI, persistence or production submission path.
 export type PurchaseLineV2 =
  | {kind:'normal_variant';variantId:string;quantity:number}
@@ -18,6 +18,7 @@ export interface QuoteRequestV2 {
  contractVersion:2;lines:PurchaseLineV2[];shipping:{city:string;province:string};email:string;couponCode:string
 }
 export interface QuoteResponseV2 {
+ pricingOutcome?:CheckoutPricingOutcome|null
  contractVersion:2;quoteFingerprint:string;lines:QuotedLineV2[];subtotal:number;discount:number;shippingFee:number;total:number
  currency:'PKR';shippingMethodId:string;paymentMethods:CheckoutPaymentMethod[];orderingEnabled:false
 }

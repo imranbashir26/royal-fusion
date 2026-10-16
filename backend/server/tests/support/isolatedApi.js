@@ -7,12 +7,12 @@ import { fileURLToPath } from 'node:url'
 
 const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
 
-export async function startIsolatedApi() {
+export async function startIsolatedApi({ users = [] } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'royal-fusion-auth-test-'))
   const dbPath = path.join(root, 'db.test.json')
   const dotenvPath = path.join(root, 'intentionally-missing.env')
   const port = await reservePort()
-  await writeFile(dbPath, `${JSON.stringify(createFixture(), null, 2)}\n`, 'utf8')
+  await writeFile(dbPath, `${JSON.stringify({ ...createFixture(), users }, null, 2)}\n`, 'utf8')
 
   const child = spawn(process.execPath, ['server/index.js'], {
     cwd: backendRoot,

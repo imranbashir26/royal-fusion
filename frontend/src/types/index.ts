@@ -211,7 +211,16 @@ export interface CheckoutQuoteRequest {
   email: string
   couponCode: string
 }
+export interface CheckoutPricingOutcome {
+ policy:'GLOBAL_PERCENTAGE_V1';strategy:'SALE'|'COUPON';couponOutcome:'not_requested'|'applied'|'sale_better'|'tie'
+ regularSubtotal:number;saleSubtotal:number;couponDiscount:number;couponSubtotal:number|null;merchandiseTotal:number
+ requestedCouponCode:string;appliedCouponId:string|null;appliedCouponCode:string|null;acceptedQuoteFingerprint:string
+}
+export interface QuotedV1Line {variantId:string;quantity:number;unitPrice:number;lineTotal:number}
+export interface FrozenOrderLine {id:string;variantId?:string|null;quantity:number;unitPrice:number;lineTotal:number}
 export interface CheckoutQuoteResponse {
+ lines?:QuotedV1Line[]
+ pricingOutcome?:CheckoutPricingOutcome|null
   idempotencyKey?: string
   subtotal: number; discount: number; shippingFee: number; total: number
   currency: 'PKR'; shippingMethodId: string; paymentMethods: CheckoutPaymentMethod[]
@@ -219,6 +228,8 @@ export interface CheckoutQuoteResponse {
   quoteFingerprint?: string
 }
 export interface CanonicalOrderReceipt {
+ lines?:FrozenOrderLine[]
+ pricingOutcome?:CheckoutPricingOutcome|null
   id: string; idempotencyKey: string; orderNumber: string
   status: 'Pending' | 'Confirmed' | 'Processing' | 'Shipped' | 'Delivered' | 'Cancelled' | 'Returned' | 'Refunded'
   paymentStatus: 'Unpaid' | 'Pending' | 'Paid' | 'Failed' | 'Refunded'

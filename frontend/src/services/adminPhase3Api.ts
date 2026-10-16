@@ -7,7 +7,7 @@ export interface Address { id: string; label: string; recipient_name: string; ph
 export interface CustomerDetail extends Customer { addresses: Address[]; addressesTruncated: boolean }
 export interface CustomerOrder { id: string; orderNumber: string; status: string; paymentStatus: string; total: number; currency: string; createdAt: string }
 export interface CouponConfig { discountValue: number; minimumOrderAmount: number; maxDiscountAmount: number | null; description: string; startDate: string | null; endDate: string | null; usageLimit: number; perCustomerUsageLimit: number; status: 'Active' | 'Inactive' }
-export interface Coupon extends CouponConfig { id: string; code: string; type: 'Percentage' | 'Fixed Amount' | 'Free Shipping'; usedCount: number; updatedAt: string }
+export interface Coupon extends CouponConfig { id: string; code: string; type: 'Percentage' | 'Fixed Amount' | 'Free Shipping'; pricingPolicy?:'LEGACY'|'GLOBAL_PERCENTAGE_V1'; usedCount: number; updatedAt: string }
 export interface CouponDetail extends Coupon { productIds: string[]; categoryIds: string[]; legacyProductIds: string[]; legacyCategoryIds: string[]; restrictionsTruncated: boolean; redemptionCount: number; redemptions: Array<{ id: string; discount_amount: number; created_at: string }> }
 // Display provenance only. Checkout remains the authority for coupon eligibility.
 export function couponRestrictionSources(modern: readonly string[] | null | undefined, historical: readonly string[] | null | undefined) {
@@ -30,7 +30,7 @@ export const adminCustomersApi = {
 export const adminCouponsApi = {
   list: (f: Filters) => adminAuthClient.protectedRequest<Page<Coupon>>(`${couponBase}?${query(f)}`),
   detail: (id: string) => adminAuthClient.protectedRequest<CouponDetail>(`${couponBase}/${encodeURIComponent(id)}`),
-  create: (input: CouponConfig & Pick<Coupon, 'code' | 'type'>) => adminAuthClient.protectedRequest<Coupon>(couponBase, { method: 'POST', body: JSON.stringify(input) }),
+  create: (input: CouponConfig & {code:string;type:'Percentage'}) => adminAuthClient.protectedRequest<Coupon>(couponBase, { method: 'POST', body: JSON.stringify(input) }),
   update: (id: string, input: CouponConfig & { expectedUpdatedAt: string }) => adminAuthClient.protectedRequest<Coupon>(`${couponBase}/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) }),
 }
 export const adminSeoApi = {

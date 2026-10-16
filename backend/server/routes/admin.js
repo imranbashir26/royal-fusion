@@ -240,6 +240,7 @@ function authorizeResource(mode) {
     if (req.params.resource === 'newsletter' || req.params.resource === 'newsletterSubscribers') {
       return res.status(404).json({ message: 'Unknown admin resource.' })
     }
+    if (mode === 'write' && req.params.resource === 'coupons') return res.status(410).json({message:'Use the canonical coupon administration endpoint.'})
     if (['settings', 'homepage', 'shipping', 'payments'].includes(req.params.resource)) {
       return res.status(404).json({ message: 'Unknown admin resource.' })
     }

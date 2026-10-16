@@ -6,6 +6,9 @@ import {savePack,productPatch} from './testerCatalogDatabase.js'
 // Use the full guarded owned PG17 baseline for both current quotation engines.
 export async function phase3CheckoutDatabase(t){
  const f=await checkedFixture(t),{db}=f
+ // Legacy financial-engine regression fixture: additive response metadata only.
+ // New-policy creation and actual policy guards are exercised with full Release 010.
+ await db.query("alter table coupons add column pricing_policy text not null default 'LEGACY'")
  f.client={...phase3SqlClient(db),rpc:clientV2(db).rpc};f.actor=f.admin
  f.component=f.tester.product.id;f.variant=f.tester.tester.variant_id
  f.parentCategory=randomUUID();f.componentCategory=randomUUID()

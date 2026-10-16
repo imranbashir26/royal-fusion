@@ -1,4 +1,4 @@
-import {CheckoutApiError,normalizedCheckoutCategory,unavailable} from './checkoutQuoteService.js'
+import {CheckoutApiError,normalizedCheckoutCategory,unavailable,publicPricingOutcome} from './checkoutQuoteService.js'
 import {parseV2,quoteV2Schema} from '../schemas/ordersV2.js'
 const errors={
  V2_INVALID_COUPON:[422,'INVALID_COUPON','This coupon cannot be applied to your order.'],
@@ -29,5 +29,15 @@ export class CheckoutQuoteV2Service {
   if(!result.data)throw this.failure(null,name)
   return result.data
  }
- async quote(raw,customerId=null){return this.invoke('quote_checkout_v2',parseV2(quoteV2Schema,raw),customerId)}
+ async quote(raw,customerId=null){
+  const data=await this.invoke('quote_checkout_v2',parseV2(quoteV2Schema,raw),customerId)
+  const {contractVersion,quoteFingerprint,lines,subtotal,discount,shippingFee,total,currency,shippingMethodId,paymentMethods,orderingEnabled}=data
+  return {contractVersion,quoteFingerprint,lines:lines.map(publicLine),subtotal,discount,shippingFee,total,currency,shippingMethodId,paymentMethods,orderingEnabled,...publicPricingOutcome(data.pricingOutcome,data,quoteFingerprint)}
+ }
+}
+
+function publicLine(line){
+ const project=(row,keys)=>Object.fromEntries(keys.filter(key=>row[key]!==undefined).map(key=>[key,row[key]]))
+ return {...project(line,['kind','variantId','packId','definitionRevision','selections','identity','identityHash','productId','name','sku','size','definitionFingerprint','quantity','unitPrice','lineTotal','position']),
+  components:line.components.map(c=>project(c,['testerVariantId','testerProductId','testerName','sku','size','volumeMl','quantityPerPack','totalPhysicalQuantity','referenceUnitPrice','position']))}
 }

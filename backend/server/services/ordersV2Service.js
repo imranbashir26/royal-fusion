@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto'
-import {cents,unavailable} from './checkoutQuoteService.js'
+import {cents,unavailable,publicPricingOutcome} from './checkoutQuoteService.js'
 import {CheckoutQuoteV2Service} from './checkoutQuoteV2Service.js'
 import {checkoutExecutionPolicy} from './checkoutExecutionPolicy.js'
 import {parseV2,orderV2Schema} from '../schemas/ordersV2.js'
@@ -70,5 +70,5 @@ function receipt(r,input){
  const subtotal=amount(r.subtotal,true),discount=amount(r.discount),shippingFee=amount(r.shippingFee),total=amount(r.total)
  must(cents(subtotal)===lines.reduce((n,l)=>n+cents(l.lineTotal),0n)&&cents(discount)<=cents(subtotal)&&cents(total)===cents(subtotal)-cents(discount)+cents(shippingFee))
  return {contractVersion:2,snapshotVersion:2,id:r.id,idempotencyKey:r.idempotencyKey,orderNumber:r.orderNumber,status:r.status,paymentStatus:r.paymentStatus,
-  paymentMethod:r.paymentMethod,subtotal,discount,shippingFee,total,currency:'PKR',idempotent:r.idempotent,requestFingerprint:r.requestFingerprint,quoteFingerprint:r.quoteFingerprint,lines}
+  paymentMethod:r.paymentMethod,subtotal,discount,shippingFee,total,currency:'PKR',idempotent:r.idempotent,requestFingerprint:r.requestFingerprint,quoteFingerprint:r.quoteFingerprint,lines,...publicPricingOutcome(r.pricingOutcome,r,r.quoteFingerprint)}
 }

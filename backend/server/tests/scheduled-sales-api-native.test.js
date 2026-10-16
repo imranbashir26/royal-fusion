@@ -16,10 +16,20 @@ import {TesterCatalogService} from '../services/testerCatalogService.js'
 import {testerSqlClient} from './support/testerCatalogDatabase.js'
 import {salesFixture,updateStandard,updateTester,updatePack,variantInput,deadline,waitClock,v1Request,quoteV1,placeV1,committed,additional,waitBlocked} from './support/scheduledSalesDatabase.js'
 import {quoteV2,quoteRequest,normalLine,configuredLine,requestV2,orderV2} from './support/checkoutV2Database.js'
-import {state014} from './support/fulfillmentV2Database.js'
+import {state014,client014} from './support/fulfillmentV2Database.js'
+import {connection} from './support/release005NativeFixture.js'
+import {createOrdersV2Router} from '../routes/ordersV2.js'
 import {timestampMicros} from '../schemas/saleSchedule.js'
 import {createSaleSchedulingPolicy} from '../services/saleSchedulingPolicy.js'
 import {scheduledSalesBrowser} from './support/scheduledSalesBrowser.js'
+import {CouponsService} from '../services/adminPhase3Service.js'
+import {createAdminPhase3V1Router} from '../routes/adminPhase3V1.js'
+import {phase3SqlClient} from './support/phase3Database.js'
+import {clientV2,fixedLine} from './support/checkoutV2Database.js'
+import {CheckoutQuoteService} from '../services/checkoutQuoteService.js'
+import {CheckoutQuoteV2Service} from '../services/checkoutQuoteV2Service.js'
+import {OrdersV1Service} from '../services/ordersV1Service.js'
+import {OrdersV2Service} from '../services/ordersV2Service.js'
 import {toProductPayload} from '../../../frontend/src/services/adminProductContract.ts'
 
 const future='2099-01-01T00:00:00Z',past='2000-01-01T00:00:00Z',origin='https://sale-api.example.invalid'
@@ -447,4 +457,172 @@ test('Controlled scheduled-sale administration enabled and disabled native accep
   assert.equal((await f.db.query('select count(*)::int n from orders')).rows[0].n,1);assert.equal((await f.db.query('select count(*)::int n from payments')).rows[0].n,1)
   assert.deepEqual(await state014(f.db),beforeCheckout)
  })
+})
+
+
+test('Release 010 application coupon administration, V1/V2 quotation and frozen receipt integration',{timeout:120000},async t=>{
+ const f=await salesFixture(t),{db}=f,client={...phase3SqlClient(db),rpc:clientV2(db).rpc},actor={userId:f.admin,requestId:'release010-application'}
+ const adminService=new CouponsService(client,{warn(){}})
+ const input={code:'GLOBAL_APP20',type:'Percentage',discountValue:20,minimumOrderAmount:1000,maxDiscountAmount:null,description:'Fixture',startDate:null,endDate:null,usageLimit:100,perCustomerUsageLimit:0,status:'Active'}
+ let count=0
+ async function scenario(name,work){let passed=false;await t.test(name,async()=>{await work();passed=true;count++});if(!passed)throw Error('Critical Release010 application verification failure: '+name)}
+ await scenario('Missing Release 010 rejects trusted creation atomically without a legacy fallback',async()=>{
+  const before=await state014(db);await assert.rejects(()=>adminService.create(input,actor),e=>e.status===503);assert.deepEqual(await state014(db),before)
+ })
+ const legacy=[]
+ for(const [type,value]of [['Percentage',10],['Fixed Amount',100],['Free Shipping',0]])legacy.push((await db.query('insert into coupons(code,type,discount_value,status) values($1,$2,$3,$4) returning *',['LEGACY_APP_'+legacy.length,type,value,'Active'])).rows[0])
+ await db.query(await readFile(new URL('../../supabase/release-migrations/010_coupon_sale_comparison.sql',import.meta.url),'utf8'))
+ const config=createAuthConfig({NODE_ENV:'test',CLIENT_ORIGIN:origin,AUTH_CSRF_SECRET:'application-coupon-fixture-csrf-123456789',ADMIN_AUTH_PROVIDER:'prototype',CUSTOMER_AUTH_PROVIDER:'prototype',ENABLE_ADMIN_MFA:'false'}),names=getAuthCookieNames(config)
+ const runtime={config,repository:{client},sessionService:{restore:async({accessToken})=>{if(!accessToken)throw Object.assign(Error(),{code:'AUTH_REQUIRED'});return {record:{sessionClass:accessToken==='customer'?'customer':'administrator',mfaAssurance:'aal2'},identity:{id:accessToken,assuranceLevel:'aal2'}}}},adminAuthorization:{resolve:async id=>({userId:f.admin,permissions:id===f.admin?['coupons.manage']:[]})}}
+ const app=express();app.use(requestContext,cookieParser());app.use('/coupons',createAdminPhase3V1Router(runtime,'coupons',{client,logger:{warn(){}}}));app.use(authErrorHandler(config))
+ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));t.after(()=>new Promise(r=>server.close(r)))
+ async function http(body,{who=f.admin,csrf=true,requestOrigin=origin}={}){
+  const token=getSessionCsrfToken('application-fixture',config),headers={'Content-Type':'application/json',Origin:requestOrigin}
+  if(who){headers.Cookie=names.access+'='+who+'; '+names.refresh+'=refresh; '+names.session+'=application-fixture; '+names.csrf+'='+token;if(csrf)headers['X-RF-CSRF']=token}
+  const r=await fetch('http://127.0.0.1:'+server.address().port+'/coupons',{method:'POST',headers,body:JSON.stringify(body)});return{status:r.status,body:await r.json()}
+ }
+ await scenario('HTTP authentication, RBAC, CSRF and Origin cannot bypass coupon creation',async()=>{
+  const before=await state014(db)
+  for(const [opts,status]of [[{who:null},401],[{who:'customer'},403],[{who:'denied'},403],[{csrf:false},403],[{requestOrigin:'https://foreign.invalid'},403]])assert.equal((await http(input,opts)).status,status)
+  assert.deepEqual(await state014(db),before)
+ })
+ await scenario('HTTP and service reject fixed/free-shipping, policy injection and restrictions before writes',async()=>{
+  for(const patch of [{type:'Fixed Amount'},{type:'Free Shipping',discountValue:0},{pricingPolicy:'LEGACY'},{pricing_policy:'LEGACY'},{productIds:[f.normal.product]},{categoryIds:[randomUUID()]},{discountValue:101}]){
+   const before=await state014(db);assert.equal((await http({...input,...patch})).status,400);await assert.rejects(()=>adminService.create({...input,...patch},actor),e=>e.status===400);assert.deepEqual(await state014(db),before)
+  }
+ })
+ await scenario('Authorized percentage creation persists explicit policy, cap/minimum and audit attribution',async()=>{
+  const r=await http({...input,maxDiscountAmount:150});assert.equal(r.status,201,JSON.stringify(r.body));const c=r.body.data;assert.equal(c.pricingPolicy,'GLOBAL_PERCENTAGE_V1');assert.equal(c.maxDiscountAmount,150);assert.equal(c.minimumOrderAmount,1000)
+  const row=(await db.query('select * from coupons where id=$1',[c.id])).rows[0];assert.equal(row.pricing_policy,'GLOBAL_PERCENTAGE_V1');assert.equal(Number(row.max_discount_amount),150)
+  assert.equal((await db.query("select count(*)::int n from admin_audit_logs where resource_id=$1 and admin_id=$2 and permission_key='coupons.manage' and action='coupon.create' and request_id is not null",[c.id,f.admin])).rows[0].n,1)
+ })
+ await scenario('Actual service_role can persist the trusted new policy without privilege expansion',async()=>{
+  await db.query('set role service_role')
+  try{const saved=await adminService.create({...input,code:'SERVICE_POLICY10'},actor);assert.equal(saved.pricingPolicy,'GLOBAL_PERCENTAGE_V1')}
+  finally{await db.query('reset role')}
+  const row=(await db.query("select pricing_policy from coupons where code='SERVICE_POLICY10'")).rows[0];assert.equal(row.pricing_policy,'GLOBAL_PERCENTAGE_V1')
+ })
+ for(const row of legacy)await scenario('Existing '+row.type+' remains LEGACY through viewing and supported editing',async()=>{
+  const c=await adminService.detail(row.id);assert.equal(c.type,row.type);assert.equal(c.pricingPolicy,'LEGACY')
+  const config=Object.fromEntries(Object.keys(input).filter(k=>!['code','type'].includes(k)).map(k=>[k,c[k]]));const saved=await adminService.update(row.id,{...config,description:'Updated legacy fixture',expectedUpdatedAt:c.updatedAt},actor)
+  assert.equal(saved.pricingPolicy,'LEGACY');assert.equal(saved.type,row.type);assert.equal((await db.query('select pricing_policy from coupons where id=$1',[row.id])).rows[0].pricing_policy,'LEGACY')
+ })
+ const v1=new CheckoutQuoteService(client,{logger:{warn(){}}}),orders=new OrdersV1Service(client,{logger:{warn(){}}}),v2=new CheckoutQuoteV2Service(client,{logger:{warn(){}}}),orders2=new OrdersV2Service(client,{environment:'test',allowNonProductionOrders:true,logger:{warn(){}}})
+ for(const version of [1,2])for(const kind of ['none','SALE','COUPON','tie'])await scenario('V'+version+' '+kind+' SQL evidence survives quotation, placement and frozen replay',async()=>{
+  await updateStandard(f,{regularPrice:1000,salePrice:900,saleStartsAt:null,saleEndsAt:null,stockQuantity:200})
+  const c=kind==='none'?null:await adminService.create({...input,code:'APP_'+version+'_'+kind.toUpperCase(),discountValue:kind==='SALE'?5:kind==='tie'?10:20},actor)
+  let q,request,r
+  if(version===1){const quoteInput=v1Request(f.normal.variant,c?.code??'');q=await v1.quote(quoteInput);request={idempotencyKey:q.idempotencyKey,items:quoteInput.items,contact:{name:'Fixture',email:quoteInput.email,phone:'00000000000'},shipping:{address:'Fixture address',...quoteInput.shipping,notes:''},paymentMethod:'Cash on Delivery',couponCode:c?.code??'',quoteFingerprint:q.quoteFingerprint};r=await orders.create(request)}
+  else{q=await v2.quote({...quoteRequest([normalLine(f.normal.variant)]),couponCode:c?.code??''});request={contractVersion:2,idempotencyKey:randomUUID(),lines:[normalLine(f.normal.variant)],contact:{name:'Fixture Customer',email:'fixture@example.invalid',phone:'00000000000'},shipping:{address:'Fixture address',city:'Karachi',province:'Sindh',notes:''},paymentMethod:'Cash on Delivery',couponCode:c?.code??'',quoteFingerprint:q.quoteFingerprint};r=await orders2.create(request)}
+  assert.equal(q.pricingOutcome.strategy,kind==='COUPON'?'COUPON':'SALE');assert.deepEqual(r.pricingOutcome,q.pricingOutcome)
+  const frozen=(await db.query('select variant_id,quantity,unit_price::text,line_total::text from order_items where order_id=$1',[r.id])).rows;assert.equal(frozen.length,1);assert.equal(frozen[0].variant_id,f.normal.variant);assert.equal(Number(frozen[0].unit_price),q.lines[0].unitPrice);assert.equal(Number(frozen[0].line_total),q.lines[0].lineTotal)
+  if(version===1)assert.deepEqual(r.lines.map(({id,...line})=>line),q.lines)
+  assert(!('_prices' in q));assert(!('_coupon' in q));assert(!('_demand' in q));await committed(db,r.id,q,{coupon:kind==='COUPON'?c.id:null})
+  const before=await state014(db);assert.deepEqual(await(version===1?orders.create(request):orders2.create(request)),{...r,idempotent:true});assert.deepEqual(await state014(db),before)
+  console.log('Release010 application evidence '+JSON.stringify({version,kind,quote:q,receipt:r}))
+ })
+ await scenario('V2 fixed/configurable selected lines retain composition and independent/component pricing',async()=>{
+  for(const lines of [[fixedLine(f)],[configuredLine(f)]]){const q=await v2.quote(quoteRequest(lines));assert.equal(q.lines.length,1);assert(q.lines[0].components.length>0);assert(q.lines[0].definitionFingerprint)}
+ })
+ await scenario('Legacy coupon quote/receipt remains unclassified with actual frozen lines',async()=>{
+  const input=v1Request(f.normal.variant,legacy[0].code),q=await v1.quote(input),request={idempotencyKey:q.idempotencyKey,items:input.items,contact:{name:'Fixture',email:input.email,phone:'00000000000'},shipping:{address:'Fixture address',...input.shipping,notes:''},paymentMethod:'Cash on Delivery',couponCode:input.couponCode,quoteFingerprint:q.quoteFingerprint},r=await orders.create(request)
+  assert(!('pricingOutcome'in q));assert(!('pricingOutcome'in r));assert.deepEqual(r.lines.map(({id,...line})=>line),q.lines)
+ })
+ console.log('Release010 application completed scenarios: '+count)
+})
+
+test('V2 quantity projection preserves SQL service and canonical HTTP receipt contracts',{timeout:120000},async t=>{
+ const f=await salesFixture(t),{db}=f
+ await db.query(await readFile(new URL('../../supabase/release-migrations/010_coupon_sale_comparison.sql',import.meta.url),'utf8'))
+ await updateStandard(f,{regularPrice:1000,salePrice:900,saleStartsAt:null,saleEndsAt:null,stockQuantity:200})
+ await updateTester(f,f.tester,{regularPrice:250,salePrice:225,saleStartsAt:null,saleEndsAt:null,stockQuantity:200})
+ await updatePack(f,f.fixed,{fixedRegularPrice:450,fixedSalePrice:400,fixedSaleStartsAt:null,fixedSaleEndsAt:null})
+ const database=(await db.query('select current_database() name')).rows[0].name
+ const sqlResults=[],client={async rpc(name,args){
+  const c=await connection(database)
+  try{const result=await client014(c).rpc(name,args);if(!result.error)sqlResults.push({name,data:structuredClone(result.data)});return result}
+  finally{await c.end()}
+ }}
+ const config=createAuthConfig({NODE_ENV:'test',CLIENT_ORIGIN:origin,AUTH_CSRF_SECRET:'quantity-contract-fixture-123456789012345',ADMIN_AUTH_PROVIDER:'prototype',CUSTOMER_AUTH_PROVIDER:'prototype',ENABLE_ADMIN_MFA:'false'})
+ const runtime={config,repository:{client},sessionService:{restore:async()=>{throw Error('Unexpected session restoration in guest fixture')}}}
+ const app=express();app.use(requestContext,cookieParser(),express.json({limit:'32kb'}))
+ app.use('/api/v2/public',createOrdersV2Router(runtime,{client,allowNonProductionOrders:true,logger:{warn(){}}}))
+ app.use(authErrorHandler(config))
+ const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve))
+ t.after(()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections()}))
+ const base='http://127.0.0.1:'+server.address().port
+ async function http(path,body){
+  const response=await fetch(base+'/api/v2/public/'+path,{method:'POST',headers:{'Content-Type':'application/json',Origin:origin},body:JSON.stringify(body)})
+  return {status:response.status,body:await response.json()}
+ }
+ const fixedRevision=(await db.query('select definition_revision::text revision from tester_packs where product_id=$1',[f.fixed.product.id])).rows[0].revision
+ const pack=quantity=>({...fixedLine(f,quantity),definitionRevision:fixedRevision})
+ const cases=[
+  {name:'normal quantity one',lines:[normalLine(f.normal.variant)],subtotal:900,discount:0,physical:1,outcome:'not_requested'},
+  {name:'normal quantity three',lines:[normalLine(f.normal.variant,3)],subtotal:3000,discount:600,physical:3,outcome:'applied',percentage:20},
+  {name:'standalone tester quantity two',lines:[normalLine(f.tester.tester.variant_id,2)],subtotal:500,discount:100,physical:2,outcome:'applied',percentage:20},
+  {name:'fixed pack quantity two',lines:[pack(2)],subtotal:900,discount:180,physical:4,outcome:'applied',percentage:20},
+  {name:'configurable pack quantity two',lines:[configuredLine(f,undefined,2)],subtotal:1000,discount:200,physical:4,outcome:'applied',percentage:20},
+  {name:'mixed supported kinds',lines:[normalLine(f.normal.variant,2),normalLine(f.tester.tester.variant_id,2),pack(2),configuredLine(f,undefined,2)],subtotal:4400,discount:880,physical:12,outcome:'applied',percentage:20},
+  {name:'repeated canonical identities aggregate',lines:[normalLine(f.normal.variant),normalLine(f.normal.variant,2),pack(1),pack(1),configuredLine(f),configuredLine(f)],subtotal:4900,discount:980,physical:11,outcome:'applied',percentage:20,lineCount:3},
+  {name:'sale winner',lines:[normalLine(f.normal.variant,2)],subtotal:1800,discount:0,physical:2,outcome:'sale_better',percentage:5},
+  {name:'sale tie',lines:[normalLine(f.normal.variant,2)],subtotal:1800,discount:0,physical:2,outcome:'tie',percentage:10},
+ ]
+ const money=value=>BigInt(Math.round(value*100))
+ function assertLines(actual,sql){
+  assert.deepEqual(actual,sql)
+  for(const line of actual){
+   assert(Number.isSafeInteger(line.quantity)&&line.quantity>0)
+   assert.equal(money(line.unitPrice)*BigInt(line.quantity),money(line.lineTotal))
+   for(const component of line.components)assert.equal(component.totalPhysicalQuantity,component.quantityPerPack*line.quantity)
+  }
+ }
+ async function scenario(name,work){let passed=false;await t.test(name,async()=>{await work();passed=true});if(!passed)throw Error('Critical V2 quantity contract failure: '+name)}
+ let expectedMovementRows=0
+ for(const item of cases){
+  const code=item.percentage?'QUANTITY_'+randomUUID().replaceAll('-','').slice(0,16).toUpperCase():''
+  let couponId=null
+  if(code)couponId=(await db.query("insert into coupons(code,type,discount_value,status) values($1,'Percentage',$2,'Active') returning id",[code,item.percentage])).rows[0].id
+  const input={...quoteRequest(item.lines),couponCode:code},sql=await quoteV2(db,input)
+  expectedMovementRows+=new Set(sql.lines.flatMap(line=>line.kind==='normal_variant'?[line.variantId]:line.components.map(component=>component.testerVariantId))).size
+  await scenario('service: '+item.name,async()=>{
+   // Real SQL output is the oracle. Inject private sentinels only to challenge projection.
+   const enriched=structuredClone(sql),before=structuredClone(sql),calls=[]
+   Object.assign(enriched,{_prices:['private'],_coupon:{private:true},_demand:['private'],serviceRole:'private'})
+   for(const line of enriched.lines){Object.assign(line,{_regularPrice:1,salePrice:1,saleStartsAt:'2099-01-01',saleEndsAt:'2099-02-01',privateResolution:'private'});for(const component of line.components)Object.assign(component,{_regularReference:1,serviceRole:'private'})}
+   enriched.pricingOutcome.privateEligibility='private'
+   const service=new CheckoutQuoteV2Service({from(){throw Error('Unexpected second database read')},async rpc(name,args){calls.push({name,args});return {data:enriched,error:null}}})
+   const result=await service.quote(input)
+   assert.equal(calls.length,1);assert.equal(calls[0].name,'quote_checkout_v2');assert.deepEqual(calls[0].args.p_request,input)
+   assert.deepEqual(result,sql);assert.deepEqual(sql,before);assertLines(result.lines,sql.lines)
+   assert.doesNotMatch(JSON.stringify(result),/_prices|_coupon|_demand|serviceRole|_regularPrice|saleStartsAt|saleEndsAt|salePrice|privateResolution|privateEligibility|_regularReference/)
+  })
+  await scenario('HTTP/PostgreSQL: '+item.name,async()=>{
+   const response=await http('checkout/quote',input);assert.equal(response.status,200,JSON.stringify(response.body))
+   const q=response.body.data,underlying=sqlResults.at(-1)
+   assert.equal(underlying.name,'quote_checkout_v2');assertLines(q.lines,underlying.data.lines);assertLines(q.lines,sql.lines)
+   assert.equal(q.quoteFingerprint,sql.quoteFingerprint);assert.deepEqual(q.pricingOutcome,sql.pricingOutcome)
+   assert.equal(q.lines.length,item.lineCount??item.lines.length);assert.equal(q.subtotal,item.subtotal);assert.equal(q.discount,item.discount);assert.equal(q.shippingFee,250);assert.equal(q.total,item.subtotal-item.discount+250)
+   if(item.lineCount)assert.deepEqual(['normal_variant','fixed_tester_pack','configurable_tester_pack'].map(kind=>q.lines.find(line=>line.kind===kind).quantity),[3,2,2])
+   assert.equal(q.pricingOutcome.couponOutcome,item.outcome);assert.equal(q.pricingOutcome.strategy,item.outcome==='applied'?'COUPON':'SALE')
+   assert.equal(q.lines.reduce((sum,line)=>sum+money(line.lineTotal),0n),money(q.subtotal))
+   assert.doesNotMatch(JSON.stringify(q),/_prices|_coupon|_demand|_regularPrice|_regularReference|saleStartsAt|saleEndsAt|serviceRole/)
+   const request={contractVersion:2,idempotencyKey:randomUUID(),lines:item.lines,contact:{name:'Fixture Customer',email:input.email,phone:'00000000000'},shipping:{address:'Fixture address',...input.shipping,notes:''},paymentMethod:'Cash on Delivery',couponCode:code,quoteFingerprint:q.quoteFingerprint}
+   const placed=await http('orders',request);assert.equal(placed.status,201,JSON.stringify(placed.body))
+   const receipt=placed.body.data
+   assert.equal(receipt.quoteFingerprint,q.quoteFingerprint);assert.deepEqual(receipt.pricingOutcome,q.pricingOutcome)
+   const receiptLines=receipt.lines.map(({id,components,...line})=>({...line,components:components.map(({id,...component})=>component)}))
+   assertLines(receiptLines,q.lines)
+   await committed(db,receipt.id,q,{quantities:item.physical,coupon:item.outcome==='applied'?couponId:null})
+   const stored=(await db.query('select quantity,unit_price::text,line_total::text from order_items where order_id=$1 order by position',[receipt.id])).rows
+   assert.deepEqual(stored.map(row=>({quantity:row.quantity,unitPrice:Number(row.unit_price),lineTotal:Number(row.line_total)})),q.lines.map(({quantity,unitPrice,lineTotal})=>({quantity,unitPrice,lineTotal})))
+   const beforeReplay=await state014(db),replay=await http('orders',request)
+   assert.equal(replay.status,200);assert.deepEqual(replay.body.data,{...receipt,idempotent:true});assert.deepEqual(await state014(db),beforeReplay)
+   console.log('V2 quantity HTTP evidence '+JSON.stringify({case:item.name,request:input,sqlQuote:sql,httpQuote:q,receipt,stored,physicalDemand:item.physical}))
+  })
+ }
+ const state=await state014(db)
+ assert.equal(state.orders.length,cases.length);assert.equal(state.payments.length,cases.length);assert.equal(state.movements.length,expectedMovementRows)
+ assert.equal(state.movements.reduce((sum,row)=>sum-row.quantity_delta,0),cases.reduce((sum,item)=>sum+item.physical,0))
+ console.log('V2 quantity committed state '+JSON.stringify(state))
 })

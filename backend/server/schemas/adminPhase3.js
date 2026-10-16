@@ -21,7 +21,7 @@ export const couponConfigSchema = z.strictObject({
 })
 export const couponCreateSchema = couponConfigSchema.extend({
   code: z.string().trim().toUpperCase().min(2).max(40).regex(/^[A-Z0-9_-]+$/),
-  type: z.enum(['Percentage', 'Fixed Amount', 'Free Shipping']),
+  type: z.literal('Percentage'),
 })
 export const couponUpdateSchema = couponConfigSchema.extend({ expectedUpdatedAt: z.iso.datetime({ offset: true }) })
 export const seoPages = Object.freeze({ home: '/', shop: '/shop', collections: '/collections', attars: '/attars', about: '/about', contact: '/contact' })

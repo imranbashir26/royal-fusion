@@ -82,28 +82,31 @@ test('customer details and orders use UUID foreign keys, never matching shared e
   assert.equal((await request(api, `/customers/${admin}`)).status, 404)
   for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) assert.equal((await request(api, `/customers/${customer}`, { method, body: {} })).status, 404)
 })
-test('coupon creation accepts each approved type, persists audit and rejects duplicate codes case-insensitively', async t => {
+test('coupon creation accepts only percentages, persists audit and rejects duplicate codes case-insensitively', async t => {
   const api = await start(t)
   for (const [type, discountValue] of [['Percentage', 10], ['Fixed Amount', 500], ['Free Shipping', 0]]) {
     const r = await request(api, '/coupons', { actor: 'coupons', method: 'POST', body: { ...coupon, code: type.replaceAll(' ', '_'), type, discountValue } })
-    assert.equal(r.status, 201, JSON.stringify(r.body)); assert.equal(r.body.data.usedCount, 0)
+    assert.equal(r.status, type==='Percentage'?201:400, JSON.stringify(r.body)); if(type==='Percentage'){assert.equal(r.body.data.usedCount, 0);assert.equal(r.body.data.pricingPolicy,'GLOBAL_PERCENTAGE_V1')}
   }
   assert.equal((await request(api, '/coupons', { method: 'POST', body: { ...coupon, code: 'percentage' } })).status, 409)
   const audits = (await fixture.db.query('select * from admin_audit_logs')).rows
-  assert.equal(audits.length, 3); assert.ok(audits.every(r => r.admin_id === admin && r.permission_key === 'coupons.manage' && r.request_id))
+  assert.equal(audits.length, 1); assert.ok(audits.every(r => r.admin_id === admin && r.permission_key === 'coupons.manage' && r.request_id))
   assert.deepEqual(api.logs, [])
 })
 test('coupon input rejects invalid money, dates, limits, counters and unapproved restriction writes', async t => {
   const api = await start(t)
   for (const patch of [{ discountValue: 101 }, { discountValue: 0 }, { discountValue: 1.001 }, { minimumOrderAmount: -1 }, { maxDiscountAmount: -1 },
     { usageLimit: -1 }, { perCustomerUsageLimit: 1.5 }, { startDate: '2026-02-30' }, { startDate: '2026-03-02', endDate: '2026-03-01' },
-    { usedCount: 1 }, { productIds: [randomUUID()] }, { applicableProducts: [] }, { status: 'Deleted' }, { type: 'Free Shipping', discountValue: 10 }, { description: '<script>unsafe</script>' }]) {
+    { pricingPolicy:'LEGACY' }, { pricing_policy:'LEGACY' }, { usedCount: 1 }, { productIds: [randomUUID()] }, { applicableProducts: [] }, { status: 'Deleted' }, { type: 'Free Shipping', discountValue: 10 }, { description: '<script>unsafe</script>' }]) {
     assert.equal((await request(api, '/coupons', { method: 'POST', body: { ...coupon, ...patch } })).status, 400, JSON.stringify(patch))
   }
   assert.equal((await fixture.db.query('select count(*) from coupons')).rows[0].count, 0)
 })
 test('coupon config/status update preserves redemptions, usage and tester-pack parent restrictions', async t => {
-  const api = await start(t), created = (await request(api, '/coupons', { method: 'POST', body: coupon })).body.data
+  const api = await start(t)
+  // Seed an existing grandfathered record; new creation cannot acquire restrictions.
+  const legacy=(await fixture.db.query("insert into coupons(code,type,discount_value,pricing_policy) values('LEGACY_SCOPE','Percentage',10,'LEGACY') returning id")).rows[0]
+  const created=(await request(api, '/coupons/'+legacy.id)).body.data
   const parent = randomUUID(), component = randomUUID(), category = randomUUID()
   await fixture.db.query(`insert into products(id,name,commerce_kind) values($1,'Pack','tester_pack'),($2,'Tester','tester')`, [parent, component])
   await fixture.db.query('insert into categories(id,name) values($1,$2)', [category, 'Tester packs'])
@@ -128,7 +131,7 @@ test('coupon updates reject readonly fields and limits below usage without reset
   const api = await start(t), row = (await request(api, '/coupons', { method: 'POST', body: coupon })).body.data
   await fixture.db.query('update coupons set used_count=5 where id=$1', [row.id])
   const current = (await request(api, `/coupons/${row.id}`)).body.data
-  for (const patch of [{ usageLimit: 4 }, { usedCount: 0 }, { code: 'NEWCODE' }, { type: 'Fixed Amount' }, { productIds: [] }]) assert.equal((await request(api, `/coupons/${row.id}`, { method: 'PUT', body: { ...configure(current), ...patch } })).status, 400)
+  for (const patch of [{ usageLimit: 4 }, { pricingPolicy:'LEGACY' }, { pricing_policy:'GLOBAL_PERCENTAGE_V1' }, { usedCount: 0 }, { code: 'NEWCODE' }, { type: 'Fixed Amount' }, { productIds: [] }]) assert.equal((await request(api, `/coupons/${row.id}`, { method: 'PUT', body: { ...configure(current), ...patch } })).status, 400)
   assert.equal((await request(api, `/coupons/${row.id}`)).body.data.usedCount, 5)
 })
 test('mutations require domain permission, CSRF and Origin; byte limits and malformed JSON have safe errors', async t => {

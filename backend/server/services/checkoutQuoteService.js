@@ -113,10 +113,47 @@ export class CheckoutQuoteService {
       || !Array.isArray(data.paymentMethods) || !data.paymentMethods.length || data.paymentMethods.some(method => !paymentMethods.includes(method))) throw unavailable()
     const values = Object.fromEntries(['subtotal','discount','shippingFee','total'].map(key => [key,cents(data[key])]))
     if (values.subtotal <= 0n || values.discount > values.subtotal || values.total !== values.subtotal - values.discount + values.shippingFee) throw unavailable()
-    return { ...Object.fromEntries(Object.entries(values).map(([key,value]) => [key,Number(value)/100])), currency:'PKR',
+    if (data.pricingOutcome != null && !Array.isArray(data.lines)) throw unavailable()
+    return { ...publicV1Lines(data.lines,data.subtotal,input.items), ...publicPricingOutcome(data.pricingOutcome,data,data.quoteFingerprint), ...Object.fromEntries(Object.entries(values).map(([key,value]) => [key,Number(value)/100])), currency:'PKR',
       shippingMethodId:data.shippingMethodId, paymentMethods:[...data.paymentMethods], quoteFingerprint:data.quoteFingerprint, idempotencyKey:data.idempotencyKey }
   }
 }
 export function normalizedCheckoutCategory(error, fallback = 'RELATIONAL_READ_FAILURE') {
   return typeof error?.code === 'string' && /^(?:[0-9A-Z]{5}|PGRST\d{3})$/.test(error.code) ? error.code : fallback
+}
+
+// Allowlist SQL evidence; never resolve prices or choose a pricing strategy.
+const uuid=value=>typeof value==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+export function publicPricingOutcome(value, amounts, fingerprint) {
+ if(value==null)return {}
+ if(typeof value!=='object'||Array.isArray(value)||value.policy!=='GLOBAL_PERCENTAGE_V1'
+  ||!['SALE','COUPON'].includes(value.strategy)||!['not_requested','applied','sale_better','tie'].includes(value.couponOutcome)
+  ||typeof value.requestedCouponCode!=='string'||!/^[A-Z0-9_-]{0,40}$/.test(value.requestedCouponCode)
+  ||value.acceptedQuoteFingerprint!==fingerprint||!/^[0-9a-f]{64}$/.test(fingerprint??''))throw unavailable()
+ const outcome={policy:value.policy,strategy:value.strategy,couponOutcome:value.couponOutcome,requestedCouponCode:value.requestedCouponCode,acceptedQuoteFingerprint:value.acceptedQuoteFingerprint}
+ for(const key of ['regularSubtotal','saleSubtotal','couponDiscount','merchandiseTotal']){const n=cents(value[key]);if(n>999999999999n)throw unavailable();outcome[key]=Number(n)/100}
+ outcome.couponSubtotal=value.couponSubtotal===null?null:Number(cents(value.couponSubtotal))/100
+ outcome.appliedCouponId=value.appliedCouponId;outcome.appliedCouponCode=value.appliedCouponCode
+ if(cents(outcome.merchandiseTotal)!==cents(amounts.subtotal)-cents(amounts.discount))throw unavailable()
+ if(outcome.strategy==='COUPON'){
+  if(outcome.couponOutcome!=='applied'||!uuid(outcome.appliedCouponId)||typeof outcome.appliedCouponCode!=='string'||!outcome.appliedCouponCode
+   ||cents(amounts.subtotal)!==cents(outcome.regularSubtotal)||cents(amounts.discount)!==cents(outcome.couponDiscount)
+   ||outcome.couponSubtotal===null||cents(outcome.couponSubtotal)!==cents(outcome.merchandiseTotal))throw unavailable()
+ }else if(outcome.appliedCouponId!==null||outcome.appliedCouponCode!==null||outcome.couponOutcome==='applied'
+  ||cents(amounts.discount)!==0n||cents(amounts.subtotal)!==cents(outcome.saleSubtotal))throw unavailable()
+ return {pricingOutcome:outcome}
+}
+export function publicV1Lines(value, subtotal, items, withIds=false){
+ if(value===undefined)return {}
+ if(!Array.isArray(value)||!value.length||value.length>100)throw unavailable()
+ const seen=new Set(),lines=value.map(line=>{
+  if(!line||(!uuid(line.variantId)&&!(withIds&&line.variantId===null))||!Number.isInteger(line.quantity)||line.quantity<=0||line.quantity>2147483647
+   ||cents(line.unitPrice)<=0n||cents(line.lineTotal)!==cents(line.unitPrice)*BigInt(line.quantity))throw unavailable()
+  const key=withIds?line.id:line.variantId.toLowerCase();if(!key||seen.has(key)||(withIds&&!uuid(key)))throw unavailable();seen.add(key)
+  return {...(withIds?{id:line.id}:{}),variantId:line.variantId===null?null:line.variantId.toLowerCase(),quantity:line.quantity,unitPrice:Number(cents(line.unitPrice))/100,lineTotal:Number(cents(line.lineTotal))/100}
+ })
+ if(lines.reduce((n,l)=>n+cents(l.lineTotal),0n)!==cents(subtotal))throw unavailable()
+ if(items){const requested=new Map();for(const i of items){const id=i.variantId.toLowerCase();requested.set(id,(requested.get(id)??0)+i.quantity)}
+  const order=entries=>entries.sort(([a],[b])=>a.localeCompare(b));if(JSON.stringify(order([...requested]))!==JSON.stringify(order(lines.map(l=>[l.variantId,l.quantity]))))throw unavailable()}
+ return {lines}
 }

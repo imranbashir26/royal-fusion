@@ -3,7 +3,7 @@ import test from 'node:test'
 import {verifySelection,prerequisites,runChild} from '../scripts/test-backend.mjs'
 import {tapTotals,nativeGroups} from '../scripts/backend-test-selection.mjs'
 test('required selection is exhaustive and unique; retirement and checked API are mandatory',()=>{
- assert.equal(verifySelection().length,47)
+ assert.equal(verifySelection().length,48)
  for(const file of ['checkout-retirement-native.test.js','checked-v1-native.test.js','checked-v1-api-native.test.js','scheduled-sales-native.test.js','scheduled-sales-api-native.test.js'])assert.ok(nativeGroups.acceptance.includes(file))
 })
 test('a skipped, cancelled, empty or failed summary cannot report PASS',()=>{

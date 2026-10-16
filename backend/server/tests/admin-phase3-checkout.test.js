@@ -8,12 +8,13 @@ const input = { code: 'PARENT10', type: 'Percentage', discountValue: 10, minimum
 async function fixture(t) {
   const f = await phase3CheckoutDatabase(t)
   f.service = new CouponsService(f.client); f.actorContext = { userId: f.actor, requestId: 'phase3-quote-regression' }
-  f.coupon = await f.service.create(input, f.actorContext)
+  const saved=(await f.db.query("insert into coupons(code,type,discount_value,minimum_order_amount,usage_limit,status) values($1,$2,$3,$4,$5,$6) returning id",[input.code,input.type,input.discountValue,input.minimumOrderAmount,input.usageLimit,input.status])).rows[0]
+  f.coupon = await f.service.detail(saved.id)
   return f
 }
 const config = row => Object.fromEntries([...Object.keys(input).filter(key => !['code', 'type'].includes(key)).map(key => [key, row[key]]), ['expectedUpdatedAt', row.updatedAt]])
 
-test('admin-created coupons feed unchanged V1/V2 rounding, caps, fixed and free-shipping calculations', async t => {
+test('grandfathered coupons retain unchanged V1/V2 rounding, caps, fixed and free-shipping calculations', async t => {
   const f = await fixture(t), v1 = new CheckoutQuoteService(f.client)
   const raw = { items: [{ variantId: f.variant, quantity: 1 }], shipping: { city: 'Karachi', province: 'Sindh' }, email: 'fixture@example.invalid', couponCode: input.code }
   assert.equal((await v1.quote(raw)).discount, 25)
@@ -21,7 +22,7 @@ test('admin-created coupons feed unchanged V1/V2 rounding, caps, fixed and free-
   const capped = await f.service.update(f.coupon.id, { ...config(f.coupon), discountValue: 12.5, maxDiscountAmount: 30 }, f.actorContext)
   assert.equal((await v1.quote(raw)).discount, 30); assert.equal((await f.quote(input.code)).discount, 30)
   for (const [type, discountValue, code, discount, shipping] of [['Fixed Amount', 1000, 'FIXED', 450, 250], ['Free Shipping', 0, 'SHIP', 0, 0]]) {
-    await f.service.create({ ...input, type, discountValue, code }, f.actorContext)
+    await f.db.query('insert into coupons(code,type,discount_value,status) values($1,$2,$3,$4)',[code,type,discountValue,'Active'])
     const q = await f.quote(code); assert.equal(q.discount, discount); assert.equal(q.shippingFee, shipping); assert.ok(q.total >= 0); assert.equal(q.orderingEnabled, false)
   }
   assert.equal(capped.usedCount, 0); assert.equal((await f.db.query('select count(*)::int from orders')).rows[0].count, 0)

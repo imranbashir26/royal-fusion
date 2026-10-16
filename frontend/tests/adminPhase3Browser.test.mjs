@@ -6,7 +6,7 @@ const customerId = '00000000-0000-4000-8000-000000000001', couponId = '00000000-
 const adminFixture = (permissions = ['*']) => ({ paths: [], requests: [], session: {
   authenticated: true, csrfToken: 'fixture-csrf', identity: { id: 'actor', email: 'admin@example.invalid', emailVerified: true },
   administrator: { userId: 'actor', name: 'Operator', role: 'Admin', roleKey: 'admin', permissions },
-}, coupon: { id: couponId, code: 'PARENT10', type: 'Percentage', discountValue: 10, minimumOrderAmount: 0, maxDiscountAmount: null, description: 'Existing parent coupon', startDate: null, endDate: null, usageLimit: 10, perCustomerUsageLimit: 1, status: 'Active', usedCount: 3, updatedAt: '2026-10-10T00:00:00Z' }, seo: [] })
+}, coupon: { id: couponId, code: 'PARENT10', type: 'Percentage', pricingPolicy:'LEGACY', discountValue: 10, minimumOrderAmount: 0, maxDiscountAmount: null, description: 'Existing parent coupon', startDate: null, endDate: null, usageLimit: 10, perCustomerUsageLimit: 1, status: 'Active', usedCount: 3, updatedAt: '2026-10-10T00:00:00Z' }, seo: [] })
 async function setup(t, admin = adminFixture()) {
   const { page } = await pageFixture(t, { admin })
   page.setDefaultTimeout(15000)
@@ -201,4 +201,17 @@ test('public canonicals reject foreign, malformed and historical stored hosts an
     await page.waitForFunction(() => document.title === 'Canonical verification')
     assert.equal(await page.locator('link[rel="canonical"]').getAttribute('href'), `${origin}/contact`, canonical)
   }
+})
+
+
+test('percentage-only creation supports a cap and minimum while legacy types remain readable',async t=>{
+ const admin=adminFixture(['coupons.manage']),page=await setup(t,admin)
+ await page.goto(origin+'/admin/coupons');await page.getByRole('button',{name:'Add Coupon',exact:true}).click()
+ assert.deepEqual(await page.getByLabel('Coupon type',{exact:true}).locator('option').allTextContents(),['Percentage'])
+ await page.getByLabel('Coupon code',{exact:true}).fill('GLOBALCAP');await page.getByLabel('Maximum discount amount',{exact:true}).fill('150.25');await page.getByLabel('Minimum order amount',{exact:true}).fill('1000.05')
+ await page.getByRole('button',{name:'Save Coupon',exact:true}).click();await page.getByRole('status').filter({hasText:'Coupon saved.'}).waitFor()
+ const submitted=admin.requests.find(r=>r.method==='POST').body;assert.equal(submitted.type,'Percentage');assert.equal(submitted.maxDiscountAmount,150.25);assert.equal(submitted.minimumOrderAmount,1000.05);assert(!('pricingPolicy'in submitted))
+ const legacy=adminFixture(['coupons.manage']);legacy.coupon.type='Fixed Amount';legacy.coupon.discountValue=100
+ const other=await setup(t,legacy);await other.goto(origin+'/admin/coupons');await other.getByRole('button',{name:'View coupon PARENT10',exact:true}).click();await other.getByText('Legacy coupon — existing terms preserved',{exact:true}).waitFor()
+ await other.getByRole('button',{name:'Edit coupon PARENT10',exact:true}).click();assert.equal(await other.getByLabel('Coupon type',{exact:true}).inputValue(),'Fixed Amount');assert(await other.getByLabel('Coupon type',{exact:true}).isDisabled())
 })

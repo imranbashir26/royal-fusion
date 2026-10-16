@@ -1,4 +1,4 @@
-import { couponConfigSchema, seoPages } from '../schemas/adminPhase3.js'
+import { couponConfigSchema, couponCreateSchema, seoPages } from '../schemas/adminPhase3.js'
 
 export class Phase3Error extends Error {
   constructor(status, code, message) { super(message); this.status = status; this.code = code }
@@ -7,7 +7,7 @@ const fail = () => new Phase3Error(503, 'ADMIN_RESOURCE_UNAVAILABLE', 'This requ
 const conflict = () => new Phase3Error(409, 'RESOURCE_CONFLICT', 'This record changed. Reload before saving again.')
 const invalid = () => new Phase3Error(400, 'INVALID_ADMIN_REQUEST', 'Please check the supplied information.')
 const profileColumns = 'id,full_name,email,phone,status,created_at'
-const couponColumns = 'id,code,type,discount_value,minimum_order_amount,max_discount_amount,description,start_date,end_date,usage_limit,used_count,per_customer_usage_limit,status,created_at,updated_at,applicable_product_ids,applicable_category_ids'
+const couponColumns = 'pricing_policy,id,code,type,discount_value,minimum_order_amount,max_discount_amount,description,start_date,end_date,usage_limit,used_count,per_customer_usage_limit,status,created_at,updated_at,applicable_product_ids,applicable_category_ids'
 const seoColumns = 'id,page_key,route_path,title,description,canonical_url,robots,og_title,og_description,og_image_secure_url,active,updated_at'
 
 class Service {
@@ -99,9 +99,10 @@ export class CouponsService extends Service {
     if (type === 'Free Shipping' && (config.discountValue !== 0 || config.maxDiscountAmount !== null)) throw invalid()
   }
   async create(input, actor) {
-    const { code, type, ...config } = input
+    const parsed=couponCreateSchema.safeParse(input);if(!parsed.success)throw invalid()
+    const { code, type, ...config } = parsed.data
     this.validate(config, type)
-    const { data } = await this.run(this.source().from('coupons').insert({ code, type, ...couponPatch(config) }).select(couponColumns).single())
+    const { data } = await this.run(this.source().from('coupons').insert({ code, type, ...couponPatch(config), pricing_policy:'GLOBAL_PERCENTAGE_V1' }).select(couponColumns).single())
     if (!data) throw fail()
     await this.audit('coupons', data.id, 'coupons.manage', 'coupon.create', actor)
     return coupon(data)
@@ -152,7 +153,7 @@ export class SeoService extends Service {
   }
 }
 function profile(r) { return { id: r.id, name: r.full_name, email: r.email ?? '', phone: r.phone ?? '', status: r.status, createdAt: r.created_at } }
-function coupon(r) { return { id: r.id, code: r.code, type: r.type, discountValue: Number(r.discount_value), minimumOrderAmount: Number(r.minimum_order_amount),
+function coupon(r) { if(!['LEGACY','GLOBAL_PERCENTAGE_V1'].includes(r.pricing_policy))throw fail();return { pricingPolicy:r.pricing_policy, id: r.id, code: r.code, type: r.type, discountValue: Number(r.discount_value), minimumOrderAmount: Number(r.minimum_order_amount),
   maxDiscountAmount: r.max_discount_amount == null ? null : Number(r.max_discount_amount), description: r.description, startDate: r.start_date, endDate: r.end_date,
   usageLimit: r.usage_limit, usedCount: r.used_count, perCustomerUsageLimit: r.per_customer_usage_limit, status: r.status, updatedAt: r.updated_at } }
 function couponPatch(c) { return { discount_value: c.discountValue, minimum_order_amount: c.minimumOrderAmount, max_discount_amount: c.maxDiscountAmount,

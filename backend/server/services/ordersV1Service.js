@@ -1,5 +1,5 @@
 import { orderRequestSchema, parseCheckout } from '../schemas/ordersV1.js'
-import { CheckoutApiError, CheckoutQuoteService, cents, normalizedCheckoutCategory, unavailable } from './checkoutQuoteService.js'
+import { CheckoutApiError, CheckoutQuoteService, cents, normalizedCheckoutCategory, unavailable, publicV1Lines, publicPricingOutcome } from './checkoutQuoteService.js'
 
 export class OrdersV1Service {
   constructor(client, { logger = console, quoteService = new CheckoutQuoteService(client, { logger }) } = {}) {
@@ -72,7 +72,8 @@ function receipt(data, input) {
       || typeof data.orderNumber !== 'string' || !data.orderNumber || typeof data.status !== 'string' || !data.status
       || typeof data.paymentStatus !== 'string' || !data.paymentStatus || data.paymentMethod !== input.paymentMethod || data.currency !== 'PKR') throw unavailable()
   const amounts = Object.fromEntries(['subtotal', 'discount', 'shippingFee', 'total'].map(key => [key, cents(data[key])]))
-  return { id: data.id, idempotencyKey: data.idempotencyKey, orderNumber: data.orderNumber, status: data.status,
+  if(amounts.discount>amounts.subtotal||amounts.total!==amounts.subtotal-amounts.discount+amounts.shippingFee||(data.pricingOutcome!=null&&!Array.isArray(data.lines)))throw unavailable()
+  return { ...publicV1Lines(data.lines,data.subtotal,null,true), ...publicPricingOutcome(data.pricingOutcome,data,input.quoteFingerprint), id: data.id, idempotencyKey: data.idempotencyKey, orderNumber: data.orderNumber, status: data.status,
     paymentStatus: data.paymentStatus, paymentMethod: data.paymentMethod,
     ...Object.fromEntries(Object.entries(amounts).map(([key, value]) => [key, Number(value) / 100])), currency: data.currency, idempotent: data.idempotent }
 }

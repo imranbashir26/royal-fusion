@@ -143,18 +143,24 @@ export async function pageFixture(t, { admin = null, webLocks = true, checkout =
       }
       if (checkout.mode === 'stock') return route.fulfill({ status: 409, json: { error: { code: 'INSUFFICIENT_STOCK', message: 'Not enough stock.' } } })
       const {subtotal,discount,shippingFee,total}=attempt.quote
-      attempt.receipt=receiptFor(body,{subtotal,discount,shippingFee,total},false);attempt.request=structuredClone(body);attempt.state='committed'
+      attempt.receipt=receiptFor(body,{subtotal,discount,shippingFee,total},false);
+      if(attempt.quote.lines)attempt.receipt.lines=attempt.quote.lines.map(line=>({...structuredClone(line),id:randomUUID()}));
+      if(attempt.quote.pricingOutcome)attempt.receipt.pricingOutcome=structuredClone(attempt.quote.pricingOutcome);attempt.request=structuredClone(body);attempt.state='committed'
       return route.fulfill({ json: { data: checkout.mode === 'malformed' ? { id: 'bad' } : attempt.receipt } })
     }
     if (url.pathname.endsWith('/v1/auth/session')) return route.fulfill({ json: { data: admin?.session ?? { authenticated: false, csrfToken: 'fixture-csrf' } } })
     if (url.pathname.endsWith('/checkout/quote') && checkout) {
       const body = route.request().postDataJSON(); checkout.quotes ??= []; checkout.quotes.push(body)
+      if(checkout.invalidCoupon && body.couponCode)return route.fulfill({status:422,json:{error:{code:'INVALID_COUPON',message:'This coupon cannot be applied to your order.'}}})
       const subtotal = body.items.reduce((sum, item) => sum + item.quantity * 2900, 0), shippingFee = checkout.shippingFee ?? 777
       // Explicit normalized server-response amounts support presentation tests;
       // receipts replay those issued values without recomputing a financial quote.
       const amounts=checkout.amounts??{subtotal,discount:0,shippingFee,total:subtotal+shippingFee}
       assert.deepEqual(Object.keys(amounts).sort(),['discount','shippingFee','subtotal','total'])
       const quote={idempotencyKey:randomUUID(),...amounts,currency:'PKR',shippingMethodId:'60000000-0000-4000-8000-000000000001',paymentMethods:['Cash on Delivery'],orderingEnabled:checkout.orderingEnabled!==false,quoteFingerprint:randomBytes(32).toString('hex')}
+      // Explicit HTTP fixtures only; no SQL or catalog-derived pricing claim.
+      if(checkout.selectedLines)quote.lines=structuredClone(checkout.selectedLines)
+      if(checkout.pricingOutcome)quote.pricingOutcome={...structuredClone(checkout.pricingOutcome),acceptedQuoteFingerprint:quote.quoteFingerprint}
       issued.set(quote.idempotencyKey,{identity:quoteIdentity(body),quote,state:'active'});checkout.issuedQuotes??=[];checkout.issuedQuotes.push(quote)
       return route.fulfill({json:{data:quote}})
     }

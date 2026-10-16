@@ -20,6 +20,8 @@ export async function phase3Database() {
   for (const name of ['coupons_code_lower_uidx', 'seo_settings_page_key_lower_uidx', 'seo_settings_route_lower_uidx']) await db.exec(foundation.match(new RegExp(`create unique index if not exists ${name}[^;]+;`))[0])
   await db.exec(initial.match(/create or replace function public\.set_updated_at\(\)[\s\S]*?\$\$;/)[0])
   for (const name of ['coupons', 'seo_settings']) await db.exec(`create trigger fixture_updated_at before update on ${name} for each row execute function public.set_updated_at()`)
+  // Application DTO fixture only; real Release 010 guards/persistence are tested on native PG17.
+  await db.exec("alter table coupons add column pricing_policy text not null default 'GLOBAL_PERCENTAGE_V1'")
   return { db, client: phase3SqlClient(db) }
 }
 export const phase3SqlClient=db=>({from:name=>new Query(db,name)})
