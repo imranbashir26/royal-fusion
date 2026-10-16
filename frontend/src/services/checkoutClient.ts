@@ -33,11 +33,11 @@ export function isQuote(value: unknown): value is CheckoutQuoteResponse {
     && row.paymentMethods.length > 0 && row.paymentMethods.every(isPaymentMethod) && typeof row.orderingEnabled === 'boolean'
     && (row.quoteFingerprint === undefined || typeof row.quoteFingerprint === 'string' && /^[0-9a-f]{64}$/.test(row.quoteFingerprint))
 }
-export function isCheckedQuote(value: unknown): value is CheckoutQuoteResponse & { quoteFingerprint: string; idempotencyKey: string } {
+export function isCheckedQuote(value: unknown): value is CheckoutQuoteResponse & { quoteFingerprint: string; idempotencyKey?: string } {
   return isQuote(value) && typeof value.quoteFingerprint === 'string' && /^[0-9a-f]{64}$/.test(value.quoteFingerprint)
-    && isVariantId(value.idempotencyKey)
+    && (value.contractVersion === 2 || isVariantId(value.idempotencyKey))
 }
-export function createCheckoutClient(fetcher: typeof fetch = fetch, baseUrl = import.meta.env?.VITE_API_URL || '/api') {
+export function createCheckoutClient(fetcher: typeof fetch = fetch, baseUrl = import.meta.env?.VITE_API_URL || '/api', version: 'v1' | 'v2' = 'v1') {
   async function request<T>(path: string, body: unknown, validate: (value: unknown) => value is T, order: boolean): Promise<T> {
     try {
       const sessionResponse = await fetcher(`${baseUrl}/v1/auth/session`, { credentials: 'include' })
@@ -56,17 +56,42 @@ export function createCheckoutClient(fetcher: typeof fetch = fetch, baseUrl = im
     }
   }
   return {
-    quote: (body: CheckoutQuoteRequest) => request('/v1/public/checkout/quote', {
-      items: body.items.map(({ variantId, quantity }) => ({ variantId, quantity })),
-      shipping: { city: body.shipping.city, province: body.shipping.province }, email: body.email, couponCode: body.couponCode,
-    }, isQuote, false),
-    createOrder: (body: CanonicalOrderRequest) => request('/v1/public/orders', {
-      idempotencyKey: body.idempotencyKey, items: body.items.map(({ variantId, quantity }) => ({ variantId, quantity })),
-      contact: { name: body.contact.name, email: body.contact.email, phone: body.contact.phone },
-      shipping: { address: body.shipping.address, city: body.shipping.city, province: body.shipping.province, notes: body.shipping.notes },
-      paymentMethod: body.paymentMethod, couponCode: body.couponCode,
-      ...(body.quoteFingerprint !== undefined ? { quoteFingerprint: body.quoteFingerprint } : {}),
-    }, isOrderReceipt, true),
+    quote: (body: CheckoutQuoteRequest) => {
+      if (version === 'v2') {
+        return request('/v2/public/checkout/quote', {
+          contractVersion: 2,
+          lines: body.items.map(({ variantId, quantity }) => ({ kind: 'normal_variant', variantId, quantity })),
+          shipping: { city: body.shipping.city, province: body.shipping.province },
+          email: body.email,
+          couponCode: body.couponCode,
+        }, isQuote, false)
+      }
+      return request('/v1/public/checkout/quote', {
+        items: body.items.map(({ variantId, quantity }) => ({ variantId, quantity })),
+        shipping: { city: body.shipping.city, province: body.shipping.province }, email: body.email, couponCode: body.couponCode,
+      }, isQuote, false)
+    },
+    createOrder: (body: CanonicalOrderRequest) => {
+      if (version === 'v2') {
+        return request('/v2/public/orders', {
+          contractVersion: 2,
+          idempotencyKey: body.idempotencyKey,
+          lines: body.items.map(({ variantId, quantity }) => ({ kind: 'normal_variant', variantId, quantity })),
+          contact: { name: body.contact.name, email: body.contact.email, phone: body.contact.phone },
+          shipping: { address: body.shipping.address, city: body.shipping.city, province: body.shipping.province, notes: body.shipping.notes },
+          paymentMethod: body.paymentMethod,
+          couponCode: body.couponCode,
+          ...(body.quoteFingerprint !== undefined ? { quoteFingerprint: body.quoteFingerprint } : {}),
+        }, isOrderReceipt, true)
+      }
+      return request('/v1/public/orders', {
+        idempotencyKey: body.idempotencyKey, items: body.items.map(({ variantId, quantity }) => ({ variantId, quantity })),
+        contact: { name: body.contact.name, email: body.contact.email, phone: body.contact.phone },
+        shipping: { address: body.shipping.address, city: body.shipping.city, province: body.shipping.province, notes: body.shipping.notes },
+        paymentMethod: body.paymentMethod, couponCode: body.couponCode,
+        ...(body.quoteFingerprint !== undefined ? { quoteFingerprint: body.quoteFingerprint } : {}),
+      }, isOrderReceipt, true)
+    },
   }
 }
-export const checkoutClient = createCheckoutClient()
+export const checkoutClient = createCheckoutClient(fetch, import.meta.env?.VITE_API_URL || '/api', 'v2')

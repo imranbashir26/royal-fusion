@@ -166,7 +166,10 @@ export function CheckoutPage() {
           {!currentQuote?.lines && <p>{item.lineAmount === null ? 'Unavailable' : `Catalog estimate: ${formatCheckoutCurrency(item.lineAmount)}`}</p>}
           <button type="button" className="text-burgundy underline" aria-label={`Remove ${item.product.name}`} onClick={() => removeItems([item.lineId])}>Remove</button>
         </div>)}</div>
-        {currentQuote?.lines && <SelectedCheckoutCharges label="Quoted item charges" lines={currentQuote.lines.map(line=>({...line,name:enrichedItems.find(item=>item.variantId?.toLowerCase()===line.variantId.toLowerCase())?.product.name}))} />}
+        {currentQuote?.lines && <SelectedCheckoutCharges label="Quoted item charges" lines={currentQuote.lines.map(line=>({
+          ...line,
+          name: (('name' in line && line.name) as string | undefined) || ('variantId' in line && line.variantId ? enrichedItems.find(item=>item.variantId?.toLowerCase()===(line.variantId as string).toLowerCase())?.product.name : undefined)
+        }))} />}
         <CheckoutPricingDetails outcome={currentQuote?.pricingOutcome} />
         <dl className="mt-5 space-y-3">{(['subtotal', 'discount', 'shippingFee', 'total'] as const).map((field) => <div className="flex justify-between" key={field}><dt>{({ subtotal: 'Subtotal', discount: 'Discount', shippingFee: 'Shipping', total: 'Total' })[field]}</dt><dd>{amount(field)}</dd></div>)}</dl>
       </aside>
