@@ -1,7 +1,7 @@
 import { AnimatePresence } from 'framer-motion'
 import type { ElementType, ReactNode } from 'react'
 import { lazy, Suspense, useCallback, useState } from 'react'
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import { AdminAuthProvider, useAdminAuth } from './admin/AdminAuthProvider'
 import { PageTransition } from './components/animations/PageTransition'
 import { Preloader } from './components/animations/Preloader'
@@ -21,10 +21,12 @@ const CheckoutPage = lazy(() => import('./pages/CheckoutPage').then((module) => 
 const CheckoutSuccessPage = lazy(() => import('./pages/CheckoutSuccessPage').then((module) => ({ default: module.CheckoutSuccessPage })))
 const CollectionsPage = lazy(() => import('./pages/CollectionsPage').then((module) => ({ default: module.CollectionsPage })))
 const ContactPage = lazy(() => import('./pages/ContactPage').then((module) => ({ default: module.ContactPage })))
+const DiscoveryPacksPage = lazy(() => import('./pages/DiscoveryPacksPage').then((module) => ({ default: module.DiscoveryPacksPage })))
 const HomePage = lazy(() => import('./pages/HomePage').then((module) => ({ default: module.HomePage })))
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage').then((module) => ({ default: module.NotFoundPage })))
 const ProductDetailsPage = lazy(() => import('./pages/ProductDetailsPage').then((module) => ({ default: module.ProductDetailsPage })))
 const ShopPage = lazy(() => import('./pages/ShopPage').then((module) => ({ default: module.ShopPage })))
+const TesterPackDetailsPage = lazy(() => import('./pages/TesterPackDetailsPage').then((module) => ({ default: module.TesterPackDetailsPage })))
 const WishlistPage = lazy(() => import('./pages/WishlistPage').then((module) => ({ default: module.WishlistPage })))
 
 function App({ blogIntegration }: { blogIntegration?: BlogIntegration } = {}) {
@@ -110,6 +112,11 @@ function publicPage(Page: ElementType) {
   )
 }
 
+function TesterPackRedirect() {
+  const { slugOrId } = useParams()
+  return <Navigate replace to={slugOrId ? `/discovery-packs/${slugOrId}` : '/discovery-packs'} />
+}
+
 function AnimatedRoutes() {
   const location = useLocation()
 
@@ -120,6 +127,10 @@ function AnimatedRoutes() {
         <Route path="/shop" element={publicPage(ShopPage)} />
         <Route path="/product/:slug" element={publicPage(ProductDetailsPage)} />
         <Route path="/collections" element={publicPage(CollectionsPage)} />
+        <Route path="/discovery-packs" element={publicPage(DiscoveryPacksPage)} />
+        <Route path="/discovery-packs/:slugOrId" element={publicPage(TesterPackDetailsPage)} />
+        <Route path="/tester-packs" element={<Navigate replace to="/discovery-packs" />} />
+        <Route path="/tester-packs/:slugOrId" element={<TesterPackRedirect />} />
         <Route path="/attars" element={publicPage(AttarsPage)} />
         <Route path="/blogs" element={publicPage(BlogsPage)} />
         <Route path="/blogs/:slug" element={publicPage(BlogDetailsPage)} />

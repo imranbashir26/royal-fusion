@@ -149,6 +149,9 @@ export function Navbar({ onAccountOpen, onSearchOpen }: NavbarProps) {
     (location.pathname === '/shop' && !location.search.includes('best=true')) ||
     location.pathname === '/attars'
   const isCollectionsActive = location.pathname === '/collections'
+  const isDiscoveryPacksActive =
+    location.pathname.startsWith('/discovery-packs') ||
+    location.pathname.startsWith('/tester-packs')
   const isJournalActive = location.pathname.startsWith('/blogs')
   const isAboutActive = location.pathname === '/about'
   const isHelpActive = location.pathname === '/contact'
@@ -260,6 +263,9 @@ export function Navbar({ onAccountOpen, onSearchOpen }: NavbarProps) {
                         <p className="eyebrow-label text-[11px]">Fragrance</p>
                         <ul className="space-y-2 text-sm">
                           <li>
+                            <MenuLink to="/discovery-packs">Discovery Packs</MenuLink>
+                          </li>
+                          <li>
                             <MenuLink to="/attars">Attars</MenuLink>
                           </li>
                           <li>
@@ -309,7 +315,18 @@ export function Navbar({ onAccountOpen, onSearchOpen }: NavbarProps) {
             />
           </BlogNavigationLink>
 
-          {/* 3. Best Sellers */}
+          {/* 3. Discovery Packs */}
+          <BlogNavigationLink
+            className={primaryNavItemClass(isDiscoveryPacksActive)}
+            to="/discovery-packs"
+          >
+            <NavItemContent
+              isActive={isDiscoveryPacksActive}
+              label="Discovery Packs"
+            />
+          </BlogNavigationLink>
+
+          {/* 4. Best Sellers */}
           <BlogNavigationLink
             className={primaryNavItemClass(isBestSellersActive)}
             to="/shop?best=true"
@@ -545,6 +562,7 @@ export function Navbar({ onAccountOpen, onSearchOpen }: NavbarProps) {
                         <MobileLink to="/shop?gender=Women">Women</MobileLink>
                         <MobileLink to="/shop?gender=Unisex">Unisex</MobileLink>
                         <p className="eyebrow-label text-[10px] pt-2">Fragrance Formats</p>
+                        <MobileLink to="/discovery-packs">Discovery Packs</MobileLink>
                         <MobileLink to="/attars">Attars</MobileLink>
                         <MobileLink to="/shop?category=Gift+Sets">Gift Sets</MobileLink>
                         <MobileLink to="/shop">Shop by Scent</MobileLink>
@@ -556,6 +574,9 @@ export function Navbar({ onAccountOpen, onSearchOpen }: NavbarProps) {
                 {/* Direct Links */}
                 <MobileLink className="block font-medium" to="/collections">
                   Collections
+                </MobileLink>
+                <MobileLink className="block font-medium" to="/discovery-packs">
+                  Discovery Packs
                 </MobileLink>
                 <MobileLink className="block font-medium" to="/shop?best=true">
                   Best Sellers

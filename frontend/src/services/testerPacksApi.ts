@@ -94,4 +94,21 @@ export const publicTesterPacksApi = {
     const json = await res.json()
     return json.data
   },
+  async getBySlugOrId(slugOrId: string): Promise<PublicTesterPack | null> {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(slugOrId)
+    if (isUuid) {
+      try {
+        return await publicTesterPacksApi.get(slugOrId)
+      } catch {
+        return null
+      }
+    }
+    try {
+      const list = await publicTesterPacksApi.list(1, 100)
+      const found = list.items.find((p) => p.slug === slugOrId || p.id === slugOrId)
+      return found ?? null
+    } catch {
+      return null
+    }
+  },
 }
