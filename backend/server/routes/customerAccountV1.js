@@ -3,12 +3,21 @@ import { z } from 'zod'
 import { createOptionalIdentity, createOriginGuard, requireCustomerIdentity, requireAuthenticatedCsrf, sendCode } from '../middleware/authSecurity.js'
 import { AUTH_ERROR_CODES } from '../auth/contracts.js'
 import { validateAuthBody } from '../auth/schemas.js'
+import { CustomerOrdersService, CustomerOrderError } from '../services/customerOrdersService.js'
 
 const patch = z.object({ name: z.string().trim().min(2).max(120),
   phone: z.string().trim().max(40).regex(/^$|^\+?[0-9\s().-]{7,40}$/) }).strict()
 
-export function createCustomerAccountV1Router(runtime, { client = runtime.repository.client } = {}) {
+const paginationQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).max(100000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(50).default(10),
+}).strict()
+
+const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export function createCustomerAccountV1Router(runtime, { client = runtime.repository.client, customerOrdersService, logger = console } = {}) {
   const router = Router()
+  const ordersService = customerOrdersService ?? new CustomerOrdersService(client, { logger })
   router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next() })
   router.use(createOriginGuard(runtime.config), createOptionalIdentity(runtime), requireCustomerIdentity)
   router.use((req, res, next) => req.auth.identity.emailVerified ? next() : sendCode(res, AUTH_ERROR_CODES.EMAIL_VERIFICATION_REQUIRED, req.requestId))
@@ -33,5 +42,47 @@ export function createCustomerAccountV1Router(runtime, { client = runtime.reposi
     if (!data) return sendCode(res, AUTH_ERROR_CODES.PERMISSION_DENIED, req.requestId)
     res.json({ data: dto(data, req.auth.identity), meta: { requestId: req.requestId } })
   }))
+  router.get('/orders', run(async (req, res) => {
+    if (!await read(req)) return sendCode(res, AUTH_ERROR_CODES.PERMISSION_DENIED, req.requestId)
+    const validation = paginationQuerySchema.safeParse(req.query)
+    if (!validation.success) {
+      return res.status(400).json({
+        error: {
+          code: 'INVALID_PAGINATION',
+          message: 'Invalid pagination parameters.',
+          requestId: req.requestId,
+        },
+      })
+    }
+    const result = await ordersService.list(req.auth.identity.id, validation.data, req.requestId)
+    res.json({ data: result, meta: { requestId: req.requestId } })
+  }))
+  router.get('/orders/:id', run(async (req, res) => {
+    if (!await read(req)) return sendCode(res, AUTH_ERROR_CODES.PERMISSION_DENIED, req.requestId)
+    if (!uuidRegex.test(req.params.id)) {
+      return res.status(404).json({
+        error: {
+          code: 'ORDER_NOT_FOUND',
+          message: 'Order not found.',
+          requestId: req.requestId,
+        },
+      })
+    }
+    const result = await ordersService.detail(req.params.id, req.auth.identity.id, req.requestId)
+    res.json({ data: result, meta: { requestId: req.requestId } })
+  }))
+  router.use((error, req, res, next) => {
+    if (Object.values(AUTH_ERROR_CODES).includes(error?.code)) return next(error)
+    if (error instanceof CustomerOrderError) {
+      return res.status(error.status).json({
+        error: {
+          code: error.code,
+          message: error.message,
+          requestId: req.requestId,
+        },
+      })
+    }
+    next(error)
+  })
   return router
 }

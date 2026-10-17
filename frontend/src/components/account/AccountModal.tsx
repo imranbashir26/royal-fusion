@@ -3,6 +3,7 @@ import { LogOut, Mail, Phone, User, X } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from '../common/Button'
+import { CustomerOrderHistory } from './CustomerOrderHistory'
 import { useCustomerAuthStore, type CustomerProfileUpdate } from '../../store/customerAuthStore'
 import { cn } from '../../utils/cn'
 
@@ -12,6 +13,7 @@ interface AccountModalProps {
 }
 
 type AccountMode = 'signin' | 'signup'
+type CustomerTab = 'profile' | 'orders'
 type FieldErrors = Partial<Record<string, string>>
 
 const emptyAuthForm = {
@@ -30,6 +32,7 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
   const logout = useCustomerAuthStore((state) => state.logout)
   const restoreSession = useCustomerAuthStore((state) => state.restoreSession)
   const [mode, setMode] = useState<AccountMode>('signin')
+  const [customerTab, setCustomerTab] = useState<CustomerTab>('profile')
   const [authForm, setAuthForm] = useState(emptyAuthForm)
   const [profileForm, setProfileForm] = useState<CustomerProfileUpdate>({
     name: '',
@@ -58,9 +61,11 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
   }, [currentCustomer])
 
   const panelTitle = useMemo(() => {
-    if (currentCustomer) return 'Your Royal Profile'
+    if (currentCustomer) {
+      return customerTab === 'orders' ? 'Your Order History' : 'Your Royal Profile'
+    }
     return mode === 'signin' ? 'Sign in to Royal Fusion' : 'Create your account'
-  }, [currentCustomer, mode])
+  }, [currentCustomer, mode, customerTab])
 
   const handleAuthSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -144,40 +149,84 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
 
             <div className="flex-1 overflow-y-auto p-5">
               {currentCustomer ? (
-                <form className="space-y-4" onSubmit={handleProfileSubmit}>
-                  <ProfileHeader
-                    email={currentCustomer.email}
-                    name={currentCustomer.name}
-                    phone={currentCustomer.phone}
-                  />
-                  <Field
-                    error={errors.name}
-                    label="Full name"
-                    onChange={(value) => setProfileForm((current) => ({ ...current, name: value }))}
-                    required
-                    value={profileForm.name}
-                  />
-
-                  <Field
-                    error={errors.phone}
-                    label="Phone number (optional)"
-                    onChange={(value) => setProfileForm((current) => ({ ...current, phone: value }))}
-                    value={profileForm.phone}
-                  />
-
-                  <Alert errors={errors} message={message} />
-                  <div className="flex flex-col gap-3 sm:flex-row">
-                    <Button className="flex-1" type="submit" disabled={isSaving}>Update Profile</Button>
-                    <Button
-                      className="flex-1"
-                      onClick={() => { void logout().then(() => setMessage('')).catch(error => setErrors({ form: error instanceof Error ? error.message : 'Sign out unavailable.' })) }}
-                      variant="outline"
+                <div className="space-y-5">
+                  <div className="grid grid-cols-2 rounded-full border border-champagne/30 bg-marble p-1">
+                    <button
+                      className={cn(
+                        'rounded-full px-4 py-2 text-sm font-bold transition',
+                        customerTab === 'profile'
+                          ? 'bg-burgundy text-ivory shadow-sm'
+                          : 'text-brownroyal hover:bg-champagne/12'
+                      )}
+                      onClick={() => setCustomerTab('profile')}
+                      type="button"
                     >
-                      <LogOut className="h-4 w-4" aria-hidden="true" />
-                      Logout
-                    </Button>
+                      Profile
+                    </button>
+                    <button
+                      className={cn(
+                        'rounded-full px-4 py-2 text-sm font-bold transition',
+                        customerTab === 'orders'
+                          ? 'bg-burgundy text-ivory shadow-sm'
+                          : 'text-brownroyal hover:bg-champagne/12'
+                      )}
+                      onClick={() => setCustomerTab('orders')}
+                      type="button"
+                    >
+                      My Orders
+                    </button>
                   </div>
-                </form>
+
+                  {customerTab === 'orders' ? (
+                    <CustomerOrderHistory onExploreClick={onClose} />
+                  ) : (
+                    <form className="space-y-4" onSubmit={handleProfileSubmit}>
+                      <ProfileHeader
+                        email={currentCustomer.email}
+                        name={currentCustomer.name}
+                        phone={currentCustomer.phone}
+                      />
+                      <Field
+                        error={errors.name}
+                        label="Full name"
+                        onChange={(value) => setProfileForm((current) => ({ ...current, name: value }))}
+                        required
+                        value={profileForm.name}
+                      />
+
+                      <Field
+                        error={errors.phone}
+                        label="Phone number (optional)"
+                        onChange={(value) => setProfileForm((current) => ({ ...current, phone: value }))}
+                        value={profileForm.phone}
+                      />
+
+                      <Alert errors={errors} message={message} />
+                      <div className="flex flex-col gap-3 sm:flex-row">
+                        <Button className="flex-1" type="submit" disabled={isSaving}>Update Profile</Button>
+                        <Button
+                          className="flex-1"
+                          onClick={() => {
+                            void logout()
+                              .then(() => {
+                                setMessage('')
+                                setCustomerTab('profile')
+                              })
+                              .catch((error) =>
+                                setErrors({
+                                  form: error instanceof Error ? error.message : 'Sign out unavailable.',
+                                })
+                              )
+                          }}
+                          variant="outline"
+                        >
+                          <LogOut className="h-4 w-4" aria-hidden="true" />
+                          Logout
+                        </Button>
+                      </div>
+                    </form>
+                  )}
+                </div>
               ) : (
                 <>
                   <div className="mb-5 grid grid-cols-2 rounded-full border border-champagne/30 bg-marble p-1">
