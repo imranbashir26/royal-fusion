@@ -106,13 +106,18 @@ export function CartPage() {
                     </Link>
                     <p className="mt-1 text-sm text-brownroyal/60">{item.size}</p>
                     {item.variant && <p className="mt-1 text-xs text-brownroyal/60">{item.variant.stockQuantity} in stock</p>}
+                    {item.kind === 'configurable_tester_pack' && item.selections && (
+                      <p className="mt-1 text-xs text-brownroyal/70">
+                        Included: {item.selections.map((s) => `${s.quantityPerPack}x ${s.testerName ?? s.variantId.slice(0, 8)}`).join(', ')}
+                      </p>
+                    )}
                     {item.message && <p className="mt-2 text-sm text-burgundy" role="status">{item.message}</p>}
-                    <p className="mt-3 font-bold text-brownroyal">{item.lineAmount === null ? 'Unavailable' : <ProductPrice product={products.find(p => p.id === item.productId)!} variant={item.variant} />}</p>
+                    <p className="mt-3 font-bold text-brownroyal">{item.lineAmount === null ? 'Unavailable' : (item.kind ? formatCurrency(item.unitPrice) : <ProductPrice product={products.find(p => p.id === item.productId)!} variant={item.variant} />)}</p>
                   </div>
                   <div className="flex items-center justify-between gap-4 md:flex-col md:items-end">
                     <QuantityStepper
-                      disabled={!item.variant || !item.variant.active || !item.variant.available || item.variant.stockQuantity < 1}
-                      max={Math.min(99, item.variant?.stockQuantity ?? 0)}
+                      disabled={!item.eligible}
+                      max={item.variant ? Math.min(99, item.variant.stockQuantity) : 99}
                       onChange={(value) => updateQuantity(item.lineId, value, products)}
                       value={item.quantity}
                     />

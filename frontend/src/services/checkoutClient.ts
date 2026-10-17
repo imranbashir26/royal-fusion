@@ -58,25 +58,31 @@ export function createCheckoutClient(fetcher: typeof fetch = fetch, baseUrl = im
   return {
     quote: (body: CheckoutQuoteRequest) => {
       if (version === 'v2') {
+        const lines = body.lines ?? (body.items ?? []).map((item: any) =>
+          item.kind ? item : { kind: 'normal_variant' as const, variantId: item.variantId, quantity: item.quantity }
+        )
         return request('/v2/public/checkout/quote', {
           contractVersion: 2,
-          lines: body.items.map(({ variantId, quantity }) => ({ kind: 'normal_variant', variantId, quantity })),
+          lines,
           shipping: { city: body.shipping.city, province: body.shipping.province },
           email: body.email,
           couponCode: body.couponCode,
         }, isQuote, false)
       }
       return request('/v1/public/checkout/quote', {
-        items: body.items.map(({ variantId, quantity }) => ({ variantId, quantity })),
+        items: (body.items ?? []).map(({ variantId, quantity }) => ({ variantId, quantity })),
         shipping: { city: body.shipping.city, province: body.shipping.province }, email: body.email, couponCode: body.couponCode,
       }, isQuote, false)
     },
     createOrder: (body: CanonicalOrderRequest) => {
       if (version === 'v2') {
+        const lines = body.lines ?? (body.items ?? []).map((item: any) =>
+          item.kind ? item : { kind: 'normal_variant' as const, variantId: item.variantId, quantity: item.quantity }
+        )
         return request('/v2/public/orders', {
           contractVersion: 2,
           idempotencyKey: body.idempotencyKey,
-          lines: body.items.map(({ variantId, quantity }) => ({ kind: 'normal_variant', variantId, quantity })),
+          lines,
           contact: { name: body.contact.name, email: body.contact.email, phone: body.contact.phone },
           shipping: { address: body.shipping.address, city: body.shipping.city, province: body.shipping.province, notes: body.shipping.notes },
           paymentMethod: body.paymentMethod,
@@ -85,7 +91,7 @@ export function createCheckoutClient(fetcher: typeof fetch = fetch, baseUrl = im
         }, isOrderReceipt, true)
       }
       return request('/v1/public/orders', {
-        idempotencyKey: body.idempotencyKey, items: body.items.map(({ variantId, quantity }) => ({ variantId, quantity })),
+        idempotencyKey: body.idempotencyKey, items: (body.items ?? []).map(({ variantId, quantity }) => ({ variantId, quantity })),
         contact: { name: body.contact.name, email: body.contact.email, phone: body.contact.phone },
         shipping: { address: body.shipping.address, city: body.shipping.city, province: body.shipping.province, notes: body.shipping.notes },
         paymentMethod: body.paymentMethod, couponCode: body.couponCode,

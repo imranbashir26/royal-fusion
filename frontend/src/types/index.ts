@@ -159,15 +159,50 @@ export interface Faq {
   answer: string
 }
 
-export interface CartItem {
-  identity?: 'legacy' | 'canonical' | 'corrupt'
+export interface BaseCartItem {
   lineId: string
+  quantity: number
+  identity?: 'legacy' | 'canonical' | 'corrupt'
+}
+
+export interface NormalVariantCartItem extends BaseCartItem {
+  kind?: 'normal_variant'
   productId: string
   /** Null for unresolved legacy or corrupted canonical identities. */
   variantId: string | null
   size: string
-  quantity: number
 }
+
+export interface FixedPackCartItem extends BaseCartItem {
+  kind: 'fixed_tester_pack'
+  productId: string
+  packId: string
+  definitionRevision: string
+  size?: string
+  name?: string
+  image?: string
+  variantId?: null
+}
+
+export interface ConfigurablePackSelection {
+  variantId: string
+  quantityPerPack: number
+  testerName?: string
+}
+
+export interface ConfigurablePackCartItem extends BaseCartItem {
+  kind: 'configurable_tester_pack'
+  productId: string
+  packId: string
+  definitionRevision: string
+  selections: ConfigurablePackSelection[]
+  size?: string
+  name?: string
+  image?: string
+  variantId?: null
+}
+
+export type CartItem = NormalVariantCartItem | FixedPackCartItem | ConfigurablePackCartItem
 
 /** Legacy HTTP contract, independent of canonical cart identity. */
 export interface OrderItem {
@@ -195,9 +230,16 @@ export interface OrderPayload {
 
 export type CheckoutPaymentMethod = 'Cash on Delivery' | 'Bank Transfer'
 export interface CanonicalOrderItemRequest { variantId: string; quantity: number }
+
+export type PurchaseLineV2Request =
+  | { kind: 'normal_variant'; variantId: string; quantity: number }
+  | { kind: 'fixed_tester_pack'; packId: string; definitionRevision: string; quantity: number }
+  | { kind: 'configurable_tester_pack'; packId: string; definitionRevision: string; quantity: number; selections: Array<{ variantId: string; quantityPerPack: number }> }
+
 export interface CanonicalOrderRequest {
   idempotencyKey: string
-  items: CanonicalOrderItemRequest[]
+  items?: CanonicalOrderItemRequest[]
+  lines?: PurchaseLineV2Request[]
   contact: { name: string; email: string; phone: string }
   shipping: { address: string; city: string; province: string; notes: string }
   paymentMethod: CheckoutPaymentMethod
@@ -206,7 +248,8 @@ export interface CanonicalOrderRequest {
   quoteFingerprint?: string
 }
 export interface CheckoutQuoteRequest {
-  items: CanonicalOrderItemRequest[]
+  items?: CanonicalOrderItemRequest[]
+  lines?: PurchaseLineV2Request[]
   shipping: { city: string; province: string }
   email: string
   couponCode: string
@@ -217,10 +260,41 @@ export interface CheckoutPricingOutcome {
  requestedCouponCode:string;appliedCouponId:string|null;appliedCouponCode:string|null;acceptedQuoteFingerprint:string
 }
 export interface QuotedV1Line {variantId:string;quantity:number;unitPrice:number;lineTotal:number;name?:string}
+export interface QuotedComponentV2 {
+  testerVariantId: string
+  testerProductId: string
+  testerName: string
+  sku: string
+  size: string
+  volumeMl: number
+  quantityPerPack: number
+  totalPhysicalQuantity: number
+  referenceUnitPrice: number
+  position: number
+}
+export interface QuotedV2Line {
+  kind: 'normal_variant' | 'fixed_tester_pack' | 'configurable_tester_pack'
+  variantId?: string
+  packId?: string
+  definitionRevision?: string
+  selections?: Array<{ variantId: string; quantityPerPack: number }>
+  identity?: unknown
+  identityHash?: string
+  productId?: string
+  name?: string
+  sku?: string
+  size?: string
+  definitionFingerprint?: string
+  quantity: number
+  unitPrice: number
+  lineTotal: number
+  position?: number
+  components?: QuotedComponentV2[]
+}
 export interface FrozenOrderLine {id:string;variantId?:string|null;quantity:number;unitPrice:number;lineTotal:number;name?:string}
 export interface CheckoutQuoteResponse {
   contractVersion?: number
-  lines?: (QuotedV1Line | ({ variantId?: string; quantity: number; unitPrice: number; lineTotal: number; name?: string } & Record<string, unknown>))[]
+  lines?: (QuotedV1Line | QuotedV2Line | ({ variantId?: string; quantity: number; unitPrice: number; lineTotal: number; name?: string } & Record<string, unknown>))[]
   pricingOutcome?: CheckoutPricingOutcome | null
   idempotencyKey?: string
   subtotal: number; discount: number; shippingFee: number; total: number
@@ -233,7 +307,7 @@ export interface CanonicalOrderReceipt {
   snapshotVersion?: number
   requestFingerprint?: string
   quoteFingerprint?: string
-  lines?: (FrozenOrderLine | ({ id: string; variantId?: string | null; quantity: number; unitPrice: number; lineTotal: number; name?: string } & Record<string, unknown>))[]
+  lines?: (FrozenOrderLine | QuotedV2Line | ({ id: string; variantId?: string | null; quantity: number; unitPrice: number; lineTotal: number; name?: string } & Record<string, unknown>))[]
   pricingOutcome?: CheckoutPricingOutcome | null
   id: string; idempotencyKey: string; orderNumber: string
   status: 'Pending' | 'Confirmed' | 'Processing' | 'Shipped' | 'Delivered' | 'Cancelled' | 'Returned' | 'Refunded'

@@ -37,8 +37,27 @@ export function CheckoutPage() {
   const [quoteReload, setQuoteReload] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const inFlight = useRef(false)
-  const signature = JSON.stringify({ items: enrichedItems.map((item) => ({ variantId: item.variantId, quantity: item.quantity })),
-    shipping: { city: form.city.trim(), province: form.province.trim() }, email: form.email.trim().toLowerCase(), couponCode: couponCode.trim().toUpperCase() })
+  const requestLines = enrichedItems.map((item) => {
+    if (item.kind === 'fixed_tester_pack') {
+      return { kind: 'fixed_tester_pack' as const, packId: item.packId, definitionRevision: item.definitionRevision, quantity: item.quantity }
+    }
+    if (item.kind === 'configurable_tester_pack') {
+      return {
+        kind: 'configurable_tester_pack' as const,
+        packId: item.packId,
+        definitionRevision: item.definitionRevision,
+        quantity: item.quantity,
+        selections: item.selections.map((s) => ({ variantId: s.variantId, quantityPerPack: s.quantityPerPack })),
+      }
+    }
+    return { kind: 'normal_variant' as const, variantId: item.variant?.id ?? item.variantId ?? '', quantity: item.quantity }
+  })
+  const signature = JSON.stringify({
+    lines: requestLines,
+    shipping: { city: form.city.trim(), province: form.province.trim() },
+    email: form.email.trim().toLowerCase(),
+    couponCode: couponCode.trim().toUpperCase(),
+  })
   const currentQuote = quote?.signature === signature ? quote.data : null
   const acceptanceKey = quoteAcceptanceKey(signature, currentQuote, paymentMethod)
   const confirmed = acceptanceKey !== null && acceptedQuote === acceptanceKey
@@ -105,12 +124,28 @@ export function CheckoutPage() {
       setOrderError('Please complete valid contact and shipping information.'); return
     }
     const request: Omit<CanonicalOrderRequest, 'idempotencyKey'> = {
-      items: enrichedItems.map((item) => ({ variantId: item.variant!.id, quantity: item.quantity })),
+      lines: requestLines,
       contact, shipping, paymentMethod, couponCode: couponCode.trim().toUpperCase(),
       quoteFingerprint: currentQuote!.quoteFingerprint!,
     }
     try {
-      freeze(request, capturePurchase(enrichedItems.map((item) => ({ lineId: item.lineId, variantId: item.variant!.id, quantity: item.quantity }))), currentQuote!.idempotencyKey)
+      const purchasedLines = enrichedItems.map((item) => {
+        if (item.kind === 'fixed_tester_pack') {
+          return { kind: 'fixed_tester_pack' as const, lineId: item.lineId, packId: item.packId, definitionRevision: item.definitionRevision, quantity: item.quantity }
+        }
+        if (item.kind === 'configurable_tester_pack') {
+          return {
+            kind: 'configurable_tester_pack' as const,
+            lineId: item.lineId,
+            packId: item.packId,
+            definitionRevision: item.definitionRevision,
+            selections: item.selections.map((s) => ({ variantId: s.variantId, quantityPerPack: s.quantityPerPack })),
+            quantity: item.quantity,
+          }
+        }
+        return { kind: 'normal_variant' as const, lineId: item.lineId, variantId: item.variant?.id ?? item.variantId ?? '', quantity: item.quantity }
+      })
+      freeze(request, capturePurchase(purchasedLines), currentQuote!.idempotencyKey)
       await submitFrozen()
     } catch { setOrderError('Your checkout attempt could not be saved. Your cart has been kept; no order was submitted.') }
   }
@@ -162,6 +197,11 @@ export function CheckoutPage() {
         <h2 className="font-serif text-3xl text-burgundy">Order Summary</h2>
         <div className="mt-5 space-y-4">{enrichedItems.map((item) => <div className="border-b border-champagne/20 pb-3" key={item.lineId}>
           <p className="font-semibold">{item.product.name}</p><p>{item.size} x {item.quantity}</p>
+          {item.kind === 'configurable_tester_pack' && item.selections && (
+            <p className="mt-1 text-xs text-brownroyal/70">
+              Included: {item.selections.map((s) => `${s.quantityPerPack}x ${s.testerName ?? s.variantId.slice(0, 8)}`).join(', ')}
+            </p>
+          )}
           {item.message && <p className="text-burgundy">{item.message}</p>}
           {!currentQuote?.lines && <p>{item.lineAmount === null ? 'Unavailable' : `Catalog estimate: ${formatCheckoutCurrency(item.lineAmount)}`}</p>}
           <button type="button" className="text-burgundy underline" aria-label={`Remove ${item.product.name}`} onClick={() => removeItems([item.lineId])}>Remove</button>

@@ -1,10 +1,10 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware'
-import type { CartItem, Product } from '../types/index.ts'
+import type { CartItem, ConfigurablePackCartItem, ConfigurablePackSelection, FixedPackCartItem, Product } from '../types/index.ts'
 import { validPurchasedLines, type PurchasedLine, type ConsumptionResult } from './checkoutAttempt.ts'
 import { isVariantEligible, isVariantId, resolveCartItem } from '../services/productVariants.ts'
-import { CART_VERSION, getCartLineId, reconcileCartState, restoreCartState, sameCartState, type PersistedCartState } from './cartPersistence.ts'
-export { getCartLineId } from './cartPersistence.ts'
+import { CART_VERSION, getCartLineId, getConfigurablePackLineId, getFixedPackLineId, reconcileCartState, restoreCartState, sameCartState, type PersistedCartState } from './cartPersistence.ts'
+export { getCartLineId, getConfigurablePackLineId, getFixedPackLineId } from './cartPersistence.ts'
 const cartKey = 'royal-fusion-cart'
 const completionKey = (attemptId: string) => `royal-fusion-consumption-v1:${attemptId}`
 const claimKey = (attemptId: string) => `${completionKey(attemptId)}:claim`
@@ -27,12 +27,21 @@ interface CartState extends PersistedCartState {
   openCart: () => void
   closeCart: () => void
   addItem: (product: Product, variantId: string, quantity?: number) => boolean
+  addFixedPack: (
+    pack: { id: string; definitionRevision: string; name?: string; image?: string; available?: boolean; availablePackCount?: number | null },
+    quantity?: number
+  ) => boolean
+  addConfigurablePack: (
+    pack: { id: string; definitionRevision: string; name?: string; image?: string; available?: boolean; minimumUnits?: number | null; maximumUnits?: number | null; allowedVariants?: any[] },
+    selections: Array<{ variantId: string; quantityPerPack: number; testerName?: string }>,
+    quantity?: number
+  ) => boolean
   removeItem: (lineId: string) => void
   removeItems: (lineIds: string[]) => void
   capturePurchase: (lines: Omit<PurchasedLine, 'entryId'>[]) => PurchasedLine[]
   consumePurchased: (attemptId: string, orderId: string, lines: PurchasedLine[]) => Promise<ConsumptionResult>
   syncFromStorage: () => void
-  updateQuantity: (lineId: string, quantity: number, products: Product[]) => boolean
+  updateQuantity: (lineId: string, quantity: number, products: Product[], testerPacks?: any[]) => boolean
   reconcile: (products: Product[]) => void
   toggleItemSelection: (lineId: string) => void
   setAllItemsSelected: (selected: boolean) => void
@@ -83,14 +92,18 @@ export function createCartStore(storage?: StateStorage) {
       sync()
       const state = get()
       const purchased = lines.map((line) => {
-        const item = state.items.find((item) => item.lineId === line.lineId && item.variantId === line.variantId && item.identity === 'canonical')
+        const item = state.items.find((item) => {
+          if (item.lineId !== line.lineId || item.identity !== 'canonical') return false
+          if (item.kind === 'fixed_tester_pack' || item.kind === 'configurable_tester_pack') return true
+          return item.variantId === (line as any).variantId
+        })
         if (!item || item.quantity !== line.quantity) throw new Error('Your cart changed. Review it before ordering.')
         return { ...line, entryId: state.lineInstances[line.lineId] }
       })
       if (!validPurchasedLines(purchased) || !disk()) throw new Error('Your cart could not be saved.')
       // Persist instance identities before persisting or sending the frozen request.
       set({ lineInstances: state.lineInstances })
-      return purchased
+      return purchased as PurchasedLine[]
     },
     consumePurchased: async (attemptId, orderId, lines) => {
       if (!isVariantId(attemptId) || !isVariantId(orderId) || !validPurchasedLines(lines)) throw new Error('Invalid purchased snapshot.')
@@ -112,7 +125,7 @@ export function createCartStore(storage?: StateStorage) {
         // Missing metadata (for example an older client write) is never proof of an old entry.
         const matching = lines.filter((line) => persisted?.state?.lineInstances?.[line.lineId] === line.entryId
           && state.lineInstances[line.lineId] === line.entryId
-          && state.items.some((item) => item.lineId === line.lineId && item.variantId === line.variantId))
+          && state.items.some((item) => item.lineId === line.lineId && (item.kind === 'fixed_tester_pack' || item.kind === 'configurable_tester_pack' || item.variantId === (line as any).variantId)))
         const result = matching.length ? 'consumed' : 'cart-replaced'
         // Per-attempt records are never pruned or overwritten by ordinary cart updates.
         const claimed = target.setItem(claimKey(attemptId), record)
@@ -148,14 +161,88 @@ export function createCartStore(storage?: StateStorage) {
       })
       return true
     },
+    addFixedPack: (pack, quantity = 1) => {
+      sync()
+      if (!isVariantId(pack?.id) || typeof pack?.definitionRevision !== 'string'
+        || !/^[1-9][0-9]{0,18}$/.test(pack.definitionRevision)
+        || !Number.isInteger(quantity) || quantity < 1 || quantity > 99
+        || pack.available === false) return false
+      const lineId = getFixedPackLineId(pack.id, pack.definitionRevision)
+      const existing = get().items.find((item) => item.lineId === lineId)
+      const total = (existing?.quantity ?? 0) + quantity
+      if (total > 99 || (typeof pack.availablePackCount === 'number' && total > pack.availablePackCount)) return false
+      const item: FixedPackCartItem = {
+        kind: 'fixed_tester_pack',
+        lineId,
+        productId: pack.id,
+        packId: pack.id.toLowerCase(),
+        definitionRevision: String(pack.definitionRevision),
+        name: pack.name,
+        image: pack.image,
+        size: 'Tester pack',
+        quantity: total,
+        identity: 'canonical',
+      }
+      const items = existing ? get().items.map((current) => current.lineId === lineId ? item : current) : [...get().items, item]
+      set({ isCartOpen: true, items, lineInstances: instances(items, get().lineInstances), lineAppliedUnits: appliedFor(items, get()),
+        selectedLineIds: [...new Set([...get().selectedLineIds, lineId])],
+      })
+      return true
+    },
+    addConfigurablePack: (pack, selections, quantity = 1) => {
+      sync()
+      if (!isVariantId(pack?.id) || typeof pack?.definitionRevision !== 'string'
+        || !/^[1-9][0-9]{0,18}$/.test(pack.definitionRevision)
+        || !Number.isInteger(quantity) || quantity < 1 || quantity > 99
+        || pack.available === false || !Array.isArray(selections) || !selections.length || selections.length > 100) return false
+      for (const s of selections) {
+        if (!isVariantId(s?.variantId) || !Number.isInteger(s?.quantityPerPack) || s.quantityPerPack < 1) return false
+      }
+      const totalUnits = selections.reduce((sum, s) => sum + s.quantityPerPack, 0)
+      if (pack.minimumUnits != null && totalUnits < pack.minimumUnits) return false
+      if (pack.maximumUnits != null && totalUnits > pack.maximumUnits) return false
+      if (Array.isArray(pack.allowedVariants) && pack.allowedVariants.length > 0) {
+        for (const s of selections) {
+          const allowed = pack.allowedVariants.find((v: any) => v.testerVariantId === s.variantId)
+          if (!allowed || allowed.active === false || (typeof allowed.stockQuantity === 'number' && allowed.stockQuantity < s.quantityPerPack * quantity)) return false
+        }
+      }
+      const validSelections: ConfigurablePackSelection[] = selections.map((s) => ({
+        variantId: s.variantId.toLowerCase(),
+        quantityPerPack: s.quantityPerPack,
+        ...(s.testerName ? { testerName: s.testerName } : {}),
+      }))
+      const lineId = getConfigurablePackLineId(pack.id, pack.definitionRevision, validSelections)
+      const existing = get().items.find((item) => item.lineId === lineId)
+      const total = (existing?.quantity ?? 0) + quantity
+      if (total > 99) return false
+      const item: ConfigurablePackCartItem = {
+        kind: 'configurable_tester_pack',
+        lineId,
+        productId: pack.id,
+        packId: pack.id.toLowerCase(),
+        definitionRevision: String(pack.definitionRevision),
+        selections: validSelections,
+        name: pack.name,
+        image: pack.image,
+        size: 'Custom tester pack',
+        quantity: total,
+        identity: 'canonical',
+      }
+      const items = existing ? get().items.map((current) => current.lineId === lineId ? item : current) : [...get().items, item]
+      set({ isCartOpen: true, items, lineInstances: instances(items, get().lineInstances), lineAppliedUnits: appliedFor(items, get()),
+        selectedLineIds: [...new Set([...get().selectedLineIds, lineId])],
+      })
+      return true
+    },
     removeItem: (lineId) => get().removeItems([lineId]),
     removeItems: (lineIds) => {
       sync(); const removed = new Set(lineIds), state = get(), items = state.items.filter((item) => !removed.has(item.lineId))
       set({ items, lineInstances: instances(items, state.lineInstances), lineAppliedUnits: appliedFor(items, state), selectedLineIds: state.selectedLineIds.filter((id) => !removed.has(id)) })
     },
-    updateQuantity: (lineId, quantity, products) => {
+    updateQuantity: (lineId, quantity, products, testerPacks) => {
       sync(); const item = get().items.find((candidate) => candidate.lineId === lineId)
-      if (!item || !resolveCartItem({ ...item, quantity }, products).eligible) return false
+      if (!item || !resolveCartItem({ ...item, quantity }, products, testerPacks).eligible) return false
       set((state) => ({ items: state.items.map((current) => current.lineId === lineId ? { ...current, quantity } : current) }))
       return true
     },

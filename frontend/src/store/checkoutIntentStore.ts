@@ -3,7 +3,7 @@ import type { CanonicalOrderReceipt, CanonicalOrderRequest } from '../types/inde
 import { isOrderReceipt } from '../services/checkoutClient.ts'
 import { isVariantId } from '../services/productVariants.ts'
 import { useCartStore } from './cartStore.ts'
-import { aggregateRequestItems, validIntent, type CheckoutIntent, type PurchasedLine, type ConsumptionResult } from './checkoutAttempt.ts'
+import { aggregateRequestItems, aggregateRequestLines, validIntent, type CheckoutIntent, type PurchasedLine, type ConsumptionResult } from './checkoutAttempt.ts'
 export type { CheckoutIntent, PurchasedLine } from './checkoutAttempt.ts'
 interface Completion { intent: CheckoutIntent; receipt: CanonicalOrderReceipt; consumption: Exclude<ConsumptionResult, 'recovery-required'> }
 interface Recovery { attemptId: string | null; reason: string }
@@ -92,10 +92,13 @@ export function createCheckoutIntentStore(storage?: Storage, uuid = () => crypto
       if (get().recovery) throw new Error('The saved checkout attempt requires explicit recovery.')
       if (get().intent) return get().intent!
       if (issuedToken !== undefined && !isVariantId(issuedToken)) throw new Error('Invalid issued checkout token.')
-      const grouped = aggregateRequestItems(request.items)
-      if (!grouped) throw new Error('Invalid checkout items.')
+      const hasLines = Array.isArray(request.lines)
+      const groupedLines = hasLines ? aggregateRequestLines(request.lines) : null
+      const groupedItems = !hasLines ? aggregateRequestItems(request.items) : null
+      if (!groupedLines && !groupedItems) throw new Error('Invalid checkout items.')
       const intent = JSON.parse(JSON.stringify({ request: { ...request,
-        items: [...grouped].sort(([a], [b]) => a.localeCompare(b)).map(([variantId, quantity]) => ({ variantId, quantity })), idempotencyKey: issuedToken ?? uuid() }, lines })) as CheckoutIntent
+        ...(hasLines ? { lines: request.lines } : { items: [...groupedItems!].sort(([a], [b]) => a.localeCompare(b)).map(([variantId, quantity]) => ({ variantId, quantity })) }),
+        idempotencyKey: issuedToken ?? uuid() }, lines })) as CheckoutIntent
       if (!validIntent(intent)) throw new Error('Invalid checkout intent.')
       const frozen = immutable(intent)
       write({ intent: frozen, completion: get().completion, pendingReceipt: null, recovery: null })
