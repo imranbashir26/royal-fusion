@@ -183,8 +183,10 @@ test('AccountModal My Orders tab, order cards, receipt modal and tab switching',
   await modal.getByText('Shipped').waitFor()
   await modal.getByText('TCS Logistics: TCS-987654321').waitFor()
 
-  // Click View Receipt & Items
-  await modal.getByRole('button', { name: 'View Receipt & Items', exact: true }).click()
+  const viewReceiptBtn = modal.getByRole('button', { name: 'View Receipt & Items', exact: true })
+
+  // Cycle 1: Click View Receipt & Items and close with Escape
+  await viewReceiptBtn.click()
 
   // Verify Receipt Modal opened
   const receiptModal = page.getByRole('dialog', { name: 'Order Receipt' })
@@ -197,9 +199,65 @@ test('AccountModal My Orders tab, order cards, receipt modal and tab switching',
   await receiptModal.getByText('House 42, Luxury Boulevard').waitFor()
   await receiptModal.getByText('Call before delivery').waitFor()
 
-  // Close Receipt Modal
-  await receiptModal.getByRole('button', { name: 'Close order details' }).click()
+  // Verify initial focus is placed inside the dialog on the close button
+  const closeBtn = receiptModal.getByRole('button', { name: 'Close order details' })
+  await closeBtn.waitFor()
+  await page.waitForFunction(() => {
+    const active = document.activeElement
+    return active && (active.getAttribute('aria-label') === 'Close order details' || active.getAttribute('role') === 'dialog')
+  })
+
+  // Press Escape to close receipt modal
+  await page.keyboard.press('Escape')
   await receiptModal.waitFor({ state: 'detached' })
+
+  // Verify parent AccountModal remained open
+  assert.ok(await modal.isVisible(), 'Parent AccountModal must not close on Escape')
+
+  // Verify focus returned to View Receipt & Items button
+  await page.waitForFunction(() => {
+    return document.activeElement?.textContent?.includes('View Receipt & Items')
+  })
+  assert.ok(await viewReceiptBtn.evaluate(el => document.activeElement === el), 'Focus must return to View Receipt button')
+
+  // Cycle 2: Reopen and close with visible close button
+  await viewReceiptBtn.click()
+  await receiptModal.waitFor()
+  await closeBtn.waitFor()
+
+  // Close with visible close button
+  await closeBtn.click()
+  await receiptModal.waitFor({ state: 'detached' })
+  assert.ok(await modal.isVisible(), 'Parent AccountModal must not close on visible close button')
+  await page.waitForFunction(() => {
+    return document.activeElement?.textContent?.includes('View Receipt & Items')
+  })
+  assert.ok(await viewReceiptBtn.evaluate(el => document.activeElement === el), 'Focus must return after close button click')
+
+  // Cycle 3: Reopen after Escape, test focus trap with Tab key, then close with Escape
+  await viewReceiptBtn.click()
+  await receiptModal.waitFor()
+  await closeBtn.waitFor()
+
+  // Tab key focus trap
+  await page.keyboard.press('Tab')
+  assert.ok(await closeBtn.evaluate(el => document.activeElement === el), 'Focus must be trapped on close button')
+  await page.keyboard.press('Shift+Tab')
+  assert.ok(await closeBtn.evaluate(el => document.activeElement === el), 'Shift+Tab must keep focus within dialog')
+
+  // Close with Escape again
+  await page.keyboard.press('Escape')
+  await receiptModal.waitFor({ state: 'detached' })
+  assert.ok(await modal.isVisible(), 'Parent AccountModal remains open')
+
+  // Cycle 4: Mobile viewport check (375x667)
+  await page.setViewportSize({ width: 375, height: 667 })
+  await viewReceiptBtn.click()
+  await receiptModal.waitFor()
+  await page.keyboard.press('Escape')
+  await receiptModal.waitFor({ state: 'detached' })
+  assert.ok(await modal.isVisible(), 'Parent AccountModal remains open on mobile')
+  await page.setViewportSize({ width: 1280, height: 800 })
 
   // Switch back to Profile tab
   await modal.getByRole('button', { name: 'Profile', exact: true }).click()

@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { AlertCircle, CheckCircle2, Clock, Package, Truck, X } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { customerOrdersClient, type CustomerOrderDetail } from '../../services/customerOrdersClient'
 import { formatCheckoutCurrency } from '../../utils/checkoutMoney'
 import { cn } from '../../utils/cn'
@@ -19,6 +19,9 @@ export function CustomerOrderDetailModal({
   const [order, setOrder] = useState<CustomerOrderDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const triggerRef = useRef<HTMLElement | null>(null)
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
+  const dialogRef = useRef<HTMLDivElement | null>(null)
 
   const loadOrder = useCallback(async () => {
     if (!orderId) return
@@ -44,6 +47,74 @@ export function CustomerOrderDetailModal({
     }
   }, [isOpen, orderId, loadOrder])
 
+  useEffect(() => {
+    if (!isOpen) return
+
+    // Capture the trigger element that initiated the dialog opening
+    triggerRef.current = document.activeElement as HTMLElement | null
+
+    // Place initial focus on the close button for immediate keyboard accessibility
+    const frameId = requestAnimationFrame(() => {
+      closeButtonRef.current?.focus()
+    })
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        onClose()
+        return
+      }
+
+      // Focus containment within active modal dialog
+      if (event.key === 'Tab' && dialogRef.current) {
+        const focusable = Array.from(
+          dialogRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
+        ).filter((el) => el.offsetParent !== null || el.offsetWidth > 0 || el.offsetHeight > 0)
+
+        if (focusable.length === 0) {
+          event.preventDefault()
+          return
+        }
+
+        const firstElement = focusable[0]
+        const lastElement = focusable[focusable.length - 1]
+
+        if (event.shiftKey) {
+          if (document.activeElement === firstElement || document.activeElement === dialogRef.current) {
+            event.preventDefault()
+            lastElement.focus()
+          }
+        } else {
+          if (document.activeElement === lastElement) {
+            event.preventDefault()
+            firstElement.focus()
+          }
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      cancelAnimationFrame(frameId)
+      window.removeEventListener('keydown', handleKeyDown)
+      // Return focus to the trigger control or accessible fallback
+      if (triggerRef.current && document.contains(triggerRef.current)) {
+        triggerRef.current.focus()
+      } else {
+        const fallback = document.querySelector<HTMLElement>(
+          'aside[aria-label="Customer account"] [role="tab"][aria-selected="true"], aside[aria-label="Customer account"] button'
+        )
+        if (fallback && document.contains(fallback)) {
+          fallback.focus()
+        }
+      }
+    }
+  }, [isOpen, onClose])
+
   if (!isOpen) return null
 
   return (
@@ -57,9 +128,11 @@ export function CustomerOrderDetailModal({
         role="presentation"
       >
         <motion.div
+          ref={dialogRef}
           aria-label="Order Receipt"
           aria-modal="true"
-          className="relative flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-champagne/40 bg-ivory shadow-2xl"
+          tabIndex={-1}
+          className="relative flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-champagne/40 bg-ivory shadow-2xl outline-none"
           initial={{ scale: 0.95, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.95, opacity: 0 }}
@@ -86,6 +159,7 @@ export function CustomerOrderDetailModal({
               )}
             </div>
             <button
+              ref={closeButtonRef}
               aria-label="Close order details"
               className="grid h-9 w-9 place-items-center rounded-full border border-champagne/40 text-brownroyal transition hover:bg-champagne/20"
               onClick={onClose}
