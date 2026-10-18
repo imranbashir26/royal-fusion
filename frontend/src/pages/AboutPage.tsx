@@ -20,7 +20,7 @@ const values = [
   },
   {
     title: 'Customer Assurance',
-    text: '7-day returns on eligible purchases and clear support for your order.',
+    text: '15-day returns and exchanges on eligible purchases and clear support for your order.',
     icon: ShieldCheck,
   },
 ]

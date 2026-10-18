@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { LogOut, Mail, Phone, User, X } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Button } from '../common/Button'
 import { CustomerOrderHistory } from './CustomerOrderHistory'
 import { useCustomerAuthStore, type CustomerProfileUpdate } from '../../store/customerAuthStore'
@@ -292,6 +293,18 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
                     <Button className="w-full" disabled={isSaving} type="submit">
                       {isSaving ? 'Please wait...' : mode === 'signin' ? 'Sign In' : 'Create Account'}
                     </Button>
+                    {mode === 'signup' && (
+                      <p className="mt-3 text-center text-xs text-brownroyal/70 leading-relaxed">
+                        By creating an account, you agree to our{' '}
+                        <Link to="/terms-and-conditions" onClick={onClose} className="underline hover:text-burgundy">
+                          Terms and Conditions
+                        </Link>{' '}
+                        and{' '}
+                        <Link to="/privacy-policy" onClick={onClose} className="underline hover:text-burgundy">
+                          Privacy Policy
+                        </Link>.
+                      </p>
+                    )}
                   </form>
                 </>
               )}

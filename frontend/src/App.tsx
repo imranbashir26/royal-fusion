@@ -28,6 +28,10 @@ const ProductDetailsPage = lazy(() => import('./pages/ProductDetailsPage').then(
 const ShopPage = lazy(() => import('./pages/ShopPage').then((module) => ({ default: module.ShopPage })))
 const TesterPackDetailsPage = lazy(() => import('./pages/TesterPackDetailsPage').then((module) => ({ default: module.TesterPackDetailsPage })))
 const WishlistPage = lazy(() => import('./pages/WishlistPage').then((module) => ({ default: module.WishlistPage })))
+const PrivacyPolicyPage = lazy(() => import('./pages/PrivacyPolicyPage').then((module) => ({ default: module.PrivacyPolicyPage })))
+const TermsPage = lazy(() => import('./pages/TermsPage').then((module) => ({ default: module.TermsPage })))
+const ShippingPolicyPage = lazy(() => import('./pages/ShippingPolicyPage').then((module) => ({ default: module.ShippingPolicyPage })))
+const ReturnsRefundsPage = lazy(() => import('./pages/ReturnsRefundsPage').then((module) => ({ default: module.ReturnsRefundsPage })))
 
 function App({ blogIntegration }: { blogIntegration?: BlogIntegration } = {}) {
   return (
@@ -140,6 +144,13 @@ function AnimatedRoutes() {
         <Route path="/checkout" element={publicPage(CheckoutPage)} />
         <Route path="/checkout/success" element={publicPage(CheckoutSuccessPage)} />
         <Route path="/wishlist" element={publicPage(WishlistPage)} />
+        <Route path="/privacy-policy" element={publicPage(PrivacyPolicyPage)} />
+        <Route path="/terms-and-conditions" element={publicPage(TermsPage)} />
+        <Route path="/terms" element={<Navigate replace to="/terms-and-conditions" />} />
+        <Route path="/terms-of-service" element={<Navigate replace to="/terms-and-conditions" />} />
+        <Route path="/shipping-policy" element={publicPage(ShippingPolicyPage)} />
+        <Route path="/returns-refunds" element={publicPage(ReturnsRefundsPage)} />
+        <Route path="/return-policy" element={<Navigate replace to="/returns-refunds" />} />
         <Route path="*" element={publicPage(NotFoundPage)} />
       </Routes>
     </AnimatePresence>

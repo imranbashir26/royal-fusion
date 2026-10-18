@@ -31,6 +31,10 @@ const footerGroups = [
     links: [
       { label: 'Contact Us', to: '/contact' },
       { label: 'About & FAQs', to: '/about' },
+      { label: 'Shipping Policy', to: '/shipping-policy' },
+      { label: 'Returns & Exchanges', to: '/returns-refunds' },
+      { label: 'Privacy Policy', to: '/privacy-policy' },
+      { label: 'Terms & Conditions', to: '/terms-and-conditions' },
     ],
   },
 ]

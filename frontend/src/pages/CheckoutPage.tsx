@@ -191,6 +191,17 @@ export function CheckoutPage() {
         {quoteNotice && <p role="status" className="text-burgundy">{quoteNotice}</p>}
         {orderError && <p role="alert" className="text-burgundy">{orderError}</p>}
         <label className="flex items-start gap-3"><input type="checkbox" checked={confirmed} disabled={checkoutBlocked || isSubmitting} onChange={event => setAcceptedQuote(event.target.checked ? acceptanceKey : null)} /><span>I confirm the quoted total of {currentQuote ? formatCheckoutCurrency(currentQuote.total) : 'the current checkout quote'}.</span></label>
+        <p className="text-xs text-brownroyal/75 leading-relaxed">
+          By placing your order, you agree to our{' '}
+          <Link to="/terms-and-conditions" target="_blank" rel="noopener noreferrer" className="underline hover:text-burgundy">Terms and Conditions</Link>
+          {', '}
+          <Link to="/privacy-policy" target="_blank" rel="noopener noreferrer" className="underline hover:text-burgundy">Privacy Policy</Link>
+          {', and acknowledge our '}
+          <Link to="/shipping-policy" target="_blank" rel="noopener noreferrer" className="underline hover:text-burgundy">Shipping</Link>
+          {' and '}
+          <Link to="/returns-refunds" target="_blank" rel="noopener noreferrer" className="underline hover:text-burgundy">Returns &amp; Exchanges</Link>
+          {' policies.'}
+        </p>
         <Button disabled={checkoutBlocked || !confirmed || isSubmitting || activePaymentMethods.length === 0} size="lg" type="submit"><PackageCheck className="h-5 w-5" aria-hidden="true" />{isSubmitting ? 'Placing Order...' : 'Place Order'}</Button>
       </form>
       <aside className="h-fit rounded-lg border border-champagne/25 bg-ivory/90 p-6 lg:sticky lg:top-24">

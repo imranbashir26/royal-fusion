@@ -3,7 +3,25 @@ import type { BlogRouteState } from '../blog/PublicBlogProvider'
 import { blogImageUrl } from './blogImages'
 import { isPublicBlogSlug, publicBlogSearchInput, validatePublicBlogConfiguration, type PublicBlogConfiguration } from './publicBlogsApi'
 
-export const staticSeoPaths = ['/', '/shop', '/collections', '/attars', '/about', '/contact']
+export const staticSeoPaths = ['/', '/shop', '/collections', '/attars', '/about', '/contact', '/privacy-policy', '/terms-and-conditions', '/shipping-policy', '/returns-refunds']
+const defaultPolicySeo: Record<string, { title: string; description: string }> = {
+  '/privacy-policy': {
+    title: 'Privacy Policy | Royal Fusion',
+    description: 'Learn how Royal Fusion protects customer personal information, order data, and privacy in Pakistan.',
+  },
+  '/terms-and-conditions': {
+    title: 'Terms and Conditions | Royal Fusion',
+    description: 'Read the official terms and conditions for ordering luxury perfumes and attars from Royal Fusion.',
+  },
+  '/shipping-policy': {
+    title: 'Shipping & Delivery Policy | Royal Fusion',
+    description: 'Nationwide delivery across Pakistan, flat PKR 200 standard shipping, and free delivery on orders strictly over PKR 5,000.',
+  },
+  '/returns-refunds': {
+    title: 'Returns, Refunds & Exchanges | Royal Fusion',
+    description: 'Royal Fusion 15-day return and exchange policy for eligible fragrances with 97–98% perfume remaining.',
+  },
+}
 function https(value: unknown) {
   if (typeof value !== 'string') return ''
   try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password && !/[<>\s]/.test(value) ? url.href : '' } catch { return '' }
@@ -24,9 +42,10 @@ export function resolveStorefrontSeo(path: string, search: string, data: Pick<St
   const collection = path === '/shop' && collectionSlug ? data.collections?.find(row => row.slug.replace(/^royal-collection$/, 'royal-fusion-originals') === collectionSlug) : undefined
   const category = path === '/shop' && params.get('category') ? data.categories.find(row => row.name === params.get('category') || row.slug === params.get('category')) : undefined
   const domain = product ?? blog ?? collection ?? category
+  const policyMeta = defaultPolicySeo[path]
   // Editorial fields come exclusively from Sanity's existing document projection.
-  const title = domain?.seoTitle || String(base?.seoTitle || 'Royal Fusion | Luxury Perfumes in Pakistan')
-  const description = domain?.seoDescription || String(base?.metaDescription || '')
+  const title = domain?.seoTitle || policyMeta?.title || String(exact?.seoTitle || base?.seoTitle || 'Royal Fusion | Luxury Perfumes in Pakistan')
+  const description = domain?.seoDescription || policyMeta?.description || String(exact?.metaDescription || base?.metaDescription || '')
   const configured = https(exact?.canonicalUrl)
   const fallbackCanonical = new URL(origin)
   fallbackCanonical.pathname = path; fallbackCanonical.search = ''; fallbackCanonical.hash = ''
