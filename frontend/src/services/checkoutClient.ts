@@ -1,6 +1,7 @@
 import type { CanonicalOrderReceipt, CanonicalOrderRequest, CheckoutQuoteRequest, CheckoutQuoteResponse } from '../types/index.ts'
 import { isVariantId } from './productVariants.ts'
 import { validPricingEvidence } from './checkoutPricing.ts'
+import { matchesV2Checkout } from './checkoutV2Validation.ts'
 
 export class CheckoutClientError extends Error {
   code: string
@@ -37,7 +38,15 @@ export function isCheckedQuote(value: unknown): value is CheckoutQuoteResponse &
   return isQuote(value) && typeof value.quoteFingerprint === 'string' && /^[0-9a-f]{64}$/.test(value.quoteFingerprint)
     && (value.contractVersion === 2 || isVariantId(value.idempotencyKey))
 }
-export function createCheckoutClient(fetcher: typeof fetch = fetch, baseUrl = import.meta.env?.VITE_API_URL || '/api', version: 'v1' | 'v2' = 'v1') {
+function canonicalLines(body: CheckoutQuoteRequest | CanonicalOrderRequest) {
+  return (body.lines ?? (body.items ?? []).map(item => ({ kind: 'normal_variant' as const, variantId: item.variantId, quantity: item.quantity }))).map(line => {
+    if (line.kind === 'fixed_tester_pack') return { kind: line.kind, packId: line.packId, definitionRevision: line.definitionRevision, quantity: line.quantity }
+    if (line.kind === 'configurable_tester_pack') return { kind: line.kind, packId: line.packId, definitionRevision: line.definitionRevision, quantity: line.quantity,
+      selections: line.selections.map(s => ({ variantId: s.variantId, quantityPerPack: s.quantityPerPack })) }
+    return { kind: 'normal_variant' as const, variantId: line.variantId, quantity: line.quantity }
+  })
+}
+export function createCheckoutClient(fetcher: typeof fetch = fetch, baseUrl = import.meta.env?.VITE_API_URL || '/api', version: 'v1' | 'v2' | 'auto' = 'v1') {
   async function request<T>(path: string, body: unknown, validate: (value: unknown) => value is T, order: boolean): Promise<T> {
     try {
       const sessionResponse = await fetcher(`${baseUrl}/v1/auth/session`, { credentials: 'include' })
@@ -52,22 +61,24 @@ export function createCheckoutClient(fetcher: typeof fetch = fetch, baseUrl = im
       return envelope.data
     } catch (error) {
       if (error instanceof CheckoutClientError) throw error
-      throw new CheckoutClientError('NETWORK_ERROR', 'We could not confirm the result. Your cart has been saved; retry the same attempt.', 0, order)
+      throw new CheckoutClientError('NETWORK_ERROR', order
+        ? 'We could not confirm the result. Your cart has been saved; retry the same attempt.'
+        : 'Unable to load checkout prices. Check your connection and retry. Your cart has been saved.', 0, order)
     }
   }
   return {
     quote: (body: CheckoutQuoteRequest) => {
-      if (version === 'v2') {
-        const lines = body.lines ?? (body.items ?? []).map((item: any) =>
-          item.kind ? item : { kind: 'normal_variant' as const, variantId: item.variantId, quantity: item.quantity }
-        )
+      const hasPacks = body.lines?.some(line => line.kind !== 'normal_variant')
+      if (version === 'v1' && body.lines) throw new CheckoutClientError('INVALID_CHECKOUT_REQUEST', 'Tester pack checkout requires the V2 contract.')
+      if (version === 'v2' || version === 'auto' && body.lines) {
+        const lines = canonicalLines(body)
         return request('/v2/public/checkout/quote', {
           contractVersion: 2,
           lines,
           shipping: { city: body.shipping.city, province: body.shipping.province },
           email: body.email,
           couponCode: body.couponCode,
-        }, isQuote, false)
+        }, (value): value is CheckoutQuoteResponse => isQuote(value) && (!hasPacks || matchesV2Checkout(value, lines)), false)
       }
       return request('/v1/public/checkout/quote', {
         items: (body.items ?? []).map(({ variantId, quantity }) => ({ variantId, quantity })),
@@ -75,10 +86,11 @@ export function createCheckoutClient(fetcher: typeof fetch = fetch, baseUrl = im
       }, isQuote, false)
     },
     createOrder: (body: CanonicalOrderRequest) => {
-      if (version === 'v2') {
-        const lines = body.lines ?? (body.items ?? []).map((item: any) =>
-          item.kind ? item : { kind: 'normal_variant' as const, variantId: item.variantId, quantity: item.quantity }
-        )
+      const hasPacks = body.lines?.some(line => line.kind !== 'normal_variant')
+      if (version === 'v1' && body.lines) throw new CheckoutClientError('INVALID_CHECKOUT_REQUEST', 'Tester pack checkout requires the V2 contract.')
+      if (hasPacks && !/^[0-9a-f]{64}$/.test(body.quoteFingerprint ?? '')) throw new CheckoutClientError('INVALID_CHECKOUT_REQUEST', 'Review the current pack quote before ordering.')
+      if (version === 'v2' || version === 'auto' && body.lines) {
+        const lines = canonicalLines(body)
         return request('/v2/public/orders', {
           contractVersion: 2,
           idempotencyKey: body.idempotencyKey,
@@ -88,7 +100,9 @@ export function createCheckoutClient(fetcher: typeof fetch = fetch, baseUrl = im
           paymentMethod: body.paymentMethod,
           couponCode: body.couponCode,
           ...(body.quoteFingerprint !== undefined ? { quoteFingerprint: body.quoteFingerprint } : {}),
-        }, isOrderReceipt, true)
+        }, (value): value is CanonicalOrderReceipt => isOrderReceipt(value)
+          && value.idempotencyKey === body.idempotencyKey && value.paymentMethod === body.paymentMethod
+          && (!hasPacks || matchesV2Checkout(value, lines, body.quoteFingerprint)), true)
       }
       return request('/v1/public/orders', {
         idempotencyKey: body.idempotencyKey, items: (body.items ?? []).map(({ variantId, quantity }) => ({ variantId, quantity })),
@@ -100,4 +114,5 @@ export function createCheckoutClient(fetcher: typeof fetch = fetch, baseUrl = im
     },
   }
 }
-export const checkoutClient = createCheckoutClient(fetch, import.meta.env?.VITE_API_URL || '/api', 'v2')
+// Frozen requests retain their transport: historical items use V1, typed lines use V2.
+export const checkoutClient = createCheckoutClient(fetch, import.meta.env?.VITE_API_URL || '/api', 'auto')

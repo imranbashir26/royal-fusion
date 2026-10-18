@@ -1,3 +1,4 @@
+import { useCartTesterPacks } from '../storefront/useCartTesterPacks'
 import { resolveCartItem } from '../services/productVariants'
 import {ProductPrice} from '../components/products/ProductPrice'
 import { ShoppingBag, Trash2 } from 'lucide-react'
@@ -22,9 +23,11 @@ export function CartPage() {
     toggleItemSelection,
     updateQuantity,
   } = useCartStore()
+  const { testerPacks, packsLoading, packsError, refreshPacks } = useCartTesterPacks(items)
+  const hasPacks = items.some(item => item.kind === 'fixed_tester_pack' || item.kind === 'configurable_tester_pack')
   const selectedLineIdSet = new Set(selectedLineIds)
   const enrichedItems = items
-    .map((item) => resolveCartItem(item, products))
+    .map((item) => resolveCartItem(item, products, testerPacks))
 
   const selectedItems = enrichedItems.filter((item) => selectedLineIdSet.has(item.lineId) && item.eligible)
   const invalidSelection = enrichedItems.some((item) => selectedLineIdSet.has(item.lineId) && !item.eligible)
@@ -101,7 +104,7 @@ export function CartPage() {
                     <ProductBottle compact className="h-32 w-full" name={item.product.name} tone={item.product.image} />
                   </div>
                   <div>
-                    <Link to={item.product.slug ? `/product/${item.product.slug}` : '/shop'}>
+                    <Link to={item.kind === 'fixed_tester_pack' || item.kind === 'configurable_tester_pack' ? `/discovery-packs/${item.packId}` : item.product.slug ? `/product/${item.product.slug}` : '/shop'}>
                       <h2 className="font-serif text-3xl font-semibold text-burgundy">{item.product.name}</h2>
                     </Link>
                     <p className="mt-1 text-sm text-brownroyal/60">{item.size}</p>
@@ -112,13 +115,13 @@ export function CartPage() {
                       </p>
                     )}
                     {item.message && <p className="mt-2 text-sm text-burgundy" role="status">{item.message}</p>}
-                    <p className="mt-3 font-bold text-brownroyal">{item.lineAmount === null ? 'Unavailable' : (item.kind ? formatCurrency(item.unitPrice) : <ProductPrice product={products.find(p => p.id === item.productId)!} variant={item.variant} />)}</p>
+                    <p className="mt-3 font-bold text-brownroyal">{item.lineAmount === null ? (item.eligible ? 'Quoted at checkout' : 'Unavailable') : (item.kind ? formatCurrency(item.unitPrice) : <ProductPrice product={products.find(p => p.id === item.productId)!} variant={item.variant} />)}</p>
                   </div>
                   <div className="flex items-center justify-between gap-4 md:flex-col md:items-end">
                     <QuantityStepper
-                      disabled={!item.eligible}
-                      max={item.variant ? Math.min(99, item.variant.stockQuantity) : 99}
-                      onChange={(value) => updateQuantity(item.lineId, value, products)}
+                      disabled={item.kind === 'fixed_tester_pack' || item.kind === 'configurable_tester_pack' ? item.maxQuantity < 1 : !item.eligible}
+                      max={item.maxQuantity}
+                      onChange={(value) => updateQuantity(item.lineId, value, products, testerPacks)}
                       value={item.quantity}
                     />
                     <button
@@ -149,8 +152,8 @@ export function CartPage() {
               <span>{selectedQuantity}</span>
             </div>
             <div className="flex justify-between">
-              <span>Subtotal</span>
-              <span>{formatCurrency(subtotal)}</span>
+              <span>{hasPacks ? 'Catalog estimate' : 'Subtotal'}</span>
+              <span>{selectedItems.some(item => item.lineAmount === null) ? 'Quoted at checkout' : formatCurrency(subtotal)}</span>
             </div>
             <div className="flex justify-between">
               <span>Shipping</span>
@@ -158,9 +161,10 @@ export function CartPage() {
             </div>
           </div>
           <div className="mt-5 flex items-center justify-between">
-            <span className="font-bold text-brownroyal">Total</span>
-            <span className="text-2xl font-extrabold text-burgundy">{formatCurrency(subtotal)}</span>
+            <span className="font-bold text-brownroyal">{hasPacks ? 'Estimated merchandise' : 'Total'}</span>
+            <span className="text-2xl font-extrabold text-burgundy">{selectedItems.some(item => item.lineAmount === null) ? 'Quoted at checkout' : formatCurrency(subtotal)}</span>
           </div>
+          {hasPacks && <p className="my-3 text-sm text-burgundy" role="status">{packsLoading ? 'Checking discovery pack availability...' : packsError || 'Final pack prices, discounts, shipping and totals are confirmed by the checkout quote.'}{packsError && <button type="button" className="ml-2 underline" onClick={refreshPacks}>Retry</button>}</p>}
           {selectionMessage && (
             <p className="mt-4 text-sm font-semibold text-burgundy" role="status">
               {selectionMessage}

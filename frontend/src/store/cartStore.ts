@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware'
 import type { CartItem, ConfigurablePackCartItem, ConfigurablePackSelection, FixedPackCartItem, Product } from '../types/index.ts'
 import { validPurchasedLines, type PurchasedLine, type ConsumptionResult } from './checkoutAttempt.ts'
+import { configurablePackLimit, type ShoppingPack } from '../services/testerPackShopping.ts'
+import { normalizeSelections } from './cartPersistence.ts'
 import { isVariantEligible, isVariantId, resolveCartItem } from '../services/productVariants.ts'
 import { CART_VERSION, getCartLineId, getConfigurablePackLineId, getFixedPackLineId, reconcileCartState, restoreCartState, sameCartState, type PersistedCartState } from './cartPersistence.ts'
 export { getCartLineId, getConfigurablePackLineId, getFixedPackLineId } from './cartPersistence.ts'
@@ -28,11 +30,11 @@ interface CartState extends PersistedCartState {
   closeCart: () => void
   addItem: (product: Product, variantId: string, quantity?: number) => boolean
   addFixedPack: (
-    pack: { id: string; definitionRevision: string; name?: string; image?: string; available?: boolean; availablePackCount?: number | null },
+    pack: ShoppingPack,
     quantity?: number
   ) => boolean
   addConfigurablePack: (
-    pack: { id: string; definitionRevision: string; name?: string; image?: string; available?: boolean; minimumUnits?: number | null; maximumUnits?: number | null; allowedVariants?: any[] },
+    pack: ShoppingPack,
     selections: Array<{ variantId: string; quantityPerPack: number; testerName?: string }>,
     quantity?: number
   ) => boolean
@@ -41,7 +43,7 @@ interface CartState extends PersistedCartState {
   capturePurchase: (lines: Omit<PurchasedLine, 'entryId'>[]) => PurchasedLine[]
   consumePurchased: (attemptId: string, orderId: string, lines: PurchasedLine[]) => Promise<ConsumptionResult>
   syncFromStorage: () => void
-  updateQuantity: (lineId: string, quantity: number, products: Product[], testerPacks?: any[]) => boolean
+  updateQuantity: (lineId: string, quantity: number, products: Product[], testerPacks?: ShoppingPack[]) => boolean
   reconcile: (products: Product[]) => void
   toggleItemSelection: (lineId: string) => void
   setAllItemsSelected: (selected: boolean) => void
@@ -166,7 +168,7 @@ export function createCartStore(storage?: StateStorage) {
       if (!isVariantId(pack?.id) || typeof pack?.definitionRevision !== 'string'
         || !/^[1-9][0-9]{0,18}$/.test(pack.definitionRevision)
         || !Number.isInteger(quantity) || quantity < 1 || quantity > 99
-        || pack.available === false) return false
+        || pack.available !== true || pack.mode !== 'fixed') return false
       const lineId = getFixedPackLineId(pack.id, pack.definitionRevision)
       const existing = get().items.find((item) => item.lineId === lineId)
       const total = (existing?.quantity ?? 0) + quantity
@@ -194,28 +196,19 @@ export function createCartStore(storage?: StateStorage) {
       if (!isVariantId(pack?.id) || typeof pack?.definitionRevision !== 'string'
         || !/^[1-9][0-9]{0,18}$/.test(pack.definitionRevision)
         || !Number.isInteger(quantity) || quantity < 1 || quantity > 99
-        || pack.available === false || !Array.isArray(selections) || !selections.length || selections.length > 100) return false
+        || pack.available !== true || pack.mode !== 'configurable' || !Array.isArray(selections) || !selections.length || selections.length > 100) return false
       for (const s of selections) {
         if (!isVariantId(s?.variantId) || !Number.isInteger(s?.quantityPerPack) || s.quantityPerPack < 1) return false
       }
-      const totalUnits = selections.reduce((sum, s) => sum + s.quantityPerPack, 0)
-      if (pack.minimumUnits != null && totalUnits < pack.minimumUnits) return false
-      if (pack.maximumUnits != null && totalUnits > pack.maximumUnits) return false
-      if (Array.isArray(pack.allowedVariants) && pack.allowedVariants.length > 0) {
-        for (const s of selections) {
-          const allowed = pack.allowedVariants.find((v: any) => v.testerVariantId === s.variantId)
-          if (!allowed || allowed.active === false || (typeof allowed.stockQuantity === 'number' && allowed.stockQuantity < s.quantityPerPack * quantity)) return false
-        }
-      }
-      const validSelections: ConfigurablePackSelection[] = selections.map((s) => ({
-        variantId: s.variantId.toLowerCase(),
-        quantityPerPack: s.quantityPerPack,
-        ...(s.testerName ? { testerName: s.testerName } : {}),
+      const validSelections: ConfigurablePackSelection[] = normalizeSelections(selections).map(([variantId, quantityPerPack]) => ({
+        variantId, quantityPerPack,
+        ...(selections.find(s => s.variantId.toLowerCase() === variantId)?.testerName
+          ? { testerName: selections.find(s => s.variantId.toLowerCase() === variantId)!.testerName } : {}),
       }))
       const lineId = getConfigurablePackLineId(pack.id, pack.definitionRevision, validSelections)
       const existing = get().items.find((item) => item.lineId === lineId)
       const total = (existing?.quantity ?? 0) + quantity
-      if (total > 99) return false
+      if (total > 99 || total > configurablePackLimit(pack, validSelections)) return false
       const item: ConfigurablePackCartItem = {
         kind: 'configurable_tester_pack',
         lineId,

@@ -56,6 +56,8 @@ const fixedPack = {
   mode: 'fixed',
   fixedRegularPrice: 2500,
   fixedSalePrice: 2200,
+  effectivePrice: 2200,
+  saleActive: true,
   salePrice: 2200,
 }
 
@@ -369,7 +371,7 @@ test('14. V2 order payload mapping: order request maps faithfully to backend ord
   assert.equal(parsed.success, true, 'Wire order payload must satisfy canonical orderV2Schema')
 })
 
-test('15. No client-authored monetary values: checkout mapping never sends client prices on wire', async () => {
+test('15. Checkout never sends client prices and rejects an incomplete pack quote', async () => {
   let capturedBody = null
   const mockFetch = async (url, opts) => {
     if (url.includes('/auth/session')) {
@@ -395,7 +397,7 @@ test('15. No client-authored monetary values: checkout mapping never sends clien
   }
 
   const client = createCheckoutClient(mockFetch, '/api', 'v2')
-  await client.quote({
+  await assert.rejects(() => client.quote({
     lines: [
       { kind: 'normal_variant', variantId, quantity: 1 },
       { kind: 'fixed_tester_pack', packId: fixedPackId, definitionRevision: fixedPackRev, quantity: 1 },
@@ -403,7 +405,7 @@ test('15. No client-authored monetary values: checkout mapping never sends clien
     shipping: { city: 'Lahore', province: 'Punjab' },
     email: 'test@example.com',
     couponCode: '',
-  })
+  }), { code: 'INVALID_RESPONSE' })
 
   assert.ok(capturedBody)
   assert.equal(capturedBody.contractVersion, 2)

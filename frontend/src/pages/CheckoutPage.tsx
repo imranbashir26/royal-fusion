@@ -1,3 +1,4 @@
+import { useCartTesterPacks } from '../storefront/useCartTesterPacks'
 import { CheckoutPricingDetails, SelectedCheckoutCharges } from '../components/common/CheckoutPricingDetails'
 import { resolveCartItem } from '../services/productVariants'
 import { Landmark, PackageCheck, Wallet } from 'lucide-react'
@@ -24,8 +25,11 @@ export function CheckoutPage() {
   const navigate = useNavigate()
   const selectedLineIdSet = new Set(selectedLineIds)
   const selectedCartItems = items.filter((item) => selectedLineIdSet.has(item.lineId))
-  const enrichedItems = selectedCartItems.map((item) => resolveCartItem(item, products))
-  const eligible = !isLoading && enrichedItems.length > 0 && enrichedItems.every((item) => item.eligible)
+  const { testerPacks, packsLoading, packsError, refreshPacks } = useCartTesterPacks(intent || recovery ? [] : selectedCartItems)
+  const hasPacks = selectedCartItems.some(item => item.kind === 'fixed_tester_pack' || item.kind === 'configurable_tester_pack')
+  const enrichedItems = selectedCartItems.map((item) => resolveCartItem(item, products, testerPacks))
+  const usesV2 = hasPacks || selectedCartItems.some(item => products.find(product => product.id === item.productId)?.commerceKind === 'tester')
+  const eligible = !isLoading && !packsLoading && !packsError && enrichedItems.length > 0 && enrichedItems.every((item) => item.eligible)
   const [form, setForm] = useState({ name: '', email: '', phone: '', address: '', city: '', province: '', notes: '' })
   const [paymentMethod, setPaymentMethod] = useState<CheckoutPaymentMethod>('Cash on Delivery')
   const [couponCode, setCouponCode] = useState('')
@@ -53,14 +57,15 @@ export function CheckoutPage() {
     return { kind: 'normal_variant' as const, variantId: item.variant?.id ?? item.variantId ?? '', quantity: item.quantity }
   })
   const signature = JSON.stringify({
-    lines: requestLines,
+    ...(usesV2 ? { lines: requestLines } : { items: requestLines.map(line => ({ variantId: 'variantId' in line ? line.variantId ?? '' : '', quantity: line.quantity })) }),
     shipping: { city: form.city.trim(), province: form.province.trim() },
     email: form.email.trim().toLowerCase(),
     couponCode: couponCode.trim().toUpperCase(),
   })
-  const currentQuote = quote?.signature === signature ? quote.data : null
+  const currentQuote = eligible && quote?.signature === signature ? quote.data : null
   const acceptanceKey = quoteAcceptanceKey(signature, currentQuote, paymentMethod)
   const confirmed = acceptanceKey !== null && acceptedQuote === acceptanceKey
+  useEffect(() => { if (!eligible) { setQuote(null); setAcceptedQuote(null) } }, [eligible])
   useEffect(() => { setAcceptedQuote(null) }, [signature, paymentMethod, currentQuote?.quoteFingerprint])
   const configuredPaymentMethods = useMemo(() => payments
     .filter((payment) => payment.active !== false && (payment.name === 'Cash on Delivery' || payment.name === 'Bank Transfer'))
@@ -124,7 +129,7 @@ export function CheckoutPage() {
       setOrderError('Please complete valid contact and shipping information.'); return
     }
     const request: Omit<CanonicalOrderRequest, 'idempotencyKey'> = {
-      lines: requestLines,
+      ...(usesV2 ? { lines: requestLines } : { items: requestLines.map(line => ({ variantId: 'variantId' in line ? line.variantId ?? '' : '', quantity: line.quantity })) }),
       contact, shipping, paymentMethod, couponCode: couponCode.trim().toUpperCase(),
       quoteFingerprint: currentQuote!.quoteFingerprint!,
     }
@@ -187,7 +192,8 @@ export function CheckoutPage() {
         </div></CheckoutPanel>
         <CheckoutPanel title="Coupon">{couponCode && <button type="button" className="underline" onClick={()=>setCouponCode('')}>Remove coupon</button>}<Field label="Coupon code" value={couponCode} maxLength={40} required={false} onChange={(value) => setCouponCode(value.toUpperCase())} /></CheckoutPanel>
         {checkoutBlocked && <p role="status">{!completionAvailable ? 'Checkout is unavailable in this browser. Your cart has been saved; no order was submitted.' : currentQuote?.orderingEnabled === false ? 'Ordering is temporarily unavailable. Your cart has been saved.' : 'Complete your destination and resolve unavailable items to receive a checkout quote.'}</p>}
-        {quoteError && <p role="alert" className="text-burgundy">{quoteError}</p>}
+        {packsError && <p role="alert">{packsError} <button type="button" onClick={refreshPacks} className="underline">Retry pack availability</button></p>}
+        {quoteError && <p role="alert" className="text-burgundy">{quoteError} <button type="button" className="underline" onClick={() => { refreshPacks(); setQuoteReload(value => value + 1) }}>Refresh checkout quote</button></p>}
         {quoteNotice && <p role="status" className="text-burgundy">{quoteNotice}</p>}
         {orderError && <p role="alert" className="text-burgundy">{orderError}</p>}
         <label className="flex items-start gap-3"><input type="checkbox" checked={confirmed} disabled={checkoutBlocked || isSubmitting} onChange={event => setAcceptedQuote(event.target.checked ? acceptanceKey : null)} /><span>I confirm the quoted total of {currentQuote ? formatCheckoutCurrency(currentQuote.total) : 'the current checkout quote'}.</span></label>
@@ -214,7 +220,7 @@ export function CheckoutPage() {
             </p>
           )}
           {item.message && <p className="text-burgundy">{item.message}</p>}
-          {!currentQuote?.lines && <p>{item.lineAmount === null ? 'Unavailable' : `Catalog estimate: ${formatCheckoutCurrency(item.lineAmount)}`}</p>}
+          {!currentQuote?.lines && <p>{item.lineAmount === null ? (item.eligible ? 'Quoted at checkout' : 'Unavailable') : `Catalog estimate: ${formatCheckoutCurrency(item.lineAmount)}`}</p>}
           <button type="button" className="text-burgundy underline" aria-label={`Remove ${item.product.name}`} onClick={() => removeItems([item.lineId])}>Remove</button>
         </div>)}</div>
         {currentQuote?.lines && <SelectedCheckoutCharges label="Quoted item charges" lines={currentQuote.lines.map(line=>({

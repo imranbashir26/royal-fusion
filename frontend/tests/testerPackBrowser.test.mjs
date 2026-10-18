@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { pageFixture, origin } from './support/variantBrowserHarness.mjs'
+import { productId, variantId } from './variantFixtures.mjs'
+import { testerQuote } from './support/testerCheckoutFixtures.mjs'
+import { quoteV2Schema } from '../../backend/server/schemas/ordersV2.js'
 
 // Mock tester options
 const sampleTesters = [
@@ -118,7 +121,7 @@ const configurablePack = {
 }
 
 async function setupTesterPackMock(page) {
-  await page.route('**/api/v2/public/tester-packs*', async (route) => {
+  await page.route('**/api/v2/public/tester-packs**', async (route) => {
     const url = new URL(route.request().url())
     const path = url.pathname
 
@@ -143,9 +146,6 @@ async function setupTesterPackMock(page) {
 
 test('Customer can explore discovery packs, filter by mode, and view details', async (t) => {
   const { page } = await pageFixture(t)
-  page.on('console', (msg) => console.log('BROWSER LOG:', msg.text()))
-  page.on('pageerror', (err) => console.log('BROWSER ERROR:', err))
-  page.on('requestfailed', (req) => console.log('REQ FAILED:', req.url(), req.failure()?.errorText))
   page.setDefaultTimeout(15000)
   await setupTesterPackMock(page)
 
@@ -175,9 +175,6 @@ test('Customer can explore discovery packs, filter by mode, and view details', a
 
 test('Fixed pack view displays components, quantity controls, and adds to cart with drawer feedback', async (t) => {
   const { page } = await pageFixture(t)
-  page.on('console', (msg) => console.log('T2 LOG:', msg.text()))
-  page.on('pageerror', (err) => console.log('T2 ERROR:', err))
-  page.on('requestfailed', (req) => console.log('T2 REQ FAILED:', req.url(), req.failure()?.errorText))
   page.setDefaultTimeout(15000)
   await setupTesterPackMock(page)
 
@@ -293,4 +290,102 @@ test('Navbar links and redirects integrate discovery packs seamlessly', async (t
   await page.goto(`${origin}/tester-packs/bespoke-discovery-set`)
   await page.waitForURL('**/discovery-packs/bespoke-discovery-set')
   await page.getByRole('heading', { name: 'Bespoke Discovery Set', level: 1 }).waitFor()
+})
+
+const standardLineId = JSON.stringify([productId, variantId])
+const standardCart = { version: 2, state: {
+  items: [{ lineId: standardLineId, productId, variantId, size: '50 ml', quantity: 1, identity: 'canonical' }],
+  selectedLineIds: [standardLineId],
+} }
+
+test('mixed cart persists pack quantities, uses V2 quotes and keeps all items when production ordering is disabled', async t => {
+  const { page, orders } = await pageFixture(t, { legacy: standardCart })
+  page.setDefaultTimeout(10000)
+  await setupTesterPackMock(page)
+  const quotes = []
+  await page.route('**/api/v2/public/checkout/quote', async route => {
+    const body = route.request().postDataJSON()
+    assert.equal(quoteV2Schema.safeParse(body).success, true)
+    quotes.push(body)
+    return route.fulfill({ json: { data: testerQuote(body.lines) } })
+  })
+  await page.goto(`${origin}/discovery-packs/${fixedPack.id}`)
+  await page.getByRole('button', { name: 'Add Set to Cart' }).click()
+  const drawer = page.locator('aside[aria-label="Cart drawer"]')
+  await drawer.getByText(fixedPack.name, { exact: true }).waitFor()
+  await drawer.getByRole('link', { name: 'View Cart' }).click()
+  const article = page.locator('article').filter({ hasText: fixedPack.name })
+  await article.getByRole('button', { name: 'Increase quantity' }).click()
+  await page.reload()
+  await article.getByText(/1,250\.00/).waitFor()
+  const before = await page.evaluate(() => JSON.parse(localStorage.getItem('royal-fusion-cart')).state)
+  assert.equal(before.items.find(item => item.kind === 'fixed_tester_pack').quantity, 2)
+  await page.getByRole('link', { name: 'Proceed to Checkout' }).click()
+  await page.getByLabel('City', { exact: true }).fill('Karachi')
+  await page.getByLabel('Province / Region', { exact: true }).fill('Sindh')
+  await page.getByText('Ordering is temporarily unavailable. Your cart has been saved.', { exact: true }).waitFor()
+  assert.ok(quotes.some(q => q.lines.some(l => l.kind === 'normal_variant') && q.lines.some(l => l.kind === 'fixed_tester_pack' && l.quantity === 2)))
+  assert.equal(await page.getByRole('button', { name: 'Place Order', exact: true }).isDisabled(), true)
+  assert.deepEqual(orders, [])
+  const after = await page.evaluate(() => JSON.parse(localStorage.getItem('royal-fusion-cart')).state)
+  assert.deepEqual(after, before)
+})
+
+test('stale and unpublished saved packs block checkout while preserving the cart', async t => {
+  const savedPack = { kind: 'fixed_tester_pack', productId: fixedPack.id, packId: fixedPack.id, definitionRevision: '1', quantity: 1,
+    name: fixedPack.name, size: 'Tester pack', identity: 'canonical', lineId: JSON.stringify(['fixed_tester_pack', fixedPack.id, '1']) }
+  const { page } = await pageFixture(t, { legacy: { version: 2, state: { items: [savedPack], selectedLineIds: [savedPack.lineId] } } })
+  await setupTesterPackMock(page)
+  let unpublished = false
+  await page.route(`**/api/v2/public/tester-packs/${fixedPack.id}`, route => unpublished
+    ? route.fulfill({ status: 404, json: { error: { code: 'TESTER_PACK_NOT_FOUND' } } })
+    : route.fulfill({ json: { data: { ...fixedPack, definitionRevision: '2' } } }))
+  await page.goto(`${origin}/cart`)
+  await page.getByText('Pack definition changed. Please remove and re-add your pack.').waitFor()
+  assert.equal(await page.getByRole('button', { name: 'Proceed to Checkout' }).isDisabled(), true)
+  unpublished = true
+  await page.reload()
+  await page.getByText('Unavailable — this tester pack is not in the current catalog.').waitFor()
+  assert.equal(await page.getByRole('button', { name: 'Proceed to Checkout' }).isDisabled(), true)
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('royal-fusion-cart')).state.items.length), 1)
+})
+
+test('builder supports two repeated units with no maximum, pack stock limits, and an empty tester state on mobile', async t => {
+  const { page } = await pageFixture(t)
+  await page.setViewportSize({ width: 390, height: 844 })
+  const custom = { ...configurablePack, minimumUnits: null, maximumUnits: null,
+    allowedVariants: [{ ...sampleTesters[0], stockQuantity: 4 }] }
+  await page.route('**/api/v2/public/tester-packs**', route => route.fulfill({ json: { data: custom } }))
+  await page.goto(`${origin}/discovery-packs/${custom.id}`)
+  await page.getByRole('button', { name: 'Increase Royal Oud 5 ml quantity in pack, currently 0' }).click()
+  assert.equal(await page.getByRole('button', { name: 'Select at least 2 testers' }).isDisabled(), true)
+  await page.getByRole('button', { name: 'Increase Royal Oud 5 ml quantity in pack, currently 1' }).click()
+  await page.getByText('Pack Ready (minimum reached)').waitFor()
+  await page.getByRole('button', { name: 'Increase pack quantity' }).click()
+  assert.equal(await page.getByRole('button', { name: 'Increase pack quantity' }).isDisabled(), true)
+  assert.equal(await page.getByRole('button', { name: 'Increase Royal Oud 5 ml quantity in pack, currently 2' }).isDisabled(), true)
+  assert.equal(await page.getByRole('button', { name: 'Add Custom Pack to Cart' }).isDisabled(), false)
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
+  custom.allowedVariants = []; custom.available = false
+  await page.reload()
+  await page.getByText('No testers are currently available for this pack.').waitFor()
+  await page.getByText('This discovery pack is currently unavailable.', { exact: true }).waitFor()
+  assert.equal(await page.getByRole('button', { name: 'Select at least 2 testers' }).isDisabled(), true)
+})
+
+test('public catalog and details show retryable failures instead of stale purchasable packs', async t => {
+  const { page } = await pageFixture(t)
+  let unavailable = true
+  await page.route('**/api/v2/public/tester-packs**', route => unavailable
+    ? route.fulfill({ status: 503, json: { error: { code: 'TESTER_SERVICE_UNAVAILABLE' } } })
+    : route.fulfill({ json: { data: { items: [], total: 0, totalPages: 0 } } }))
+  await page.goto(`${origin}/discovery-packs`)
+  await page.getByRole('button', { name: 'Retry', exact: true }).waitFor()
+  unavailable = false
+  await page.getByRole('button', { name: 'Retry', exact: true }).click()
+  await page.getByRole('heading', { name: 'No discovery packs available' }).waitFor()
+  unavailable = true
+  await page.goto(`${origin}/discovery-packs/${fixedPack.id}`)
+  await page.getByRole('button', { name: 'Retry', exact: true }).waitFor()
+  assert.equal(await page.getByRole('button', { name: 'Add Set to Cart' }).count(), 0)
 })

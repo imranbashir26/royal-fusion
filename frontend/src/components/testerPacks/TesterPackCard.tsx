@@ -127,7 +127,7 @@ export function TesterPackCard({ pack, className }: TesterPackCardProps) {
             {isFixed ? (
               <div className="space-y-1">
                 <p className="font-semibold text-royal-burgundy">
-                  Includes {pack.components.length} authentic 5 ml testers:
+                  Includes {pack.components.reduce((sum, component) => sum + (component.quantityPerPack ?? 1), 0)} authentic 5 ml testers:
                 </p>
                 <p className="line-clamp-1 text-muted-taupe">
                   {pack.components.map((c) => c.name).join(', ')}

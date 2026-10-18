@@ -1,3 +1,5 @@
+import { configurablePackLimit, minimumPackUnits, testerCatalogPrice } from '../../services/testerPackShopping'
+import { getConfigurablePackLineId } from '../../store/cartPersistence'
 import {
   AlertCircle,
   Check,
@@ -40,7 +42,8 @@ export function ConfigurablePackBuilder({
   const [searchQuery, setSearchQuery] = useState('')
   const [feedback, setFeedback] = useState<string | null>(null)
 
-  const minUnits = pack.minimumUnits ?? 2
+  const cartItems = useCartStore(state => state.items)
+  const minUnits = minimumPackUnits(pack)
   const maxUnits = pack.maximumUnits
 
   // Calculate total units selected
@@ -51,7 +54,12 @@ export function ConfigurablePackBuilder({
   const isMinMet = totalUnits >= minUnits
   const isMaxMet = maxUnits !== null && totalUnits >= maxUnits
   const canAddMore = maxUnits === null || totalUnits < maxUnits
-  const isValidPack = isMinMet && (!maxUnits || totalUnits <= maxUnits) && pack.available !== false
+  const selectionLines = Object.entries(selections).map(([variantId, quantityPerPack]) => ({ variantId, quantityPerPack }))
+  const availablePacks = configurablePackLimit(pack, selectionLines)
+  const lineId = getConfigurablePackLineId(pack.id, pack.definitionRevision, selectionLines)
+  const alreadyInCart = cartItems.find(item => item.lineId === lineId)?.quantity ?? 0
+  const maxPackQuantity = Math.max(0, availablePacks - alreadyInCart)
+  const isValidPack = isMinMet && (!maxUnits || totalUnits <= maxUnits) && pack.available === true && packQuantity <= maxPackQuantity
 
   // Calculate total price of current custom pack
   const calculatedUnitPrice = useMemo(() => {
@@ -60,11 +68,11 @@ export function ConfigurablePackBuilder({
       if (qty <= 0) continue
       const variant = pack.allowedVariants.find((v) => v.testerVariantId === variantId)
       if (variant) {
-        const price = Number(variant.effectivePrice ?? variant.salePrice ?? variant.regularPrice ?? 0)
-        sum += price * qty
+        const price = Number(testerCatalogPrice(variant) ?? 0)
+        sum += Math.round(price * 100) * qty
       }
     }
-    return sum
+    return sum / 100
   }, [selections, pack.allowedVariants])
 
   // Get list of selected variant objects with quantities
@@ -73,7 +81,7 @@ export function ConfigurablePackBuilder({
       .filter(([, qty]) => qty > 0)
       .map(([variantId, qty]) => {
         const variant = pack.allowedVariants.find((v) => v.testerVariantId === variantId)!
-        const price = Number(variant?.effectivePrice ?? variant?.salePrice ?? variant?.regularPrice ?? 0)
+        const price = Number(variant ? testerCatalogPrice(variant) ?? 0 : 0)
         return {
           variant,
           quantity: qty,
@@ -87,6 +95,7 @@ export function ConfigurablePackBuilder({
   // Filter allowed variants by search
   const filteredVariants = useMemo(() => {
     return pack.allowedVariants.filter((variant) => {
+      if (variant.active === false) return false
       const query = searchQuery.trim().toLowerCase()
       if (!query) return true
       return (
@@ -99,8 +108,8 @@ export function ConfigurablePackBuilder({
   // Handlers for adjusting variant count in pack
   const handleIncrement = (variant: PublicTesterOption) => {
     const current = selections[variant.testerVariantId] ?? 0
-    if (!canAddMore) return
-    if (current >= variant.stockQuantity) return
+    if (!canAddMore || !pack.available) return
+    if ((current + 1) * packQuantity > variant.stockQuantity) return
     if (variant.stockQuantity <= 0 || variant.active === false) return
 
     setSelections((prev) => ({
@@ -138,9 +147,9 @@ export function ConfigurablePackBuilder({
   const handleAddToCart = () => {
     if (!isValidPack) {
       if (!isMinMet) {
-        setFeedback(`Please select at least ${minUnits} fragrances to complete your pack.`)
+        setFeedback(`Please select at least ${minUnits} tester units to complete your pack.`)
       } else if (maxUnits && totalUnits > maxUnits) {
-        setFeedback(`Your pack contains more than the maximum allowed (${maxUnits}) fragrances.`)
+        setFeedback(`Your pack contains more than the maximum allowed (${maxUnits}) tester units.`)
       } else {
         setFeedback('This discovery pack is currently unavailable.')
       }
@@ -178,7 +187,7 @@ export function ConfigurablePackBuilder({
       : Math.round((totalUnits / minUnits) * 100)
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 pb-24 lg:pb-0">
       {/* Top Pack Header & Description */}
       <div className="border-b border-soft-border/80 pb-6">
         <div className="flex flex-wrap items-center gap-2">
@@ -236,7 +245,7 @@ export function ConfigurablePackBuilder({
             ) : (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3.5 py-1.5 text-xs font-semibold text-emerald-900">
                 <Check className="h-4 w-4 text-emerald-700" />
-                Pack Ready (can add up to {maxUnits! - totalUnits} more)
+                {maxUnits === null ? 'Pack Ready (minimum reached)' : `Pack Ready (can add up to ${maxUnits - totalUnits} more)`}
               </span>
             )}
           </div>
@@ -314,11 +323,11 @@ export function ConfigurablePackBuilder({
             {filteredVariants.map((variant) => {
               const countInPack = selections[variant.testerVariantId] ?? 0
               const unitPrice = Number(
-                variant.effectivePrice ?? variant.salePrice ?? variant.regularPrice ?? 0,
+                testerCatalogPrice(variant) ?? 0,
               )
               const isOutOfStock = variant.stockQuantity <= 0 || variant.active === false
               const canIncrement =
-                canAddMore && !isOutOfStock && countInPack < variant.stockQuantity
+                canAddMore && pack.available && !isOutOfStock && (countInPack + 1) * packQuantity <= variant.stockQuantity
 
               return (
                 <div
@@ -420,7 +429,7 @@ export function ConfigurablePackBuilder({
 
           {filteredVariants.length === 0 && (
             <div className="rounded-xl border border-soft-border bg-warm-ivory/40 p-8 text-center text-muted-taupe">
-              <p className="font-medium">No fragrances match your search.</p>
+              <p className="font-medium">{pack.allowedVariants.length === 0 ? 'No testers are currently available for this pack.' : 'No fragrances match your search.'}</p>
               <button
                 type="button"
                 onClick={() => setSearchQuery('')}
@@ -437,10 +446,11 @@ export function ConfigurablePackBuilder({
           <div className="flex items-center justify-between border-b border-soft-border/80 pb-4">
             <h2 className="font-serif text-xl font-bold text-royal-burgundy">Pack Summary</h2>
             <span className="rounded-full bg-champagne/15 px-2.5 py-0.5 text-xs font-semibold text-royal-burgundy">
-              {totalUnits} Fragrance{totalUnits !== 1 ? 's' : ''}
+              {totalUnits} tester unit{totalUnits !== 1 ? 's' : ''}
             </span>
           </div>
 
+          <p role="status" className="text-sm text-royal-burgundy">{!pack.available ? 'This discovery pack is currently unavailable.' : isMinMet && packQuantity > maxPackQuantity ? 'Your pack quantity exceeds the available stock. Reduce the quantity or revise your selection.' : 'Select tester units, including repeats of the same fragrance. Final prices and delivery are confirmed by the checkout quote.'}</p>
           {/* Feedback alert */}
           {feedback && (
             <div
@@ -500,7 +510,7 @@ export function ConfigurablePackBuilder({
               <span className="font-medium text-espresso">{totalUnits} units</span>
             </div>
             <div className="flex justify-between items-baseline pt-1">
-              <span className="font-serif text-lg font-bold text-royal-burgundy">Pack Subtotal:</span>
+              <span className="font-serif text-lg font-bold text-royal-burgundy">Catalog estimate:</span>
               <span className="font-serif text-2xl font-bold text-royal-burgundy">
                 {formatCheckoutCurrency(calculatedUnitPrice)}
               </span>
@@ -525,8 +535,8 @@ export function ConfigurablePackBuilder({
               </span>
               <button
                 type="button"
-                disabled={packQuantity >= 99}
-                onClick={() => setPackQuantity((q) => Math.min(99, q + 1))}
+                disabled={packQuantity >= maxPackQuantity || !pack.available}
+                onClick={() => setPackQuantity((q) => Math.min(maxPackQuantity, q + 1))}
                 aria-label="Increase pack quantity"
                 className="grid h-7 w-7 place-items-center rounded border border-soft-border bg-warm-ivory text-xs font-bold text-royal-burgundy disabled:opacity-40"
               >
@@ -576,7 +586,7 @@ export function ConfigurablePackBuilder({
           <div className="space-y-2 border-t border-soft-border/80 pt-4 text-[11px] text-muted-taupe">
             <div className="flex items-center gap-2">
               <Truck aria-hidden="true" className="h-3.5 w-3.5 text-champagne shrink-0" />
-              <span>Complimentary shipping above PKR 5,000</span>
+              <span>Delivery charges are confirmed at checkout</span>
             </div>
             <div className="flex items-center gap-2">
               <ShieldCheck aria-hidden="true" className="h-3.5 w-3.5 text-champagne shrink-0" />
@@ -590,10 +600,10 @@ export function ConfigurablePackBuilder({
       <div className="fixed bottom-0 left-0 right-0 z-30 flex items-center justify-between border-t border-champagne/40 bg-pure-white/95 px-4 py-3 shadow-2xl backdrop-blur-md lg:hidden">
         <div>
           <p className="text-[11px] text-muted-taupe">
-            {totalUnits} of {maxUnits ?? minUnits}+ testers selected
+            {totalUnits} tester units selected {maxUnits ? `(maximum ${maxUnits})` : `(minimum ${minUnits})`}
           </p>
           <p className="font-serif text-lg font-bold text-royal-burgundy">
-            {formatCheckoutCurrency(calculatedUnitPrice)}
+            Estimate: {formatCheckoutCurrency(calculatedUnitPrice)}
           </p>
         </div>
         <button

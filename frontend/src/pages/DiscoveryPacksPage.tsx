@@ -18,8 +18,8 @@ export function DiscoveryPacksPage() {
     setIsLoading(true)
     setError(null)
     try {
-      const response = await publicTesterPacksApi.list(1, 100)
-      setPacks(response.items || [])
+      const packs = await publicTesterPacksApi.listAll()
+      setPacks(packs)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load discovery packs')
     } finally {
@@ -51,6 +51,7 @@ export function DiscoveryPacksPage() {
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
+              aria-pressed={filter === 'all'}
               onClick={() => setFilter('all')}
               className={cn(
                 'rounded-full px-4 py-2 text-xs font-semibold tracking-wide transition',
@@ -63,6 +64,7 @@ export function DiscoveryPacksPage() {
             </button>
             <button
               type="button"
+              aria-pressed={filter === 'fixed'}
               onClick={() => setFilter('fixed')}
               className={cn(
                 'inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold tracking-wide transition',
@@ -76,6 +78,7 @@ export function DiscoveryPacksPage() {
             </button>
             <button
               type="button"
+              aria-pressed={filter === 'configurable'}
               onClick={() => setFilter('configurable')}
               className={cn(
                 'inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold tracking-wide transition',

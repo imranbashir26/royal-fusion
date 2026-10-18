@@ -133,6 +133,7 @@ test('publicTesterPacksApi.getBySlugOrId resolves UUID directly and slug via lis
   try {
     // 1. UUID lookup
     globalThis.fetch = async (url) => {
+      if (url.includes('/api/v2/public/tester-packs/' + configurablePack.id)) return { ok: true, json: async () => ({ data: configurablePack }) }
       if (url.includes('/api/v2/public/tester-packs/44444444-4444-4444-8444-444444444444')) {
         return {
           ok: true,
@@ -274,5 +275,5 @@ test('CartDrawer provides configurable tester pack selections and quantity contr
   )
   assert.match(cartDrawerCode, /item\.kind === 'configurable_tester_pack'/)
   assert.match(cartDrawerCode, /Included:/)
-  assert.match(cartDrawerCode, /disabled=\{!item\.eligible\}/)
+  assert.match(cartDrawerCode, /item\.maxQuantity < 1 : !item\.eligible/)
 })

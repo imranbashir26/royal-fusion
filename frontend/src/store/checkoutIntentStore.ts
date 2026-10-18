@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { CanonicalOrderReceipt, CanonicalOrderRequest } from '../types/index.ts'
 import { isOrderReceipt } from '../services/checkoutClient.ts'
+import { matchesV2Checkout } from '../services/checkoutV2Validation.ts'
 import { isVariantId } from '../services/productVariants.ts'
 import { useCartStore } from './cartStore.ts'
 import { aggregateRequestItems, aggregateRequestLines, validIntent, type CheckoutIntent, type PurchasedLine, type ConsumptionResult } from './checkoutAttempt.ts'
@@ -26,6 +27,8 @@ const object = (value: unknown): value is Record<string, unknown> => Boolean(val
 const exactKeys = (value: Record<string, unknown>, expected: string[]) => Object.keys(value).length === expected.length && expected.every((name) => Object.hasOwn(value, name))
 const boundReceipt = (receipt: unknown, intent: CheckoutIntent): receipt is CanonicalOrderReceipt =>
   isOrderReceipt(receipt) && receipt.idempotencyKey === intent.request.idempotencyKey && receipt.paymentMethod === intent.request.paymentMethod
+    && (!intent.request.lines?.some(line => line.kind !== 'normal_variant')
+      || typeof intent.request.quoteFingerprint === 'string' && matchesV2Checkout(receipt, intent.request.lines, intent.request.quoteFingerprint))
 const validCompletion = (value: unknown): value is Completion => {
   if (!object(value) || !exactKeys(value, ['intent', 'receipt', 'consumption'])) return false
   const record = value

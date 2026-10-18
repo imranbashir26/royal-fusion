@@ -1,3 +1,4 @@
+import { configurablePackLimit, testerCatalogPrice, type ShoppingPack } from './testerPackShopping.ts'
 import type { CartItem, Product, ProductVariant } from '../types/index.ts'
 
 export const isVariantId = (value: unknown): value is string =>
@@ -41,128 +42,52 @@ export function legacyVariant(product: Product, size: string): ProductVariant | 
   return matches.length === 1 ? matches[0] : undefined
 }
 
-export function resolveCartItem(item: CartItem, products: Product[], testerPacks?: any[]) {
-  if (item.kind === 'fixed_tester_pack') {
-    const pack = testerPacks?.find((candidate: any) => candidate.id === item.packId || candidate.packId === item.packId)
-    const validPackId = isVariantId(item.packId)
-    const validRevision = typeof item.definitionRevision === 'string' && /^[1-9][0-9]{0,18}$/.test(item.definitionRevision)
-    const validQuantity = Number.isInteger(item.quantity) && item.quantity > 0 && item.quantity <= 99
-
-    let eligible = validPackId && validRevision && validQuantity
+export function resolveCartItem(item: CartItem, products: Product[], testerPacks?: ShoppingPack[]) {
+  if (item.kind === 'fixed_tester_pack' || item.kind === 'configurable_tester_pack') {
+    const pack = testerPacks?.find(candidate => candidate.id.toLowerCase() === item.packId.toLowerCase())
+    const validIdentity = isVariantId(item.packId) && typeof item.definitionRevision === 'string'
+      && /^[1-9][0-9]{0,18}$/.test(item.definitionRevision) && BigInt(item.definitionRevision) <= 9223372036854775807n
+    const validQuantity = Number.isSafeInteger(item.quantity) && item.quantity > 0 && item.quantity <= 99
+    const validSelections = item.kind !== 'configurable_tester_pack' || Array.isArray(item.selections)
+      && item.selections.every(s => isVariantId(s.variantId))
     let message = ''
-
-    if (!validPackId || !validRevision) {
-      eligible = false
-      message = 'Unavailable — invalid tester pack identity.'
-    } else if (testerPacks) {
-      if (!pack) {
-        eligible = false
-        message = 'Unavailable — this tester pack is not in the current catalog.'
-      } else if (pack.definitionRevision && String(pack.definitionRevision) !== String(item.definitionRevision)) {
-        eligible = false
-        message = 'Pack definition changed. Please remove and re-add.'
-      } else if (pack.available === false) {
-        eligible = false
-        message = 'Tester pack is currently unavailable.'
-      } else if (typeof pack.availablePackCount === 'number' && pack.availablePackCount < item.quantity) {
-        eligible = false
-        message = 'Requested quantity exceeds available pack stock.'
-      }
+    let maxQuantity = 0
+    if (!validIdentity || !validSelections) message = 'Unavailable — invalid tester pack identity or selection.'
+    else if (!testerPacks) message = 'Refresh the discovery catalog to check this saved pack.'
+    else if (!pack) message = 'Unavailable — this tester pack is not in the current catalog.'
+    else if (pack.definitionRevision !== item.definitionRevision) message = 'Pack definition changed. Please remove and re-add your pack.'
+    else if (pack.mode !== (item.kind === 'fixed_tester_pack' ? 'fixed' : 'configurable')) message = 'Pack definition changed. Please reselect your pack.'
+    else if (pack.available !== true || pack.active === false || (pack.status !== undefined && pack.status !== 'Published')) message = 'Tester pack is currently unavailable.'
+    else {
+      maxQuantity = item.kind === 'fixed_tester_pack'
+        ? Math.max(0, Math.min(99, pack.availablePackCount ?? 0))
+        : configurablePackLimit(pack, item.selections)
+      if (!maxQuantity) message = 'Check the tester quantity in your pack. One or more selected testers are unavailable or exceed stock or pack limits.'
+      else if (!validQuantity || item.quantity > maxQuantity) message = 'Requested quantity exceeds available pack stock. Please reduce the quantity.'
     }
-
-    const price = Number(pack?.salePrice ?? pack?.fixedSalePrice ?? pack?.fixedRegularPrice ?? 0)
-    const unitPrice = eligible && price > 0 ? price : 0
-    const lineAmount = eligible && unitPrice > 0 ? Math.round(unitPrice * 100) * item.quantity / 100 : null
-
+    const eligible = !message && validQuantity
+    let estimate: number | null = null
+    if (pack && item.kind === 'fixed_tester_pack') {
+      estimate = testerCatalogPrice({ ...pack, regularPrice: pack.fixedRegularPrice ?? pack.regularPrice ?? undefined })
+    } else if (pack && item.kind === 'configurable_tester_pack') {
+      let cents = 0
+      for (const selection of item.selections) {
+        const option = pack.allowedVariants?.find(v => v.testerVariantId.toLowerCase() === selection.variantId.toLowerCase())
+        const price = option ? testerCatalogPrice(option) : null
+        if (price === null || !Number.isFinite(price)) { cents = NaN; break }
+        cents += Math.round(price * 100) * selection.quantityPerPack
+      }
+      estimate = Number.isFinite(cents) ? cents / 100 : null
+    }
+    const unitPrice = eligible && estimate !== null && estimate >= 0 ? estimate : 0
     return {
       ...item,
-      product: {
-        id: item.productId,
-        name: pack?.name ?? item.name ?? 'Tester Pack',
-        slug: pack?.slug ?? '',
-        image: pack?.image ?? item.image ?? '',
-        category: 'Tester Packs',
-      },
+      product: { id: item.productId, name: pack?.name ?? item.name ?? 'Tester Pack', slug: pack?.slug ?? '', image: pack?.image ?? item.image ?? '', category: 'Tester Packs' },
       variant: undefined,
-      size: item.size ?? 'Tester pack',
+      size: item.size,
       unitPrice,
-      lineAmount,
-      eligible,
-      message,
-    }
-  }
-
-  if (item.kind === 'configurable_tester_pack') {
-    const pack = testerPacks?.find((candidate: any) => candidate.id === item.packId || candidate.packId === item.packId)
-    const validPackId = isVariantId(item.packId)
-    const validRevision = typeof item.definitionRevision === 'string' && /^[1-9][0-9]{0,18}$/.test(item.definitionRevision)
-    const validQuantity = Number.isInteger(item.quantity) && item.quantity > 0 && item.quantity <= 99
-    const validSelections = Array.isArray(item.selections) && item.selections.length >= 1 && item.selections.length <= 100
-      && item.selections.every((s) => isVariantId(s.variantId) && Number.isInteger(s.quantityPerPack) && s.quantityPerPack >= 1)
-
-    let eligible = validPackId && validRevision && validQuantity && validSelections
-    let message = ''
-
-    if (!validPackId || !validRevision || !validSelections) {
-      eligible = false
-      message = 'Unavailable — invalid custom tester pack selection.'
-    } else if (testerPacks) {
-      if (!pack) {
-        eligible = false
-        message = 'Unavailable — this tester pack is not in the current catalog.'
-      } else if (pack.definitionRevision && String(pack.definitionRevision) !== String(item.definitionRevision)) {
-        eligible = false
-        message = 'Pack definition changed. Please reselect your testers.'
-      } else if (pack.available === false) {
-        eligible = false
-        message = 'Tester pack is currently unavailable.'
-      } else {
-        const totalUnits = item.selections.reduce((sum, s) => sum + s.quantityPerPack, 0)
-        if (pack.minimumUnits != null && totalUnits < pack.minimumUnits) {
-          eligible = false
-          message = `Check the tester quantity in your pack (minimum ${pack.minimumUnits}).`
-        } else if (pack.maximumUnits != null && totalUnits > pack.maximumUnits) {
-          eligible = false
-          message = `Check the tester quantity in your pack (maximum ${pack.maximumUnits}).`
-        } else if (Array.isArray(pack.allowedVariants) && pack.allowedVariants.length > 0) {
-          for (const s of item.selections) {
-            const allowed = pack.allowedVariants.find((v: any) => v.testerVariantId === s.variantId)
-            if (!allowed || allowed.active === false || (typeof allowed.stockQuantity === 'number' && allowed.stockQuantity < s.quantityPerPack * item.quantity)) {
-              eligible = false
-              message = 'One or more selected testers are unavailable or exceed stock.'
-              break
-            }
-          }
-        }
-      }
-    }
-
-    let calculatedUnitPrice = 0
-    if (pack?.allowedVariants) {
-      for (const s of item.selections) {
-        const allowed = pack.allowedVariants.find((v: any) => v.testerVariantId === s.variantId)
-        const vPrice = Number(allowed?.salePrice ?? allowed?.effectivePrice ?? allowed?.regularPrice ?? 0)
-        calculatedUnitPrice += vPrice * s.quantityPerPack
-      }
-    }
-    const unitPrice = eligible && calculatedUnitPrice > 0 ? calculatedUnitPrice : 0
-    const lineAmount = eligible && unitPrice > 0 ? Math.round(unitPrice * 100) * item.quantity / 100 : null
-
-    return {
-      ...item,
-      product: {
-        id: item.productId,
-        name: pack?.name ?? item.name ?? 'Custom Tester Pack',
-        slug: pack?.slug ?? '',
-        image: pack?.image ?? item.image ?? '',
-        category: 'Tester Packs',
-      },
-      variant: undefined,
-      size: item.size ?? 'Custom tester pack',
-      unitPrice,
-      lineAmount,
-      eligible,
-      message,
+      lineAmount: eligible && estimate !== null ? Math.round(unitPrice * 100) * item.quantity / 100 : null,
+      eligible, message, maxQuantity,
     }
   }
 
@@ -173,7 +98,7 @@ export function resolveCartItem(item: CartItem, products: Product[], testerPacks
   const eligible = isVariantEligible(variant, item.quantity)
   return {
     ...item, product: product ?? { id: item.productId, name: 'Unavailable product', slug: '', image: '', category: '' },
-    variant, size: variant?.optionValue ?? item.size,
+    variant, size: variant?.optionValue ?? item.size, maxQuantity: variant ? Math.min(99, variant.stockQuantity) : 0,
     unitPrice: eligible ? variantPrice(variant) : 0,
     lineAmount: eligible ? Math.round(variantPrice(variant) * 100) * item.quantity / 100 : null, eligible,
     message: item.identity === 'legacy'

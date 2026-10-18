@@ -1,5 +1,5 @@
 import { Package, ShieldCheck, ShoppingBag, Sparkles, Truck, Zap } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { PublicTesterPack } from '../../services/publicTesterPacksApi'
 import { getFixedPackLineId, useCartStore } from '../../store/cartStore'
@@ -27,7 +27,8 @@ export function FixedPackView({ pack, onAddToCartSuccess }: FixedPackViewProps) 
   const maxAvailable = typeof pack.availablePackCount === 'number'
     ? Math.max(0, Math.min(99, pack.availablePackCount - alreadyInCart))
     : 99
-  const isAvailable = pack.available !== false && maxAvailable > 0
+  const isAvailable = pack.available === true && maxAvailable > 0
+  useEffect(() => { setQuantity(current => Math.max(1, Math.min(current, maxAvailable))) }, [maxAvailable])
 
   const handleAddToCart = () => {
     if (!isAvailable) {
@@ -140,7 +141,7 @@ export function FixedPackView({ pack, onAddToCartSuccess }: FixedPackViewProps) 
               </>
             ) : (
               <span className="font-serif text-3xl font-bold text-royal-burgundy">
-                {pack.fixedRegularPrice != null ? formatCheckoutCurrency(pack.fixedRegularPrice) : 'PKR 0.00'}
+                {pack.fixedRegularPrice != null ? formatCheckoutCurrency(pack.fixedRegularPrice) : 'Price confirmed at checkout'}
               </span>
             )}
           </div>
@@ -261,7 +262,7 @@ export function FixedPackView({ pack, onAddToCartSuccess }: FixedPackViewProps) 
         <div className="grid grid-cols-2 gap-4 border-t border-soft-border/80 pt-6 text-xs text-muted-taupe">
           <div className="flex items-start gap-2.5">
             <Truck aria-hidden="true" className="h-4 w-4 shrink-0 text-champagne" />
-            <span>Complimentary nationwide delivery on orders above PKR 5,000.</span>
+            <span>Delivery charges are confirmed at checkout.</span>
           </div>
           <div className="flex items-start gap-2.5">
             <ShieldCheck aria-hidden="true" className="h-4 w-4 shrink-0 text-champagne" />

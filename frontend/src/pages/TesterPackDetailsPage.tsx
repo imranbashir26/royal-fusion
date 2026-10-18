@@ -1,5 +1,5 @@
 import { ArrowLeft, RefreshCw } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { EmptyState } from '../components/common/EmptyState'
 import { ConfigurablePackBuilder } from '../components/testerPacks/ConfigurablePackBuilder'
@@ -12,26 +12,32 @@ export function TesterPackDetailsPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const loadPack = async () => {
+  const loadId = useRef(0)
+  const loadPack = useCallback(async () => {
+    const requestId = ++loadId.current
     if (!slugOrId) return
     setIsLoading(true)
     setError(null)
+    setPack(null)
     try {
       const data = await publicTesterPacksApi.getBySlugOrId(slugOrId)
+      if (requestId !== loadId.current) return
       setPack(data)
       if (!data) {
         setError('The requested discovery pack could not be found.')
       }
     } catch (err) {
+      if (requestId !== loadId.current) return
       setError(err instanceof Error ? err.message : 'Failed to load discovery pack details')
     } finally {
-      setIsLoading(false)
+      if (requestId === loadId.current) setIsLoading(false)
     }
-  }
+  }, [slugOrId])
 
   useEffect(() => {
     void loadPack()
-  }, [slugOrId])
+    return () => { loadId.current++ }
+  }, [loadPack])
 
   return (
     <div className="container-lux py-10 md:py-14">
@@ -95,9 +101,9 @@ export function TesterPackDetailsPage() {
       {!isLoading && pack && (
         <>
           {pack.mode === 'fixed' ? (
-            <FixedPackView pack={pack} />
+            <FixedPackView key={`${pack.id}:${pack.definitionRevision}`} pack={pack} />
           ) : (
-            <ConfigurablePackBuilder pack={pack} />
+            <ConfigurablePackBuilder key={`${pack.id}:${pack.definitionRevision}`} pack={pack} />
           )}
         </>
       )}

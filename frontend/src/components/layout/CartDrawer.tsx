@@ -1,3 +1,4 @@
+import { useCartTesterPacks } from '../../storefront/useCartTesterPacks'
 import { resolveCartItem } from '../../services/productVariants'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ShoppingBag, Trash2, X } from 'lucide-react'
@@ -21,10 +22,12 @@ export function CartDrawer() {
     toggleItemSelection,
     updateQuantity,
   } = useCartStore()
+  const { testerPacks, packsLoading, packsError, refreshPacks } = useCartTesterPacks(isCartOpen ? items : [])
+  const hasPacks = items.some(item => item.kind === 'fixed_tester_pack' || item.kind === 'configurable_tester_pack')
   const selectedLineIdSet = new Set(selectedLineIds)
 
   const enrichedItems = items
-    .map((item) => resolveCartItem(item, products))
+    .map((item) => resolveCartItem(item, products, testerPacks))
 
   const selectedItems = enrichedItems.filter((item) => selectedLineIdSet.has(item.lineId) && item.eligible)
   const invalidSelection = enrichedItems.some((item) => selectedLineIdSet.has(item.lineId) && !item.eligible)
@@ -145,13 +148,13 @@ export function CartDrawer() {
                           </div>
                           <div className="mt-4 flex items-center justify-between gap-3">
                             <QuantityStepper
-                              disabled={!item.eligible}
-                              max={item.variant ? Math.min(99, item.variant.stockQuantity) : 99}
-                              onChange={(value) => updateQuantity(item.lineId, value, products)}
+                              disabled={item.kind === 'fixed_tester_pack' || item.kind === 'configurable_tester_pack' ? item.maxQuantity < 1 : !item.eligible}
+                              max={item.maxQuantity}
+                              onChange={(value) => updateQuantity(item.lineId, value, products, testerPacks)}
                               value={item.quantity}
                             />
                             <p className="font-extrabold text-brownroyal">
-                              {item.lineAmount === null ? 'Unavailable' : formatCurrency(item.lineAmount)}
+                              {item.lineAmount === null ? (item.eligible ? 'Quoted at checkout' : 'Unavailable') : formatCurrency(item.lineAmount)}
                             </p>
                           </div>
                         </div>
@@ -165,9 +168,10 @@ export function CartDrawer() {
             {enrichedItems.length > 0 && (
               <div className="border-t border-champagne/25 bg-marble p-5">
                 <div className="mb-4 flex items-center justify-between">
-                  <span className="text-brownroyal/70">Selected subtotal</span>
-                  <span className="text-xl font-extrabold text-burgundy">{formatCurrency(subtotal)}</span>
+                  <span className="text-brownroyal/70">{hasPacks ? 'Catalog estimate' : 'Selected subtotal'}</span>
+                  <span className="text-xl font-extrabold text-burgundy">{selectedItems.some(item => item.lineAmount === null) ? 'Quoted at checkout' : formatCurrency(subtotal)}</span>
                 </div>
+                {hasPacks && <p className="my-3 text-sm text-burgundy" role="status">{packsLoading ? 'Checking discovery pack availability...' : packsError || 'Final pack prices, discounts, shipping and totals are confirmed by the checkout quote.'}{packsError && <button type="button" className="ml-2 underline" onClick={refreshPacks}>Retry</button>}</p>}
                 {(selectedItems.length === 0 || invalidSelection) && (
                   <p className="mb-4 text-sm font-semibold text-burgundy" role="status">
                     {invalidSelection ? 'Adjust or deselect unavailable items to continue.' : 'Select at least one product to continue.'}
