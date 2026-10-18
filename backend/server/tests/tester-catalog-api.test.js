@@ -38,11 +38,11 @@ async function http(path,{method='GET',actor,body,csrf=true,requestOrigin=origin
  if(actor){const token=getSessionCsrfToken('synthetic-handle',config);headers.Cookie=`${names.access}=${actor}; ${names.refresh}=refresh; ${names.session}=synthetic-handle; ${names.csrf}=${token}`;if(csrf)headers['X-RF-CSRF']=token}
  if(method!=='GET')headers.Origin=requestOrigin
  const response=await fetch(base+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body)})
- return {status:response.status,body:await response.json()}
+ return {status:response.status,body:await response.json(),requestId:response.headers.get('x-request-id')}
 }
 test('public pack read supplies complete safe recipe, fixed pricing and advisory availability without purchasing',async()=>{
  const r=await http('/public/tester-packs/'+pack.product.id);assert.equal(r.status,200)
- assert.equal(r.body.data.fixedRegularPrice,500);assert.equal(r.body.data.availablePackCount,6);assert.equal(r.body.data.components.length,1);assert.equal(r.body.data.components[0].quantityPerPack,2);assert.equal(r.body.data.purchasable,false);assert.equal(r.body.data.components[0].sourceProductId,undefined);assert.equal(r.body.meta.requestId,'tester-http-request-id')
+ assert.equal(r.body.data.fixedRegularPrice,500);assert.equal(r.body.data.availablePackCount,6);assert.equal(r.body.data.components.length,1);assert.equal(r.body.data.components[0].quantityPerPack,2);assert.equal(r.body.data.purchasable,false);assert.equal(r.body.data.components[0].sourceProductId,undefined);assert.equal(r.body.meta.requestId,r.requestId);assert.match(r.requestId,/^req_[0-9a-f-]{36}$/);assert.notEqual(r.requestId,'tester-http-request-id')
 })
 test('normal Admin list/get/update/archive exclude NULL-price packs before any mutation',async()=>{
  const normal=new ProductAdminService(client)

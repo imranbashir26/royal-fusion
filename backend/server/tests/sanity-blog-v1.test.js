@@ -9,7 +9,7 @@ import rateLimit from 'express-rate-limit'
 import { isAllowedCorsOrigin } from '../auth/config.js'
 import { createClient } from '@sanity/client'
 import { createBlogSanityConfig } from '../config/blogSanity.js'
-import { requestContext } from '../middleware/authSecurity.js'
+import { requestContext, createRedactedRequestLogger, createRedactedErrorHandler } from '../middleware/authSecurity.js'
 import { createPublicBlogsV1Router } from '../routes/blogsV1.js'
 import { BLOG_ORDER } from '../schemas/blogV1.js'
 import { BlogApiError, BlogRepository } from '../services/blogRepository.js'
@@ -348,7 +348,7 @@ test('HTTP invalid slugs, malformed URI escapes and detail query parameters have
   for (const path of ['/Upper', '/two--hyphens', `/${'a'.repeat(97)}`, '/%2farticle', '/%ZZ', '/valid/extra', '/fragrance-journal?perspective=drafts']) {
     const response = await fetch(`${base}${path}`)
     assert.equal(response.status, 400, path)
-    assert.deepEqual((await response.json()).error, { code: 'INVALID_BLOG_REQUEST', message: 'Blog request is invalid.' })
+    assert.deepEqual((await response.json()).error, { code: 'INVALID_BLOG_REQUEST', message: 'Blog request is invalid.', requestId: response.headers.get('x-request-id') })
   }
   assert.deepEqual(state.calls, [])
 })
@@ -358,7 +358,7 @@ test('HTTP missing/unpublished content is 404, upstream failure is 503 and valid
   for (const slug of ['missing-article', 'unpublished-article']) {
     const response = await fetch(`${base}/${slug}`)
     assert.equal(response.status, 404)
-    assert.deepEqual((await response.json()).error, { code: 'BLOG_NOT_FOUND', message: 'Article not found.' })
+    assert.deepEqual((await response.json()).error, { code: 'BLOG_NOT_FOUND', message: 'Article not found.', requestId: response.headers.get('x-request-id') })
   }
   const source = createSanityBlogSource({ client: { fetch: async () => { throw new Error('PRIVATE_FIXTURE_TOKEN stack endpoint') } } })
   const failed = await start(t, new BlogV1Service(new BlogRepository({ source, canonicalOrigin })))
@@ -366,7 +366,9 @@ test('HTTP missing/unpublished content is 404, upstream failure is 503 and valid
   const response = await fetch(failed, { headers: { 'X-Request-ID': id } })
   assert.equal(response.status, 503)
   assert.equal(response.headers.get('cache-control'), 'no-store')
-  assert.deepEqual(await response.json(), { error: { code: 'BLOGS_UNAVAILABLE', message: 'Articles are temporarily unavailable.', requestId: id } })
+  const requestId = response.headers.get('x-request-id')
+  assert.match(requestId, /^req_[0-9a-f-]{36}$/); assert.notEqual(requestId, id)
+  assert.deepEqual(await response.json(), { error: { code: 'BLOGS_UNAVAILABLE', message: 'Articles are temporarily unavailable.', requestId } })
 })
 
 test('HTTP timeout returns 503 without a draft or stale fallback', { timeout: 3000 }, async t => {
@@ -374,7 +376,53 @@ test('HTTP timeout returns 503 without a draft or stale fallback', { timeout: 30
   const base = await start(t, new BlogV1Service(new BlogRepository({ source, canonicalOrigin })))
   const response = await fetch(`${base}/valid-slug`)
   assert.equal(response.status, 503)
-  assert.deepEqual(await response.json(), { error: { code: 'BLOGS_UNAVAILABLE', message: 'Articles are temporarily unavailable.' } })
+  assert.deepEqual(await response.json(), { error: { code: 'BLOGS_UNAVAILABLE', message: 'Articles are temporarily unavailable.', requestId: response.headers.get('x-request-id') } })
+})
+
+test('blog correlation matches middleware, headers and redacted access/error logs despite malicious client metadata', async t => {
+  const capability = 'a1'.repeat(32), forgedId = 'req_00000000-0000-4000-8000-000000000001'
+  const privateValues = [capability, forgedId, 'private@example.invalid', 'private-auth-token', 'private-cookie-value']
+  const events = [], contexts = [], logger = { info: event => events.push(event), error: event => events.push(event) }
+  const state = fixture(), service = new BlogV1Service({
+    list: input => state.repository.list(input),
+    async getBySlug() { throw new Error(privateValues.join(' ')) },
+  })
+  const app = express()
+  app.use(requestContext, createRedactedRequestLogger(logger), (req, _res, next) => { contexts.push(req.requestId); next() })
+  app.use('/api/v1/public/blogs', createPublicBlogsV1Router(service))
+  app.get('/logging-failure/:secret', () => { throw new Error(privateValues.join(' ')) })
+  app.use(createRedactedErrorHandler(logger))
+  const server = app.listen(0, '127.0.0.1'); await once(server, 'listening')
+  t.after(() => new Promise(resolve => server.close(resolve)))
+  const base = `http://127.0.0.1:${server.address().port}`, ids = new Set()
+  const encoded = [...capability].map(char => '%' + char.charCodeAt(0).toString(16)).join('')
+  const cases = [
+    ['/api/v1/public/blogs', 200, '/'],
+    [`/api/v1/public/blogs?capability=${capability}`, 400, '/'],
+    [`/api/v1/public/blogs/${capability}`, 503, '/:slug'],
+    [`/api/v1/public/blogs/${encoded}`, 503, '/:slug'],
+    [`/logging-failure/${capability}?email=private%40example.invalid`, 500, '/logging-failure/:secret'],
+    [`/unknown/${encoded}?capability=${capability}`, 404, 'unmatched'],
+  ]
+  for (const [path, status, route] of cases) {
+    const start = events.length, response = await fetch(base + path, { headers: {
+      'X-Request-ID': ids.size % 2 ? forgedId : capability,
+      Authorization: 'Bearer private-auth-token', Cookie: 'synthetic=private-cookie-value',
+    } })
+    assert.equal(response.status, status)
+    const requestId = response.headers.get('x-request-id'), body = await response.json().catch(() => null)
+    assert.match(requestId, /^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    assert.equal(requestId, contexts.at(-1)); assert(!ids.has(requestId)); ids.add(requestId)
+    assert.notEqual(requestId, capability); assert.notEqual(requestId, forgedId)
+    if (status >= 400 && status !== 404) assert.equal(body.error?.requestId ?? body.requestId, requestId)
+    const related = events.slice(start)
+    assert.equal(related.filter(event => event.event === 'http.request').length, 1)
+    // Blog errors are handled by their router; only the global exception logs http.error.
+    assert.equal(related.filter(event => event.event === 'http.error').length, status === 500 ? 1 : 0)
+    assert(related.every(event => event.requestId === requestId && event.route === route && event.status === status))
+    for (const value of privateValues) assert(!JSON.stringify(events).includes(value), 'Sensitive metadata in logs')
+    assert(related.every(event => !('path' in event) && !('headers' in event) && !('body' in event)))
+  }
 })
 
 test('mutation methods are denied, OPTIONS is read-only and no write-capable routes exist', async t => {
@@ -416,7 +464,7 @@ test('composed public middleware preserves exact-origin CORS and request-context
   const base = await startComposed(t), id = '00000000-0000-4000-8000-000000000002'
   const response = await fetch(`${base}/api/v1/public/blogs`, { headers: { Origin: canonicalOrigin, 'X-Request-ID': id } })
   assert.equal(response.status, 200); assert.equal(response.headers.get('access-control-allow-origin'), canonicalOrigin)
-  assert.equal(response.headers.get('x-request-id'), id); assert.equal(response.headers.get('cache-control'), 'no-store')
+  assert.match(response.headers.get('x-request-id'), /^req_[0-9a-f-]{36}$/); assert.notEqual(response.headers.get('x-request-id'), id); assert.equal(response.headers.get('cache-control'), 'no-store')
   const denied = await fetch(`${base}/api/v1/public/blogs`, { headers: { Origin: 'https://foreign.invalid' } })
   assert.equal(denied.status, 403); assert.equal(denied.headers.get('access-control-allow-origin'), null)
 })

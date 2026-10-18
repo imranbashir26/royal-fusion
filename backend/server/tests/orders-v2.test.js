@@ -29,11 +29,11 @@ after(async()=>{if(server)await new Promise(r=>server.close(r));if(f)await f.db.
 async function http(path,body,{actor,csrf=true,requestOrigin=origin,raw=false}={}){
  const headers={'Content-Type':'application/json','Origin':requestOrigin,'X-Request-ID':'v2-api-request-id'}
  if(actor){const token=getSessionCsrfToken('synthetic-handle',config);headers.Cookie=`${names.access}=${actor}; ${names.refresh}=refresh; ${names.session}=synthetic-handle; ${names.csrf}=${token}`;if(csrf)headers['X-RF-CSRF']=token}
- const res=await fetch(base+path,{method:'POST',headers,body:raw?body:JSON.stringify(body)});return {status:res.status,body:await res.json(),cache:res.headers.get('cache-control')}
+ const res=await fetch(base+path,{method:'POST',headers,body:raw?body:JSON.stringify(body)});return {status:res.status,body:await res.json(),cache:res.headers.get('cache-control'),requestId:res.headers.get('x-request-id')}
 }
 test('guest v2 quote uses authoritative SQL envelope and requestId with ordering disabled',async()=>{
  const r=await http('/checkout/quote',quoteRequest([fixedLine(f)]));assert.equal(r.status,200);assert.equal(r.body.data.subtotal,450);assert.equal(r.body.data.orderingEnabled,false)
- assert.equal(r.body.data.contractVersion,2);assert.equal(r.body.meta.requestId,'v2-api-request-id');assert.equal(r.cache,'no-store')
+ assert.equal(r.body.data.contractVersion,2);assert.equal(r.body.meta.requestId,r.requestId);assert.match(r.requestId,/^req_[0-9a-f-]{36}$/);assert.notEqual(r.requestId,'v2-api-request-id');assert.equal(r.cache,'no-store')
  assert.equal(r.body.data._demand,undefined);assert.equal(r.body.data._couponId,undefined)
 })
 test('verified customer UUID is server-derived; administrator/CSRF/origin failures reject',async()=>{
@@ -81,7 +81,7 @@ test('actual API parser redacts malformed JSON on canonical and case/trailing-sl
  try {
   for(const path of ['/api/v2/public/checkout/quote','/api/v2/public/orders/','/api/V2/public/orders']){
    const r=await fetch(api.baseUrl+path,{method:'POST',headers:{'Content-Type':'application/json','X-Request-ID':'parser-boundary-id'},body:'{"customer_secret":"private-value",'})
-   assert.equal(r.status,400);const body=await r.json();assert.equal(body.error.code,'INVALID_CHECKOUT_REQUEST');assert.equal(body.error.requestId,'parser-boundary-id')
+   assert.equal(r.status,400);const body=await r.json();assert.equal(body.error.code,'INVALID_CHECKOUT_REQUEST');assert.equal(body.error.requestId,r.headers.get('x-request-id'));assert.match(body.error.requestId,/^req_[0-9a-f-]{36}$/);assert.notEqual(body.error.requestId,'parser-boundary-id')
    assert.doesNotMatch(JSON.stringify(body),/private-value|customer_secret|stack|SyntaxError/)
   }
  }finally{await api.stop()}

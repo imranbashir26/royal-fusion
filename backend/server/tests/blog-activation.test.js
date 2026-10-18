@@ -192,7 +192,8 @@ test('explicit activation constructs once without fetching and delivers publishe
 test('enabled mounting preserves headers, exact CORS and unrelated public/auth routes', async t => {
   const state = await start(t), id = '00000000-0000-4000-8000-000000000004'
   const response = await fetch(`${state.base}/api/v1/public/blogs`, { headers: { Origin: origin, 'X-Request-ID': id } })
-  assert.equal(response.headers.get('x-request-id'), id)
+  assert.match(response.headers.get('x-request-id'), /^req_[0-9a-f-]{36}$/)
+  assert.notEqual(response.headers.get('x-request-id'), id)
   assert.equal(response.headers.get('access-control-allow-origin'), origin)
   assert.equal(response.headers.get('x-content-type-options'), 'nosniff')
   assert.equal(response.headers.get('cache-control'), 'no-store')

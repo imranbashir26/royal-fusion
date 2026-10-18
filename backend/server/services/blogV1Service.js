@@ -41,7 +41,7 @@ export function blogErrorResponse(error, requestId) {
   const safe = safeError(error)
   return { status: safe.status, body: { error: {
     code: safe.code, message: safe.message,
-    ...(typeof requestId === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(requestId) ? { requestId } : {}),
+    ...(typeof requestId === 'string' && /^req_[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(requestId) ? { requestId } : {}),
   } } }
 }
 /** @param {unknown} error */

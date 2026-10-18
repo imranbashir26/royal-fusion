@@ -86,7 +86,7 @@ test('missing article and upstream failure have distinct safe responses', async 
   const unavailable = new BlogV1Service(new BlogRepository({ source, canonicalOrigin }))
   await assert.rejects(unavailable.list(), apiError('BLOGS_UNAVAILABLE', 503))
   await assert.rejects(unavailable.getBySlug('valid-slug'), apiError('BLOGS_UNAVAILABLE', 503))
-  const requestId = '00000000-0000-4000-8000-000000000001'
+  const requestId = 'req_00000000-0000-4000-8000-000000000001'
   assert.deepEqual(blogErrorResponse(new Error('PRIVATE_FIXTURE_TOKEN'), requestId), {
     status: 503, body: { error: { code: 'BLOGS_UNAVAILABLE', message: 'Articles are temporarily unavailable.', requestId } },
   })
@@ -94,6 +94,16 @@ test('missing article and upstream failure have distinct safe responses', async 
   assert.equal(blogErrorResponse(new BlogApiError('INVALID_BLOG_REQUEST')).status, 400)
   assert.equal(JSON.stringify(blogErrorResponse(new Error('PRIVATE_FIXTURE_TOKEN'), 'PRIVATE_FIXTURE_TOKEN')).includes('PRIVATE_FIXTURE'), false)
   await assert.rejects(new BlogRepository({ canonicalOrigin }).list(), apiError('BLOGS_UNAVAILABLE', 503))
+})
+
+test('blog error correlation preserves server ID format and rejects malformed metadata', () => {
+  const requestId = 'req_00000000-0000-4000-8000-000000000001'
+  for (const code of ['INVALID_BLOG_REQUEST', 'BLOG_NOT_FOUND', 'BLOGS_UNAVAILABLE']) {
+    assert.equal(blogErrorResponse(new BlogApiError(code), requestId).body.error.requestId, requestId)
+  }
+  for (const value of [undefined, null, {}, 'a'.repeat(64), requestId.slice(4), `${requestId}/secret`, `${requestId}\n`, 'req_not-a-uuid']) {
+    assert.equal('requestId' in blogErrorResponse(new Error('PRIVATE_FIXTURE_TOKEN'), value).body.error, false)
+  }
 })
 
 test('public projection preserves references, dates, featured image geometry and SEO', async () => {

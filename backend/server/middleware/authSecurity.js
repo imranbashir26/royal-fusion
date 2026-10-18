@@ -1,4 +1,4 @@
-import { nanoid } from 'nanoid'
+import { randomUUID } from 'node:crypto'
 import {
   AUTH_ERROR_CODES,
   createAuthError,
@@ -18,8 +18,9 @@ import {
 import { AuthGatewayError } from '../services/supabaseAuthGateway.js'
 
 export function requestContext(req, res, next) {
-  const incoming = String(req.get('X-Request-ID') ?? '')
-  req.requestId = /^[A-Za-z0-9_-]{8,80}$/.test(incoming) ? incoming : `req_${nanoid(12)}`
+  // Client correlation headers can contain bearer credentials. Own the ID for
+  // the entire request, including diagnostics and the response tracing header.
+  req.requestId = `req_${randomUUID()}`
   res.set('X-Request-ID', req.requestId)
   next()
 }
@@ -173,20 +174,49 @@ export function sendAuthError(res, contract, requestId) {
   return res.status(contract.status).json(body)
 }
 
+const loggedMethods = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'CONNECT', 'TRACE'])
+export function requestLogMetadata(req) {
+  return {
+    requestId: req.requestId,
+    method: loggedMethods.has(req.method) ? req.method : 'OTHER',
+    // Express supplies the developer's route definition, never parameter values.
+    // Do not concatenate baseUrl: mounted router parameters contain client data.
+    route: typeof req.route?.path === 'string' ? req.route.path : 'unmatched',
+  }
+}
+
+const checkoutLogCategories = new Set([
+  'CHECKOUT_UNAVAILABLE', 'CHECKOUT_FAILED', 'CHECKOUT_RATE_LIMITED', 'INVALID_CHECKOUT_REQUEST',
+  'INVALID_PAYMENT_METHOD', 'INVALID_SHIPPING_INFORMATION', 'INVALID_VARIANT_ID', 'INVALID_QUANTITY',
+  'QUOTE_CHANGED', 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_AMBIGUOUS', 'VARIANT_UNAVAILABLE',
+  'VARIANT_NOT_FOUND', 'OUT_OF_STOCK', 'INSUFFICIENT_STOCK', 'INVALID_COUPON', 'CUSTOMER_UNAVAILABLE',
+  'CHECKOUT_LIMIT_EXCEEDED', 'SELECTION_UNAVAILABLE', 'DEFINITION_STALE', 'CHECKOUT_CHANGED', 'INVALID_PACK_QUANTITY',
+])
+export const checkoutLogCategory = code => checkoutLogCategories.has(code) ? code : 'UNEXPECTED_FAILURE'
+
 export function createRedactedRequestLogger(logger = console) {
   return (req, res, next) => {
     const startedAt = Date.now()
     res.on('finish', () => {
       logger.info?.({
         event: 'http.request',
-        requestId: req.requestId,
-        method: req.method,
-        path: req.path,
+        ...requestLogMetadata(req),
         status: res.statusCode,
         durationMs: Date.now() - startedAt,
       })
     })
     next()
+  }
+}
+
+export function createRedactedErrorHandler(logger = console) {
+  return (error, req, res, _next) => {
+    const status = error.status || 500
+    const message = status >= 500 ? 'Something went wrong. Please try again.' : error.message
+    if (status >= 500) {
+      logger.error?.({ event: 'http.error', ...requestLogMetadata(req), status: Number.isInteger(status) ? status : 500 })
+    }
+    res.status(status).json({ message, requestId: req.requestId })
   }
 }
 

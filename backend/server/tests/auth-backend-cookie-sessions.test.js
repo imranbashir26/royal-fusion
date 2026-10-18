@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { afterEach, test } from 'node:test'
 import cookieParser from 'cookie-parser'
 import cors from 'cors'
@@ -24,10 +24,15 @@ import { createAuthRuntime } from '../auth/runtime.js'
 import {
   authErrorHandler,
   createRedactedRequestLogger,
+  createRedactedErrorHandler,
+  requestLogMetadata,
+  checkoutLogCategory,
   requestContext,
   requireRecentAuthentication,
 } from '../middleware/authSecurity.js'
 import { createAuthV1Router } from '../routes/authV1.js'
+import { createOrdersV1Router } from '../routes/ordersV1.js'
+import { createOrdersV2Router } from '../routes/ordersV2.js'
 import { AuthSessionError } from '../services/authSessionService.js'
 import { AdminAuthorizationService } from '../services/adminAuthorizationService.js'
 import {
@@ -690,6 +695,7 @@ test('request logging records only a redacted operational envelope', () => {
     requestId: 'req_redaction_test',
     method: 'POST',
     path: '/api/v1/auth/signin',
+    route: { path: '/signin' },
     headers: {
       authorization: opaque('authorization'),
       cookie: opaque('cookie'),
@@ -700,9 +706,135 @@ test('request logging records only a redacted operational envelope', () => {
   response.emit('finish')
   assert.equal(events.length, 1)
   assert.deepEqual(Object.keys(events[0]).sort(), [
-    'durationMs', 'event', 'method', 'path', 'requestId', 'status',
+    'durationMs', 'event', 'method', 'requestId', 'route', 'status',
   ])
   assertNoCredentialFields(events[0])
+  assert.equal(events[0].route, '/signin')
+})
+
+test('server-owned logging metadata ignores client IDs and excludes unknown methods and exception codes', () => {
+  const capability = randomBytes(32).toString('hex'), ids = new Set()
+  for (let i = 0; i < 100; i++) {
+    const req = { get: () => capability }, headers = {}
+    requestContext(req, { set: (name, value) => { headers[name] = value } }, () => {})
+    assert.match(req.requestId, /^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    assert.equal(headers['X-Request-ID'], req.requestId)
+    assert.notEqual(req.requestId, capability); assert(!ids.has(req.requestId)); ids.add(req.requestId)
+  }
+  const safe = requestLogMetadata({ requestId: 'server-owned', method: capability, path: capability, originalUrl: capability, baseUrl: capability, route: { path: /sensitive/ } })
+  assert.deepEqual(safe, { requestId: 'server-owned', method: 'OTHER', route: 'unmatched' })
+  for (const code of ['INVALID_' + capability, capability, { toJSON() { throw Error('Must not serialize exceptions') } }]) assert.equal(checkoutLogCategory(code), 'UNEXPECTED_FAILURE')
+  for (const code of ['CHECKOUT_UNAVAILABLE', 'INVALID_QUANTITY', 'IDEMPOTENCY_CONFLICT', 'QUOTE_CHANGED']) assert.equal(checkoutLogCategory(code), code)
+})
+
+test('logging metadata stays safe for Express 5 matched, encoded, nested, unmatched and error routes', async t => {
+  const capability = randomBytes(32).toString('hex'), verifier = createHash('sha256').update(capability).digest('hex')
+  const privateValues = [capability, verifier, 'private@example.invalid', 'private-contact-phone', 'private-shipping-address', 'private-auth-header', 'private-cookie-value']
+  const events = [], logger = { info: event => events.push(event), error: event => events.push(event) }
+  const app = express(); app.use(requestContext, createRedactedRequestLogger(logger), express.json())
+  app.post('/success', (req, res) => res.json({ meta: { requestId: req.requestId }, ok: true }))
+  app.get('/failure/:secret', () => { throw Object.assign(Error(privateValues.join(' ')), { cause: { body: privateValues }, details: privateValues, code: 'INVALID_' + capability }) })
+  const nested = express.Router({ mergeParams: true })
+  nested.get('/items/:id', (req, res) => res.json({ meta: { requestId: req.requestId }, ok: true }))
+  app.use('/mounted/:private', nested)
+  app.use(createRedactedErrorHandler(logger))
+  const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve))
+  t.after(() => new Promise(resolve => server.close(resolve)))
+  const base = `http://127.0.0.1:${server.address().port}`
+  const encoded = [...capability].map(char => '%' + char.charCodeAt(0).toString(16)).join('')
+  const cases = [
+    ['POST', '/success?capability=' + capability + '&email=private%40example.invalid', 200, '/success'],
+    ['GET', '/failure/' + capability, 500, '/failure/:secret'],
+    ['GET', '/failure/' + encoded + '?fingerprint=' + verifier, 500, '/failure/:secret'],
+    ['GET', '/mounted/' + capability + '/items/' + verifier, 200, '/items/:id'],
+    ['GET', '/unknown/' + capability, 404, 'unmatched'],
+    ['GET', '/unknown/' + encoded + '?secret=' + capability, 404, 'unmatched'],
+    ['GET', '/api/v1/public/checkout/' + capability, 404, 'unmatched'],
+  ]
+  for (const [method, path, status, route] of cases) {
+    let passed = false
+    await t.test(method + ' safe route ' + route, async () => {
+      const start = events.length, res = await fetch(base + path, { method, headers: {
+        'X-Request-ID': capability, Authorization: 'Bearer private-auth-header', Cookie: 'synthetic=private-cookie-value', 'Content-Type': 'application/json',
+      }, ...(method === 'POST' ? { body: JSON.stringify({ quoteFingerprint: capability, credential_verifier: verifier, contact: { email: privateValues[2], phone: privateValues[3] }, shipping: { address: privateValues[4] } }) } : {}) })
+      assert.equal(res.status, status)
+      const body = await res.json().catch(() => null), id = res.headers.get('x-request-id'), related = events.slice(start)
+      assert.match(id, /^req_[0-9a-f-]{36}$/); assert.notEqual(id, capability)
+      if (body) assert.equal(body.meta?.requestId ?? body.requestId, id)
+      assert.equal(related.filter(event => event.event === 'http.request').length, 1)
+      if (status === 500) assert.equal(related.filter(event => event.event === 'http.error').length, 1)
+      assert(related.every(event => event.requestId === id && event.route === route && event.method === method))
+      assert(related.every(event => !('path' in event) && !('headers' in event) && !('body' in event)))
+      for (const value of privateValues) assert(!JSON.stringify(events).includes(value), 'Sensitive value in logs')
+      passed = true
+    })
+    if (!passed) throw Error('Critical logging regression; stopped')
+  }
+})
+
+test('checkout logging correlates V1/V2 quote and order success/RPC/transport failures without sensitive metadata', async t => {
+  const capability = randomBytes(32).toString('hex'), verifier = createHash('sha256').update(capability).digest('hex')
+  const variant = 'b35b3be7-a7dd-4c70-9c14-d1a9394d4711', product = randomUUID(), token = randomUUID(), orderId = randomUUID(), methodId = randomUUID()
+  const contact = { name: 'Private Synthetic Customer', email: 'private@example.invalid', phone: '00012345678' }
+  const shipping = { address: 'Private synthetic shipping address', city: 'Karachi', province: 'Sindh', notes: 'Private synthetic notes' }
+  const privateValues = [capability, verifier, ...Object.values(contact), ...Object.values(shipping), 'private-auth-header', 'private-cookie-value']
+  const events = [], calls = [], logger = { info: event => events.push(event), warn: event => events.push(event), error: event => events.push(event) }
+  const amounts = { subtotal: 1000, discount: 0, shippingFee: 250, total: 1250, currency: 'PKR' }
+  const identity = ['normal_variant', variant], line = { id: randomUUID(), kind: 'normal_variant', variantId: variant, productId: product, name: 'Synthetic fragrance', sku: 'SYNTHETIC', size: '50 ml', quantity: 1, unitPrice: 1000, lineTotal: 1000, position: 0, identity, identityHash: createHash('sha256').update(JSON.stringify(identity)).digest('hex'), components: [] }
+  let mode = 'success'
+  const client = { async rpc(name, args) {
+    calls.push({ name, args: structuredClone(args) })
+    const failure = { code: 'XX000', message: privateValues.join(' '), details: { args, privateValues }, hint: capability, stack: privateValues.join(' ') }
+    if (mode === 'rpc') return { error: failure }
+    if (mode === 'transport') throw Object.assign(Error(failure.message), failure)
+    if (name.startsWith('quote_')) return { data: { ...amounts, quoteFingerprint: capability, idempotencyKey: token, shippingMethodId: methodId, paymentMethods: ['Cash on Delivery'], ...(name === 'quote_checkout_v2' ? { contractVersion: 2, lines: [line], orderingEnabled: false } : {}) } }
+    const key = name === 'create_order_transaction_v2' ? args.p_request.idempotencyKey : args.p_idempotency_key.slice(9)
+    return { data: { ...amounts, id: orderId, idempotencyKey: key, orderNumber: 'RF-20261018-1234ABCD', status: 'Pending', paymentStatus: 'Unpaid', paymentMethod: 'Cash on Delivery', idempotent: false,
+      ...(name === 'create_order_transaction_v2' ? { contractVersion: 2, snapshotVersion: 2, quoteFingerprint: capability, requestFingerprint: verifier, lines: [line] } : {}) } }
+  } }
+  const config = testConfig(), runtime = { config, repository: { client }, sessionService: { restore: async () => { throw Error('No synthetic auth cookies expected') } } }
+  const app = express(); app.use(requestContext, createRedactedRequestLogger(logger), express.json(), cookieParser())
+  app.use('/api/v1/public', createOrdersV1Router(runtime, { client, logger }))
+  app.use('/api/v2/public', createOrdersV2Router(runtime, { client, logger, allowNonProductionOrders: true }))
+  app.use(authErrorHandler(config), createRedactedErrorHandler(logger))
+  const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve))
+  t.after(() => new Promise(resolve => server.close(resolve)))
+  for (const version of [1, 2]) for (const endpoint of ['checkout/quote', 'orders']) for (const boundary of ['success', 'rpc', 'transport']) {
+    let passed = false
+    await t.test(`V${version} ${endpoint} ${boundary}`, async () => {
+      mode = boundary
+      const start = events.length, isQuote = endpoint === 'checkout/quote'
+      const merchandise = version === 1 ? { items: [{ variantId: variant, quantity: 1 }] } : { contractVersion: 2, lines: [{ kind: 'normal_variant', variantId: variant, quantity: 1 }] }
+      const body = isQuote ? { ...merchandise, email: contact.email, shipping: { city: shipping.city, province: shipping.province }, couponCode: '' } : { ...merchandise, idempotencyKey: token, contact, shipping, paymentMethod: 'Cash on Delivery', couponCode: '', quoteFingerprint: capability }
+      const res = await fetch(`http://127.0.0.1:${server.address().port}/api/v${version}/public/${endpoint}?capability=${capability}`, { method: 'POST', headers: {
+        Origin: config.allowedOrigins[0], 'Content-Type': 'application/json', 'X-Request-ID': capability, Authorization: 'Bearer private-auth-header', Cookie: 'unrelated=private-cookie-value',
+      }, body: JSON.stringify(body) })
+      const result = await res.json(), id = res.headers.get('x-request-id'), related = events.slice(start)
+      assert.match(id, /^req_[0-9a-f-]{36}$/)
+      assert.equal(result.meta?.requestId ?? result.error?.requestId, id)
+      assert(related.length > 0 && related.every(event => event.requestId === id))
+      assert(related.filter(event => event.event === 'http.request' || event.event === 'checkout.request_failed').every(event => event.route === '/' + endpoint))
+      if (boundary === 'success') {
+        assert.equal(res.status, isQuote ? 200 : 201)
+        assert.equal(result.data[isQuote ? 'quoteFingerprint' : 'idempotencyKey'], isQuote ? capability : token)
+        if (!isQuote) assert.equal(result.data.id, orderId)
+      } else {
+        assert(res.status >= 500)
+        const diagnostic = related.find(event => event.event === 'checkout.internal_failure')
+        assert(diagnostic); assert.equal(diagnostic.subsystem === 'checkout_v2', version === 2)
+        assert(['XX000', 'TRANSPORT_FAILURE', 'RELATIONAL_FAILURE'].includes(diagnostic.category))
+        assert(related.some(event => event.event === 'checkout.request_failed' && ['CHECKOUT_FAILED', 'CHECKOUT_UNAVAILABLE'].includes(event.category)))
+      }
+      if (!isQuote) {
+        const args = calls.at(-1).args
+        assert.equal(version === 1 ? args.p_idempotency_key : args.p_request.idempotencyKey, version === 1 ? 'checkout:' + token : token)
+        assert.equal(version === 1 ? args.p_quote_fingerprint : args.p_request.quoteFingerprint, capability)
+      }
+      for (const value of privateValues) assert(!JSON.stringify(events).includes(value), 'Sensitive checkout material in logs')
+      passed = true
+    })
+    if (!passed) throw Error('Critical checkout logging regression; stopped')
+  }
 })
 
 test('verification callback validates state and rejects open redirects', async () => {

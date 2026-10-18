@@ -38,6 +38,7 @@ import { AUTH_ERROR_CODES } from './auth/contracts.js'
 import { getAuthReadiness, isAllowedCorsOrigin } from './auth/config.js'
 import {
   authErrorHandler,
+  createRedactedErrorHandler,
   createRedactedRequestLogger,
   requestContext,
 } from './middleware/authSecurity.js'
@@ -140,19 +141,7 @@ if (authConfig.environment !== 'production' && authConfig.adminProvider === 'pro
 }
 
 app.use(authErrorHandler(authConfig))
-app.use((error, req, res, _next) => {
-  const status = error.status || 500
-  const message = status >= 500 ? 'Something went wrong. Please try again.' : error.message
-  if (status >= 500) {
-    console.error({
-      event: 'http.error',
-      requestId: req.requestId,
-      path: req.path,
-      status,
-    })
-  }
-  res.status(status).json({ message, requestId: req.requestId })
-})
+app.use(createRedactedErrorHandler())
 
 await maybeCreateFirstAdmin(authConfig)
 

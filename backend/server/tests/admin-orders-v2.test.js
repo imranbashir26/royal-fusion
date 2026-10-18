@@ -34,7 +34,7 @@ after(async()=>{if(server)await new Promise(r=>server.close(r));if(f)await f.db.
 async function http(path,body,{actor,csrf=true,requestOrigin=origin,method=body===undefined?'GET':'POST'}={}){
  const headers={'Content-Type':'application/json','Origin':requestOrigin,'X-Request-ID':'api-014-correlation'}
  if(actor){const token=getSessionCsrfToken('fixture014-handle',config);headers.Cookie=`${names.access}=${actor}; ${names.refresh}=refresh; ${names.session}=fixture014-handle; ${names.csrf}=${token}`;if(csrf)headers['X-RF-CSRF']=token}
- const r=await fetch(base+path,{method,headers,...(body===undefined?{}:{body:JSON.stringify(body)})});return {status:r.status,body:await r.json()}
+ const r=await fetch(base+path,{method,headers,...(body===undefined?{}:{body:JSON.stringify(body)})});return {status:r.status,body:await r.json(),requestId:r.headers.get('x-request-id')}
 }
 const enabledService=()=>new OrdersV2Service(client,{environment:'test',allowNonProductionOrders:true,logger})
 
@@ -56,7 +56,7 @@ test('real service-role HTTP creation/replay return 201/200 with trusted custome
  const before=await state014(f.db),replay=await http('/enabled/orders',request,{actor:'customer'})
  assert.equal(replay.status,200);assert.equal(replay.body.data.id,created.body.data.id);assert.deepEqual(await state014(f.db),before)
  assert.doesNotMatch(JSON.stringify(created.body),/canonical_request|quote_snapshot|customer_email|metadata|order_notes/)
- assert.equal(created.body.meta.requestId,'api-014-correlation')
+ assert.equal(created.body.meta.requestId,created.requestId);assert.match(created.requestId,/^req_[0-9a-f-]{36}$/);assert.notEqual(created.requestId,'api-014-correlation')
 })
 
 test('lost response after commit retries the same UUID; changed intent conflicts without duplicate effects',async()=>{
