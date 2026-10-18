@@ -1,9 +1,12 @@
 import { AlertCircle, ChevronLeft, ChevronRight, Package, Receipt, Truck } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
-import { customerOrdersClient, type CustomerOrderSummary } from '../../services/customerOrdersClient'
-import { formatCheckoutCurrency } from '../../utils/checkoutMoney'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { customerOrdersClient, isCustomerSessionError, type CustomerOrderSummary } from '../../services/customerOrdersClient'
+import { useCustomerAuthStore } from '../../store/customerAuthStore'
+import { formatCustomerOrderCurrency } from '../../utils/customerOrderPresentation'
 import { cn } from '../../utils/cn'
 import { Button } from '../common/Button'
+import { buttonClasses } from '../../utils/buttonClasses'
 import { CustomerOrderDetailModal } from './CustomerOrderDetailModal'
 
 interface CustomerOrderHistoryProps {
@@ -11,6 +14,8 @@ interface CustomerOrderHistoryProps {
 }
 
 export function CustomerOrderHistory({ onExploreClick }: CustomerOrderHistoryProps) {
+  const customerId = useCustomerAuthStore(state => state.currentCustomer?.id)
+  const requestRef = useRef<AbortController | null>(null)
   const [orders, setOrders] = useState<CustomerOrderSummary[]>([])
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
@@ -20,26 +25,38 @@ export function CustomerOrderHistory({ onExploreClick }: CustomerOrderHistoryPro
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
 
   const loadOrders = useCallback(async (targetPage: number) => {
+    requestRef.current?.abort()
+    const controller = new AbortController()
+    requestRef.current = controller
+    if (!customerId) return
     setLoading(true)
+    setPage(targetPage)
     setError('')
+    setOrders([])
+    setSelectedOrderId(null)
     try {
-      const data = await customerOrdersClient.listOrders(targetPage, 5)
+      const data = await customerOrdersClient.listOrders(targetPage, 5, { signal: controller.signal })
+      if (controller.signal.aborted || useCustomerAuthStore.getState().currentCustomer?.id !== customerId) return
       setOrders(data.items)
       setPage(data.page)
       setTotalPages(data.totalPages)
       setTotalOrders(data.total)
     } catch (err) {
+      if (controller.signal.aborted) return
+      if (isCustomerSessionError(err)) useCustomerAuthStore.getState().expireSession(customerId)
       setOrders([])
       setError(err instanceof Error ? err.message : 'Unable to load orders.')
     } finally {
-      setLoading(false)
+      if (!controller.signal.aborted) setLoading(false)
     }
-  }, [])
+  }, [customerId])
 
   useEffect(() => {
     void loadOrders(1)
+    return () => { requestRef.current?.abort() }
   }, [loadOrders])
 
+  if (!customerId) return null
   return (
     <div className="space-y-4">
       {/* Loading State */}
@@ -75,13 +92,13 @@ export function CustomerOrderHistory({ onExploreClick }: CustomerOrderHistoryPro
             You haven't placed any orders yet. Discover our luxury perfumes and bespoke discovery sets.
           </p>
           {onExploreClick && (
-            <Button
-              className="mt-5"
+            <Link
+              to="/shop"
+              className={buttonClasses({ size: 'sm', className: 'mt-5' })}
               onClick={onExploreClick}
-              size="sm"
             >
               Explore Fragrances
-            </Button>
+            </Link>
           )}
         </div>
       )}
@@ -135,9 +152,11 @@ export function CustomerOrderHistory({ onExploreClick }: CustomerOrderHistoryPro
                       {order.itemCount} {order.itemCount === 1 ? 'item' : 'items'} · {order.paymentMethod}
                     </span>
                     <span className="font-serif text-base font-bold text-burgundy">
-                      {formatCheckoutCurrency(order.total)}
+                      {formatCustomerOrderCurrency(order.total, order.currency)}
                     </span>
                   </div>
+
+                  <p className="text-xs text-brownroyal/80">Payment: <strong>{order.paymentStatus}</strong> · {order.currency}</p>
 
                   {order.courier && order.trackingNumber && (
                     <div className="flex items-center gap-1.5 rounded bg-blue-50/60 px-2 py-1 text-[11px] text-blue-900">
@@ -194,6 +213,7 @@ export function CustomerOrderHistory({ onExploreClick }: CustomerOrderHistoryPro
 
       {/* Order Detail Modal */}
       <CustomerOrderDetailModal
+        key={selectedOrderId}
         isOpen={Boolean(selectedOrderId)}
         onClose={() => setSelectedOrderId(null)}
         orderId={selectedOrderId}

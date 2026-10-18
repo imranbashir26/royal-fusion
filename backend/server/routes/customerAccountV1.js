@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import rateLimit from 'express-rate-limit'
 import { z } from 'zod'
 import { createOptionalIdentity, createOriginGuard, requireCustomerIdentity, requireAuthenticatedCsrf, sendCode } from '../middleware/authSecurity.js'
 import { AUTH_ERROR_CODES } from '../auth/contracts.js'
@@ -15,12 +16,17 @@ const paginationQuerySchema = z.object({
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-export function createCustomerAccountV1Router(runtime, { client = runtime.repository.client, customerOrdersService, logger = console } = {}) {
+export function createCustomerAccountV1Router(runtime, { client = runtime.repository.client, customerOrdersService, logger = console, orderReadLimit = 60 } = {}) {
   const router = Router()
   const ordersService = customerOrdersService ?? new CustomerOrdersService(client, { logger })
   router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next() })
   router.use(createOriginGuard(runtime.config), createOptionalIdentity(runtime), requireCustomerIdentity)
   router.use((req, res, next) => req.auth.identity.emailVerified ? next() : sendCode(res, AUTH_ERROR_CODES.EMAIL_VERIFICATION_REQUIRED, req.requestId))
+  router.use('/orders', rateLimit({
+    windowMs: 60000, limit: orderReadLimit, standardHeaders: true, legacyHeaders: false,
+    keyGenerator: req => req.auth.identity.id,
+    handler: (req, res) => sendCode(res, AUTH_ERROR_CODES.RATE_LIMITED, req.requestId),
+  }))
   const run = handler => (req, res, next) => Promise.resolve(handler(req, res)).catch(next)
   async function read(req) {
     const { data, error } = await client.from('profiles').select('id,full_name,phone,status').eq('id', req.auth.identity.id).maybeSingle()

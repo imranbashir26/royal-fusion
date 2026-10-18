@@ -1,8 +1,9 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { AlertCircle, CheckCircle2, Clock, Package, Truck, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { customerOrdersClient, type CustomerOrderDetail } from '../../services/customerOrdersClient'
-import { formatCheckoutCurrency } from '../../utils/checkoutMoney'
+import { customerOrdersClient, isCustomerSessionError, type CustomerOrderDetail } from '../../services/customerOrdersClient'
+import { useCustomerAuthStore } from '../../store/customerAuthStore'
+import { formatCustomerOrderCurrency } from '../../utils/customerOrderPresentation'
 import { cn } from '../../utils/cn'
 
 interface CustomerOrderDetailModalProps {
@@ -16,6 +17,8 @@ export function CustomerOrderDetailModal({
   isOpen,
   onClose,
 }: CustomerOrderDetailModalProps) {
+  const customerId = useCustomerAuthStore(state => state.currentCustomer?.id)
+  const requestRef = useRef<AbortController | null>(null)
   const [order, setOrder] = useState<CustomerOrderDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -24,19 +27,26 @@ export function CustomerOrderDetailModal({
   const dialogRef = useRef<HTMLDivElement | null>(null)
 
   const loadOrder = useCallback(async () => {
-    if (!orderId) return
+    requestRef.current?.abort()
+    const controller = new AbortController()
+    requestRef.current = controller
+    if (!orderId || !customerId) return
+    setOrder(null)
     setLoading(true)
     setError('')
     try {
-      const data = await customerOrdersClient.getOrder(orderId)
+      const data = await customerOrdersClient.getOrder(orderId, { signal: controller.signal })
+      if (controller.signal.aborted || useCustomerAuthStore.getState().currentCustomer?.id !== customerId) return
       setOrder(data)
     } catch (err) {
+      if (controller.signal.aborted) return
+      if (isCustomerSessionError(err)) useCustomerAuthStore.getState().expireSession(customerId)
       setOrder(null)
       setError(err instanceof Error ? err.message : 'Unable to load order details.')
     } finally {
-      setLoading(false)
+      if (!controller.signal.aborted) setLoading(false)
     }
-  }, [orderId])
+  }, [orderId, customerId])
 
   useEffect(() => {
     if (isOpen && orderId) {
@@ -45,6 +55,7 @@ export function CustomerOrderDetailModal({
       setOrder(null)
       setError('')
     }
+    return () => { requestRef.current?.abort() }
   }, [isOpen, orderId, loadOrder])
 
   useEffect(() => {
@@ -115,7 +126,7 @@ export function CustomerOrderDetailModal({
     }
   }, [isOpen, onClose])
 
-  if (!isOpen) return null
+  if (!isOpen || !customerId) return null
 
   return (
     <AnimatePresence>
@@ -144,7 +155,7 @@ export function CustomerOrderDetailModal({
             <div>
               <p className="text-xs font-bold uppercase tracking-[0.2em] text-oldgold">Order Receipt</p>
               <h3 className="mt-0.5 font-serif text-2xl font-semibold text-burgundy">
-                {order ? order.orderNumber : 'Loading Order...'}
+                {order ? order.orderNumber : loading ? 'Loading Order...' : 'Order details unavailable'}
               </h3>
               {order && (
                 <p className="text-xs text-brownroyal/70">
@@ -282,10 +293,10 @@ export function CustomerOrderDetailModal({
                           </div>
                           <div className="text-right">
                             <p className="text-sm font-bold text-brownroyal">
-                              {formatCheckoutCurrency(item.lineTotal)}
+                              {formatCustomerOrderCurrency(item.lineTotal, order.currency)}
                             </p>
                             <p className="text-xs text-brownroyal/60">
-                              {item.quantity} × {formatCheckoutCurrency(item.unitPrice)}
+                              {item.quantity} × {formatCustomerOrderCurrency(item.unitPrice, order.currency)}
                             </p>
                           </div>
                         </div>
@@ -303,7 +314,7 @@ export function CustomerOrderDetailModal({
                                     • {comp.name} ({comp.size})
                                   </span>
                                   <span className="font-semibold text-brownroyal/80">
-                                    qty: {comp.quantityPerPack}
+                                    {comp.quantityPerPack} per pack · {comp.totalPhysicalQuantity} total
                                   </span>
                                 </li>
                               ))}
@@ -345,22 +356,22 @@ export function CustomerOrderDetailModal({
                 <div className="rounded-lg border border-champagne/40 bg-marble p-4 space-y-2">
                   <div className="flex justify-between text-xs text-brownroyal">
                     <span>Subtotal</span>
-                    <span className="font-semibold">{formatCheckoutCurrency(order.subtotal)}</span>
+                    <span className="font-semibold">{formatCustomerOrderCurrency(order.subtotal, order.currency)}</span>
                   </div>
                   {order.discount > 0 && (
                     <div className="flex justify-between text-xs text-emerald-800">
                       <span>Discount</span>
-                      <span className="font-semibold">-{formatCheckoutCurrency(order.discount)}</span>
+                      <span className="font-semibold">-{formatCustomerOrderCurrency(order.discount, order.currency)}</span>
                     </div>
                   )}
                   <div className="flex justify-between text-xs text-brownroyal">
                     <span>Delivery Charge</span>
-                    <span className="font-semibold">{formatCheckoutCurrency(order.shippingFee)}</span>
+                    <span className="font-semibold">{formatCustomerOrderCurrency(order.shippingFee, order.currency)}</span>
                   </div>
                   <div className="border-t border-champagne/40 pt-2 flex justify-between items-baseline">
-                    <span className="font-serif text-sm font-bold text-burgundy">Order Total</span>
+                    <span className="font-serif text-sm font-bold text-burgundy">Order Total ({order.currency})</span>
                     <span className="font-serif text-lg font-bold text-burgundy">
-                      {formatCheckoutCurrency(order.total)}
+                      {formatCustomerOrderCurrency(order.total, order.currency)}
                     </span>
                   </div>
                 </div>

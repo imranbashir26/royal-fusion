@@ -272,3 +272,142 @@ test('AccountModal My Orders tab, order cards, receipt modal and tab switching',
   assert.ok(requests.some(r => r.path.endsWith('/customer/orders')), 'List orders API must be called')
   assert.ok(requests.some(r => r.path.includes('/customer/orders/' + order1Id)), 'Detail order API must be called')
 })
+
+const customerId = '00000000-0000-4000-8000-000000000101'
+const firstId = 'e1000000-0000-4000-8000-000000000001'
+const secondId = 'e1000000-0000-4000-8000-000000000002'
+const profile = { id: customerId, name: 'History Customer', email: 'history@example.invalid', phone: '', address: '', city: '', province: '' }
+const summary = id => ({ id, orderNumber: id === firstId ? 'RF-OLD-ORDER' : 'RF-PACK-ORDER', createdAt: '2026-10-17T12:00:00Z',
+  status: 'Delivered', paymentStatus: 'Paid', paymentMethod: 'Cash on Delivery', total: 1250.50, currency: 'PKR', itemCount: 2,
+  courier: null, trackingNumber: null })
+const detail = id => ({ ...summary(id), subtotal: 1000.50, discount: 0, shippingFee: 250,
+  shipping: { name: profile.name, address: 'Frozen shipping street', city: 'Attock', province: 'Punjab', orderNotes: '' },
+  items: [{ id: 'frozen-item', productId: null, variantId: null, packId: id === firstId ? null : 'pack',
+    kind: id === firstId ? 'normal_variant' : 'configurable_tester_pack', name: id === firstId ? 'Archived fragrance' : 'Recorded custom pack',
+    size: id === firstId ? '50 ml' : 'Tester pack', sku: '', quantity: 2, unitPrice: 500.25, lineTotal: 1000.50, position: null,
+    components: id === firstId ? [] : [{ id: 'frozen-component', name: 'Archived tester', sku: 'OLD', size: '5 ml', volumeMl: 5,
+      quantityPerPack: 3, totalPhysicalQuantity: 6, referenceUnitPrice: 12.25, position: 0 }] }] })
+
+async function accountFixture(t) {
+  const result = await pageFixture(t)
+  const state = { authenticated: true, pages: [], listError: false, expired: false, detailExpired: false,
+    listGate: null, detailGate: null, empty: false }
+  await result.page.context().route('**/api/v1/**', async route => {
+    const url = new URL(route.request().url()), path = url.pathname
+    const reply = json => route.fulfill({ json }).catch(() => {})
+    if (path.endsWith('/auth/session')) return reply({ data: { authenticated: state.authenticated, csrfToken: 'csrf',
+      ...(state.authenticated ? { identity: { id: customerId, emailVerified: true } } : {}) } })
+    if (path.endsWith('/auth/signout')) { state.authenticated = false; return route.fulfill({ status: 204, body: '' }) }
+    if (path.endsWith('/auth/signin')) { state.authenticated = true; return reply({ data: { authenticated: true } }) }
+    if (path.endsWith('/customer/profile')) return reply({ data: profile })
+    if (path.endsWith('/customer/orders')) {
+      const page = Number(url.searchParams.get('page')); state.pages.push(page)
+      if (state.listGate) await state.listGate
+      if (state.expired) return route.fulfill({ status: 401, json: { error: { code: 'SESSION_EXPIRED', message: 'Your session has expired.' } } }).catch(() => {})
+      if (page === 2 && state.listError) return route.fulfill({ status: 503, json: { error: { code: 'CUSTOMER_ORDER_UNAVAILABLE', message: 'Order history unavailable.' } } })
+      return reply({ data: { items: state.empty ? [] : [summary(page === 1 ? firstId : secondId)], page, pageSize: 5, total: state.empty ? 0 : 6, totalPages: state.empty ? 0 : 2 } })
+    }
+    if (path.includes('/customer/orders/')) {
+      if (state.detailGate) await state.detailGate
+      if (state.detailExpired) return route.fulfill({ status: 403, json: { error: { code: 'PERMISSION_DENIED', message: 'Account access changed.' } } }).catch(() => {})
+      return reply({ data: detail(path.split('/').at(-1)) })
+    }
+    return route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND' } } })
+  })
+  await result.page.goto(origin)
+  await result.page.getByRole('button', { name: 'Account', exact: true }).click()
+  const account = result.page.getByRole('dialog', { name: 'Customer account', exact: true })
+  await account.getByText('Account overview', { exact: true }).waitFor()
+  return { ...result, state, account }
+}
+
+test('history paginates, retries the failed page and displays frozen V1 and configurable pack receipts', { timeout: 90000 }, async t => {
+  const { page, account, state } = await accountFixture(t)
+  await account.getByRole('button', { name: 'My Orders', exact: true }).click()
+  await account.getByText('RF-OLD-ORDER', { exact: true }).waitFor()
+  await account.getByText('Payment:', { exact: false }).waitFor()
+  await account.getByRole('button', { name: 'View Receipt & Items' }).click()
+  const receipt = page.getByRole('dialog', { name: 'Order Receipt', exact: true })
+  await receipt.getByText('Archived fragrance', { exact: true }).waitFor()
+  await receipt.getByText(/500\.25/).waitFor()
+  assert.equal(await receipt.getByText('Included 5ml Discovery Testers:').count(), 0)
+  await page.keyboard.press('Escape')
+  state.listError = true
+  await account.getByRole('button', { name: 'Next', exact: true }).click()
+  await account.getByText('Order history unavailable.', { exact: true }).waitFor()
+  state.listError = false
+  await account.getByRole('button', { name: 'Try Again', exact: true }).click()
+  await account.getByText('RF-PACK-ORDER', { exact: true }).waitFor()
+  // Development StrictMode can issue an initial read before its mount is cancelled.
+  assert.ok(state.pages.slice(0, -2).every(page => page === 1))
+  assert.deepEqual(state.pages.slice(-2), [2,2])
+  await account.getByRole('button', { name: 'View Receipt & Items' }).click()
+  await receipt.getByText('Recorded custom pack', { exact: true }).waitFor()
+  await receipt.getByText('Archived tester (5 ml)', { exact: false }).waitFor()
+  await receipt.getByText('3 per pack · 6 total', { exact: true }).waitFor()
+  await page.setViewportSize({ width: 375, height: 667 })
+  assert.equal(await receipt.evaluate(el => el.scrollWidth <= el.clientWidth), true)
+  await page.keyboard.press('Escape')
+  await account.getByRole('button', { name: 'Previous', exact: true }).click()
+  await account.getByText('RF-OLD-ORDER', { exact: true }).waitFor()
+})
+
+test('expired history and detail requests clear private presentation and return to sign in', { timeout: 90000 }, async t => {
+  const { page, account, state } = await accountFixture(t)
+  state.expired = true
+  await account.getByRole('button', { name: 'My Orders', exact: true }).click()
+  await account.getByText(/Your session has expired or account access changed/).waitFor()
+  await account.getByRole('heading', { name: 'Sign in to Royal Fusion' }).waitFor()
+  assert.equal(await account.getByText(profile.email, { exact: true }).count(), 0)
+  assert.equal(await account.getByText('RF-OLD-ORDER', { exact: true }).count(), 0)
+  state.expired = false
+  await account.getByLabel(/^Email address/).fill(profile.email)
+  await account.getByLabel(/^Password/).fill('FictionalPass1!')
+  await account.locator('form').getByRole('button', { name: 'Sign In', exact: true }).click()
+  await account.getByRole('button', { name: 'My Orders', exact: true }).click()
+  await account.getByText('RF-OLD-ORDER', { exact: true }).waitFor()
+  state.detailExpired = true
+  await account.getByRole('button', { name: 'View Receipt & Items' }).click()
+  await account.getByRole('heading', { name: 'Sign in to Royal Fusion' }).waitFor()
+  assert.equal(await page.getByRole('dialog', { name: 'Order Receipt' }).count(), 0)
+  assert.equal(await page.getByText('Frozen shipping street', { exact: true }).count(), 0)
+})
+
+test('logout during delayed history and receipt reads prevents late customer data from reappearing', { timeout: 90000 }, async t => {
+  const { page, account, state } = await accountFixture(t)
+  let releaseList
+  state.listGate = new Promise(resolve => { releaseList = resolve })
+  await account.getByRole('button', { name: 'My Orders', exact: true }).click()
+  await account.getByText('Retrieving your order history...').waitFor()
+  await account.getByRole('button', { name: 'Logout', exact: true }).click()
+  releaseList(); state.listGate = null
+  await account.getByRole('heading', { name: 'Sign in to Royal Fusion' }).waitFor()
+  assert.equal(await account.getByText('RF-OLD-ORDER', { exact: true }).count(), 0)
+  await account.getByLabel(/^Email address/).fill(profile.email)
+  await account.getByLabel(/^Password/).fill('FictionalPass1!')
+  await account.locator('form').getByRole('button', { name: 'Sign In', exact: true }).click()
+  await account.getByRole('button', { name: 'My Orders', exact: true }).click()
+  await account.getByText('RF-OLD-ORDER', { exact: true }).waitFor()
+  let releaseDetail
+  state.detailGate = new Promise(resolve => { releaseDetail = resolve })
+  await account.getByRole('button', { name: 'View Receipt & Items' }).click()
+  await page.getByText('Loading your order receipt...').waitFor()
+  await page.evaluate(async () => { const { useCustomerAuthStore } = await import('/src/store/customerAuthStore.ts'); await useCustomerAuthStore.getState().logout() })
+  releaseDetail(); state.detailGate = null
+  await account.getByRole('heading', { name: 'Sign in to Royal Fusion' }).waitFor()
+  assert.equal(await page.getByRole('dialog', { name: 'Order Receipt' }).count(), 0)
+  assert.equal(await page.getByText('Archived fragrance', { exact: true }).count(), 0)
+})
+
+test('empty history links to shopping and account keyboard navigation stays inside the panel', { timeout: 90000 }, async t => {
+  const { page, account, state } = await accountFixture(t)
+  state.empty = true
+  await account.getByRole('button', { name: 'My Orders', exact: true }).click()
+  await account.getByRole('heading', { name: 'No Orders Yet' }).waitFor()
+  await account.getByRole('button', { name: 'Logout', exact: true }).focus()
+  await page.keyboard.press('Tab')
+  assert.equal(await account.getByRole('button', { name: 'Close account panel' }).evaluate(el => el === document.activeElement), true)
+  await account.getByRole('link', { name: 'Explore Fragrances' }).click()
+  await page.waitForURL('**/shop')
+  await account.waitFor({ state: 'detached' })
+})

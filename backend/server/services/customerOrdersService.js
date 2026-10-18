@@ -22,6 +22,24 @@ export class CustomerOrdersService {
     return this.client
   }
 
+  // PostgREST caps individual reads. Page through owned-order children so large
+  // frozen receipts and list counts cannot be silently truncated by that cap.
+  async children(table, columns, filter, requestId) {
+    const rows = []
+    for (let offset = 0; offset <= 10000; offset += 500) {
+      let query = filter(this.requireClient().from(table).select(columns))
+      if (table !== 'order_items' || columns.includes('position')) query = query.order('position', { ascending: true })
+      const { data, error } = await query.order('id', { ascending: true }).range(offset, offset + 499)
+      if (error || !Array.isArray(data) || rows.length + data.length > 10000) {
+        this.logger.warn?.({ event: 'customer_orders.query_failed', operation: table, requestId, code: error?.code ?? 'INCOMPLETE_READ' })
+        throw new CustomerOrderError('CUSTOMER_ORDER_UNAVAILABLE', 503)
+      }
+      rows.push(...data)
+      if (data.length < 500) return rows
+    }
+    throw new CustomerOrderError('CUSTOMER_ORDER_UNAVAILABLE', 503)
+  }
+
   async list(customerId, { page = 1, pageSize = 10 } = {}, requestId = '') {
     if (!isUuid(customerId)) {
       throw new CustomerOrderError('CUSTOMER_ORDER_UNAVAILABLE', 503)
@@ -62,20 +80,7 @@ export class CustomerOrdersService {
     }
 
     const orderIds = orderRows.map(r => r.id)
-    const { data: items, error: itemsError } = await client
-      .from('order_items')
-      .select('order_id,quantity')
-      .in('order_id', orderIds)
-
-    if (itemsError) {
-      this.logger.warn?.({
-        event: 'customer_orders.query_failed',
-        operation: 'list_items',
-        requestId,
-        code: itemsError.code ?? 'UNKNOWN'
-      })
-      throw new CustomerOrderError('CUSTOMER_ORDER_UNAVAILABLE', 503)
-    }
+    const items = await this.children('order_items', 'id,order_id,quantity', query => query.in('order_id', orderIds), requestId)
 
     const itemsByOrder = new Map()
     for (const item of (items ?? [])) {
@@ -90,7 +95,7 @@ export class CustomerOrdersService {
       paymentStatus: r.payment_status,
       paymentMethod: r.payment_method,
       total: Number(r.total),
-      currency: r.currency || 'PKR',
+      currency: r.currency,
       itemCount: itemsByOrder.get(r.id) ?? 0,
       courier: r.courier_name?.trim() ? r.courier_name.trim() : null,
       trackingNumber: r.tracking_number?.trim() ? r.tracking_number.trim() : null
@@ -113,7 +118,7 @@ export class CustomerOrdersService {
     const client = this.requireClient()
     const { data: o, error } = await client
       .from('orders')
-      .select('id,order_number,customer_id,customer_name,shipping_address,shipping_city,shipping_province,order_notes,status,payment_method,payment_status,subtotal,discount,shipping_fee,total,currency,courier_name,tracking_number,checkout_version,snapshot_version,quote_snapshot,created_at')
+      .select('id,order_number,customer_id,customer_name,shipping_address,shipping_city,shipping_province,order_notes,status,payment_method,payment_status,subtotal,discount,shipping_fee,total,currency,courier_name,tracking_number,checkout_version,created_at')
       .eq('id', orderId)
       .eq('customer_id', customerId)
       .maybeSingle()
@@ -132,41 +137,17 @@ export class CustomerOrdersService {
       throw new CustomerOrderError('ORDER_NOT_FOUND', 404, 'Order not found.')
     }
 
-    const { data: items, error: itemsError } = await client
-      .from('order_items')
-      .select('id,order_id,product_id,variant_id,product_name,size,sku,quantity,unit_price,line_total,snapshot_version,line_kind,position,pack_id,pack_definition_revision')
-      .eq('order_id', orderId)
-      .order('position', { ascending: true })
-
-    if (itemsError || !items) {
-      this.logger.warn?.({
-        event: 'customer_orders.query_failed',
-        operation: 'detail_items',
-        requestId,
-        code: itemsError?.code ?? 'UNKNOWN'
-      })
-      throw new CustomerOrderError('CUSTOMER_ORDER_UNAVAILABLE', 503)
-    }
+    const items = await this.children('order_items',
+      'id,order_id,product_id,variant_id,product_name,size,sku,quantity,unit_price,line_total,line_kind,position,pack_id',
+      query => query.eq('order_id', orderId), requestId)
 
     let mappedItems = []
     if (o.checkout_version === 2) {
-      const { data: components, error: componentsError } = await client
-        .from('order_item_components')
-        .select('id,order_id,order_item_id,tester_variant_id,tester_product_id,tester_name,sku,size,volume_ml,quantity_per_pack,total_physical_quantity,reference_unit_price,position')
-        .eq('order_id', orderId)
-        .order('position', { ascending: true })
+      const components = await this.children('order_item_components',
+        'id,order_id,order_item_id,tester_name,sku,size,volume_ml,quantity_per_pack,total_physical_quantity,reference_unit_price,position',
+        query => query.eq('order_id', orderId), requestId)
 
-      if (componentsError || !components) {
-        this.logger.warn?.({
-          event: 'customer_orders.query_failed',
-          operation: 'detail_components',
-          requestId,
-          code: componentsError?.code ?? 'UNKNOWN'
-        })
-        throw new CustomerOrderError('CUSTOMER_ORDER_UNAVAILABLE', 503)
-      }
-
-      mappedItems = items.map((item, index) => {
+      mappedItems = items.map(item => {
         const lineComponents = components
           .filter(c => c.order_item_id === item.id)
           .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
@@ -194,12 +175,12 @@ export class CustomerOrdersService {
           quantity: item.quantity,
           unitPrice: Number(item.unit_price),
           lineTotal: Number(item.line_total),
-          position: item.position ?? index,
+          position: item.position ?? null,
           components: lineComponents
         }
       })
     } else {
-      mappedItems = items.map((item, index) => ({
+      mappedItems = items.map(item => ({
         id: item.id,
         productId: item.product_id,
         variantId: item.variant_id ?? null,
@@ -211,7 +192,7 @@ export class CustomerOrdersService {
         quantity: item.quantity,
         unitPrice: Number(item.unit_price),
         lineTotal: Number(item.line_total),
-        position: item.position ?? index,
+        position: item.position ?? null,
         components: []
       }))
     }
@@ -227,7 +208,7 @@ export class CustomerOrdersService {
       discount: Number(o.discount),
       shippingFee: Number(o.shipping_fee),
       total: Number(o.total),
-      currency: o.currency || 'PKR',
+      currency: o.currency,
       courier: o.courier_name?.trim() ? o.courier_name.trim() : null,
       trackingNumber: o.tracking_number?.trim() ? o.tracking_number.trim() : null,
       shipping: {
