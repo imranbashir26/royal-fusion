@@ -248,8 +248,18 @@ begin
  -- Include authenticator (if installed), custom login/application roles and a
  -- non-superuser supabase_admin. Predefined pg_* roles are infrastructure roles;
  -- every application path to their privileges is checked below, including SET.
+ -- Apply Release 007's bounded profiles to managed roles, failing closed
+ -- even if a known role loses CREATEROLE. Matching the profile grants no
+ -- private-object access: membership, ACL and effective
+ -- table/column/function privileges remain checked for these roles below.
  if exists(select 1 from pg_roles b where b.rolname !~ '^pg_' and b.rolname<>'postgres'
-   and not (b.rolname='supabase_admin' and b.rolsuper) and (b.rolsuper or b.rolcreaterole))
+   and not (b.rolname='supabase_admin' and b.rolsuper) and (b.rolsuper or b.rolcreaterole
+     or b.rolname in ('dashboard_user','supabase_auth_admin','supabase_storage_admin'))
+   and not (b.rolcreaterole and not b.rolsuper and not b.rolbypassrls and (
+     (b.rolname in ('supabase_auth_admin','supabase_storage_admin')
+       and b.rolcanlogin and not b.rolinherit and not b.rolcreatedb and not b.rolreplication)
+     or (b.rolname='dashboard_user' and not b.rolcanlogin and b.rolinherit
+       and b.rolcreatedb and b.rolreplication))))
  or exists(select 1 from pg_roles b cross join pg_roles r
    where b.rolname !~ '^pg_' and b.rolname<>'postgres' and not (b.rolname='supabase_admin' and b.rolsuper)
    and b.oid<>r.oid and (r.rolname='postgres' or r.rolsuper or r.rolcreaterole)
