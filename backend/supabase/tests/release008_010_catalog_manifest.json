@@ -1,0 +1,36 @@
+{
+  "postgresql": "17.11",
+  "predecessor007": "6076eb77ec31ddf953f6207c193cbebe5afb4c2568592676d19da736e8460fcb",
+  "post": {
+    "8": "ef503bf722574c1c6f7febbd628cc93951d772928d0d28a735f75637ad31e819",
+    "9": "5de6e703dc17045b6e3d45ea7ab500e94196300f8a205ed8f279a10a894e86b2",
+    "10": "127f33387da3b40f4663a2917b110e2b01f5837a55f99f7e63c539470c584c34"
+  },
+  "transitions": [
+    {
+      "release": 8,
+      "predecessor": "6076eb77ec31ddf953f6207c193cbebe5afb4c2568592676d19da736e8460fcb",
+      "post": "ef503bf722574c1c6f7febbd628cc93951d772928d0d28a735f75637ad31e819",
+      "sourceSha256": "90c690d00b0d7f2824a2933e620ae996966e5a82df4385eecdfae01b1e956eb6",
+      "result": "COMMIT"
+    },
+    {
+      "release": 9,
+      "predecessor": "ef503bf722574c1c6f7febbd628cc93951d772928d0d28a735f75637ad31e819",
+      "post": "5de6e703dc17045b6e3d45ea7ab500e94196300f8a205ed8f279a10a894e86b2",
+      "sourceSha256": "def1533cc3d9bc6ca6b1411a9744ff1350fc334ee1dfbb2b6125c3f7e4db28a9",
+      "result": "COMMIT"
+    },
+    {
+      "release": 10,
+      "predecessor": "5de6e703dc17045b6e3d45ea7ab500e94196300f8a205ed8f279a10a894e86b2",
+      "post": "127f33387da3b40f4663a2917b110e2b01f5837a55f99f7e63c539470c584c34",
+      "sourceSha256": "f13aba8c958bfffc5693d106363fc863c699df8d0e5b047a8b853f50e8dd2a6a",
+      "result": "COMMIT"
+    }
+  ],
+  "passed": 21,
+  "successorsProductionApplied": false,
+  "realPricingEvidenceIntegration": "V1 and V2 actual SQL, backend services, frontend client, authenticated customer, coupon/sale/tie/no-coupon/capped outcomes",
+  "finalCatalog": "127f33387da3b40f4663a2917b110e2b01f5837a55f99f7e63c539470c584c34"
+}

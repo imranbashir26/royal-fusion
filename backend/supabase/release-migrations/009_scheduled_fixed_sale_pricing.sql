@@ -82,7 +82,7 @@ begin
   join pg_proc p on p.oid=e.evtfoid join pg_namespace n on n.oid=p.pronamespace
   join pg_roles fr on fr.oid=p.proowner)
  )::text,'UTF8')),'hex') into shape;
- if shape <> '00bf3eb3276b0ddf57d260397f117c30c175d29c86d8cc9c9c9c33476a8663b3' then raise exception 'RF_RELEASE009_BASELINE_DRIFT'; end if;
+ if shape <> 'ef503bf722574c1c6f7febbd628cc93951d772928d0d28a735f75637ad31e819' then raise exception 'RF_RELEASE009_BASELINE_DRIFT'; end if;
  select coalesce(jsonb_agg(jsonb_build_array(g.rolname,r.rolname,a.privilege_type,a.is_grantable)
  order by g.rolname,r.rolname,a.privilege_type,a.is_grantable),'[]'::jsonb) into acl
  from pg_default_acl d cross join lateral aclexplode(d.defaclacl) a
@@ -1275,9 +1275,11 @@ begin
   execute format('select coalesce(jsonb_agg(to_jsonb(t)-array[''sale_starts_at'',''sale_ends_at'',''fixed_sale_starts_at'',''fixed_sale_ends_at''] order by to_jsonb(t)-array[''sale_starts_at'',''sale_ends_at'',''fixed_sale_starts_at'',''fixed_sale_ends_at'']),''[]''::jsonb) from public.%I t',table_name) into actual;
   if actual is distinct from (select d.rows from pg_temp.rf009_data d where d.name=table_name) then raise exception 'RF_RELEASE009_DATA_PRESERVATION: %',table_name; end if;
  end loop;
- if exists(select 1 from pg_roles b cross join pg_roles r
+ if exists(select 1 from pg_roles b where b.rolname in ('dashboard_user','supabase_auth_admin','supabase_storage_admin') and not public.checkout_platform_operator_008(b.oid))
+ or exists(select 1 from pg_roles b cross join pg_roles r
   where b.rolname !~ '^pg_' and b.rolname<>'postgres' and not(b.rolname='supabase_admin' and b.rolsuper)
   and ((b.oid=r.oid or pg_has_role(b.oid,r.oid,'USAGE') or pg_has_role(b.oid,r.oid,'SET')) and (r.rolsuper or r.rolcreaterole)
+   and not (b.oid=r.oid and public.checkout_platform_operator_008(b.oid))
    or pg_has_role(b.oid,'postgres','USAGE') or pg_has_role(b.oid,'postgres','SET')
    or pg_has_role(b.oid,'supabase_admin','USAGE') or pg_has_role(b.oid,'supabase_admin','SET')
    or exists(select 1 from pg_auth_members m where m.member=b.oid and m.admin_option)))

@@ -83,7 +83,7 @@ begin
   join pg_proc p on p.oid=e.evtfoid join pg_namespace n on n.oid=p.pronamespace
   join pg_roles fr on fr.oid=p.proowner)
  )::text,'UTF8')),'hex') into shape;
- if shape <> 'a4a6ef3716008af318b9de692a640d4e8370704dcd8a3b89d962f8573f4c03a3' then raise exception 'RF_RELEASE010_BASELINE_DRIFT'; end if;
+ if shape <> '5de6e703dc17045b6e3d45ea7ab500e94196300f8a205ed8f279a10a894e86b2' then raise exception 'RF_RELEASE010_BASELINE_DRIFT'; end if;
  select coalesce(jsonb_agg(jsonb_build_array(g.rolname,r.rolname,a.privilege_type,a.is_grantable)
  order by g.rolname,r.rolname,a.privilege_type,a.is_grantable),'[]'::jsonb) into acl
  from pg_default_acl d cross join lateral aclexplode(d.defaclacl) a
@@ -893,14 +893,14 @@ $function$;
 create or replace function public.quote_checkout_v1_checked(p_request jsonb,p_customer_id uuid default null) returns jsonb language plpgsql security definer set search_path='' as $fn$
 declare q jsonb; token text; credential text;
 begin
- -- The unchanged 007 validator/resolver owns all price, coupon and shipping math.
  q:=public.quote_checkout_v1_007_internal(p_request,p_customer_id);
  token:='checkout:'||gen_random_uuid()::text;
- credential:=encode(sha256(convert_to(gen_random_uuid()::text||gen_random_uuid()::text,'UTF8')),'hex');
- insert into public.checkout_v1_attempts(token,credential,customer_id,quote_identity,price_fingerprint)
- values(token,credential,p_customer_id,public.checkout_v1_quote_identity_008(p_request->'items',p_request->>'email',p_request->'shipping',p_request->>'couponCode',p_customer_id),q->>'quoteFingerprint');
- -- The public fingerprint is now an opaque quote capability bound to the issued
- -- token. Its underlying 007 price fingerprint remains private and unchanged.
+ credential:=encode(extensions.gen_random_bytes(32),'hex');
+ insert into public.checkout_v1_attempts(token,credential_verifier,quote_identity_mac,price_fingerprint_mac)
+ values(token,public.checkout_v1_verifier_008(credential),
+  public.checkout_v1_mac_008('quote',token,public.checkout_v1_quote_identity_008(p_request->'items',p_request->>'email',p_request->'shipping',p_request->>'couponCode',p_customer_id),credential),
+  public.checkout_v1_mac_008('price',token,to_jsonb(q->>'quoteFingerprint'),credential));
+ -- Only issuance returns the capability. Order/receipt evidence is its verifier.
  if q->'pricingOutcome' is not null and q->'pricingOutcome'<>'null'::jsonb then q:=jsonb_set(q,'{pricingOutcome}',q->'pricingOutcome'||jsonb_build_object('acceptedQuoteFingerprint',credential)); end if;
  return q||jsonb_build_object('quoteFingerprint',credential,'idempotencyKey',substring(token from 10));
 end; $fn$;

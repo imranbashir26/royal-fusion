@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {readFile} from 'node:fs/promises'
-import {randomUUID} from 'node:crypto'
+import {randomUUID,createHash,createHmac} from 'node:crypto'
 import {salesFixture,updateStandard,updateTester,updatePack,v1Request,quoteV1,placeV1,additional,waitBlocked,waitClock,deadline,counts,committed} from './support/scheduledSalesDatabase.js'
 import {normalLine,fixedLine,configuredLine,quoteRequest,quoteV2,requestV2,orderV2} from './support/checkoutV2Database.js'
 import {state014,mutate014} from './support/fulfillmentV2Database.js'
@@ -53,7 +53,7 @@ async function financial(f,version,{sale=900,percentage=20,quantity=1,minimum=0,
  assert.equal(stored.coupon_code,c.code);assert.equal(stored.coupon_id,winner==='COUPON'?c.id:null);assert.equal(stored.redemptions,winner==='COUPON'?1:0)
  assert.equal(Number(stored.subtotal),winner==='COUPON'?1000*quantity:(sale??1000)*quantity);assert.equal(Number(stored.discount),winner==='COUPON'?discount:0)
  assert.equal(Number(stored.payment),Number(stored.total));assert(stored.frozen.every(i=>i.unitPrice===(winner==='COUPON'?1000:(sale??1000))))
- assert.equal(stored.evidence.acceptedQuoteFingerprint,p.quote.quoteFingerprint)
+ assert.equal(stored.evidence.acceptedQuoteFingerprint,version===1?createHash('sha256').update('rf:v1:capability:008:'+p.quote.quoteFingerprint).digest('hex'):p.quote.quoteFingerprint)
  await committed(f.db,r.id,p.quote,{quantities:quantity,coupon:winner==='COUPON'?c.id:null})
  assert.equal((await f.db.query('select used_count from coupons where id=$1',[c.id])).rows[0].used_count,winner==='COUPON'?1:0)
  const before=await state014(f.db);assert.deepEqual(await p.place(f.db),{...r,idempotent:true});assert.deepEqual(await state014(f.db),before)
@@ -166,13 +166,19 @@ test('Release 010 authoritative global comparison and compatibility; stop at fir
   assert.equal((await db.query("select count(*)::int n from inventory_movements where reference_id=$1 and reason='Order placed'",[r.id])).rows[0].n,1)
   const before=await state014(db);assert.deepEqual(await p.place(db),{...r,idempotent:true});assert.deepEqual(await state014(db),before)
  })
- await scenario('V1 reordered mixed-case repeated identities retain private fingerprint, quote lines and committed aggregation',async()=>{
+ await scenario('V1 reordered mixed-case repeated identities retain canonical pricing, keyed attempt MACs, quote lines and committed aggregation',async()=>{
   await updateStandard(f,{regularPrice:1000,salePrice:700,saleStartsAt:null,saleEndsAt:null,stockQuantity:200});await updateTester(f,f.tester,{regularPrice:250,salePrice:null,stockQuantity:200})
   const lines=[normalLine(f.tester.tester.variant_id,2),normalLine(f.normal.variant.toUpperCase(),2),normalLine(f.normal.variant,1)]
   const p=await pair(f,1,'',1,lines),reordered=await pair(f,1,'',1,[...lines].reverse())
   assert.deepEqual(p.quote.lines,reordered.quote.lines)
-  const fingerprints=(await db.query('select price_fingerprint from checkout_v1_attempts where token=any($1::text[])',[[p.quote.idempotencyKey,reordered.quote.idempotencyKey].map(k=>'checkout:'+k)])).rows
-  assert.equal(fingerprints.length,2);assert.equal(fingerprints[0].price_fingerprint,fingerprints[1].price_fingerprint)
+  const fingerprints=[]
+  for(const pair of [p,reordered]){
+   const internal=(await db.query('select public.quote_checkout_v1_007_internal($1::jsonb,null) quote',[JSON.stringify(pair.request)])).rows[0].quote.quoteFingerprint
+   fingerprints.push(internal)
+   const token='checkout:'+pair.quote.idempotencyKey,stored=(await db.query('select price_fingerprint_mac from checkout_v1_attempts where token=$1',[token])).rows[0].price_fingerprint_mac
+   assert.equal(stored,createHmac('sha256',Buffer.from(pair.quote.quoteFingerprint,'hex')).update('rf008:price:'+token+':'+JSON.stringify(internal)).digest('hex'))
+  }
+  assert.equal(fingerprints[0],fingerprints[1])
   p.request.items.reverse();const r=await p.place(db);await committed(db,r.id,p.quote,{quantities:5})
   const movements=(await db.query("select variant_id,sum(-quantity_delta)::int quantity,count(*)::int movements from inventory_movements where reference_id=$1 and reason='Order placed' group by variant_id order by variant_id",[r.id])).rows
   assert.deepEqual(movements,p.quote.lines.map(l=>({variant_id:l.variantId,quantity:l.quantity,movements:1})))

@@ -21,6 +21,7 @@ begin
  and exists(select 1 from pg_database d join pg_roles r on r.oid=d.datdba
  where d.datname=current_database() and r.rolname='postgres')) or not (not exists(select 1 from pg_default_acl where
  defaclrole=(select oid from pg_roles where rolname='postgres') and defaclnamespace=0 and defaclobjtype='r')) then raise exception 'RF_RELEASE008_SECURITY_DRIFT'; end if;
+ if to_regprocedure('extensions.hmac(bytea,bytea,text)') is null or to_regprocedure('extensions.gen_random_bytes(integer)') is null then raise exception 'RF_RELEASE008_CRYPTO_REQUIRED'; end if;
  perform pg_advisory_xact_lock(6008,14008);
  -- Variant-first, like checkout/admin. Failure to obtain these locks rolls back.
  lock table public.product_variants,public.products,public.orders in access exclusive mode;
@@ -106,29 +107,53 @@ create temporary table rf008_security on commit drop as select jsonb_build_objec
  'roles',(select jsonb_agg(to_jsonb(r) order by oid) from pg_roles r)) state;
 create table public.checkout_v1_attempts (
  token text primary key check(token=public.checkout_v2_key(token)),
- credential text not null unique check(credential ~ '^[0-9a-f]{64}$'),
- customer_id uuid,
- quote_identity jsonb not null,
- price_fingerprint text not null check(price_fingerprint ~ '^[0-9a-f]{64}$'),
- request_identity jsonb,
+ credential_verifier text not null unique check(credential_verifier ~ '^[0-9a-f]{64}$'),
+ quote_identity_mac text not null check(quote_identity_mac ~ '^[0-9a-f]{64}$'),
+ price_fingerprint_mac text not null check(price_fingerprint_mac ~ '^[0-9a-f]{64}$'),
+ request_identity_mac text check(request_identity_mac ~ '^[0-9a-f]{64}$'),
  state text not null default 'active' check(state in ('active','retired','committed')),
  created_at timestamptz not null default clock_timestamp(),
  retired_at timestamptz,
- check((state='active' and request_identity is null and retired_at is null)
-    or (state='retired' and request_identity is not null and retired_at is not null)
-    or (state='committed' and request_identity is not null and retired_at is null))
+ check((state='active' and request_identity_mac is null and retired_at is null)
+    or (state='retired' and request_identity_mac is not null and retired_at is not null)
+    or (state='committed' and request_identity_mac is not null and retired_at is null))
 );
 alter table public.checkout_v1_attempts enable row level security;
 -- Release 005 deliberately preserves some maintenance defaults. Remove them only
 -- on this new private relation: nobody outside its postgres definer may access it.
 revoke all on table public.checkout_v1_attempts from public,anon,authenticated,service_role,supabase_admin;
+-- Server persistence contains only verifiers/MACs; the client holds the bearer.
+create function public.checkout_v1_verifier_008(p_credential text) returns text language plpgsql immutable set search_path='' as $fn$
+begin
+ if p_credential is null or p_credential !~ '^[0-9a-f]{64}$' then raise exception 'V2_INVALID_REQUEST'; end if;
+ return encode(sha256(convert_to('rf:v1:capability:008:'||p_credential,'UTF8')),'hex');
+end; $fn$;
+create function public.checkout_v1_mac_008(p_domain text,p_token text,p_value jsonb,p_credential text) returns text language plpgsql immutable set search_path='' as $fn$
+begin
+ perform public.checkout_v1_verifier_008(p_credential);
+ if p_domain is null or p_domain not in ('quote','request','price') or p_token is null or p_value is null then raise exception 'V2_INVALID_REQUEST'; end if;
+ return encode(extensions.hmac(convert_to('rf008:'||p_domain||':'||p_token||':'||p_value::text,'UTF8'),decode(p_credential,'hex'),'sha256'),'hex');
+end; $fn$;
+-- These catalog predicates grant no privilege and remain owner-only.
+create function public.checkout_platform_operator_008(p_role oid) returns boolean language sql stable set search_path='' as $fn$
+ select exists(select 1 from pg_catalog.pg_roles b where b.oid=p_role and b.rolcreaterole and not b.rolsuper and not b.rolbypassrls and (
+  (b.rolname in ('supabase_auth_admin','supabase_storage_admin') and b.rolcanlogin and not b.rolinherit and not b.rolcreatedb and not b.rolreplication)
+  or (b.rolname='dashboard_user' and not b.rolcanlogin and b.rolinherit and b.rolcreatedb and b.rolreplication)));
+$fn$;
+create function public.checkout_platform_reader_008(p_role oid) returns boolean language sql stable set search_path='' as $fn$
+ select exists(select 1 from pg_catalog.pg_roles b where b.oid=p_role
+  and not b.rolsuper and not b.rolcreaterole and not b.rolcreatedb and b.rolbypassrls and b.rolcanlogin and b.rolinherit
+  and ((b.rolname='supabase_etl_admin' and b.rolreplication) or (b.rolname='supabase_read_only_user' and not b.rolreplication))
+  and pg_catalog.pg_has_role(b.oid,'pg_read_all_data','USAGE'));
+$fn$;
+revoke all on function public.checkout_v1_verifier_008(text),public.checkout_v1_mac_008(text,text,jsonb,text),public.checkout_platform_operator_008(oid),public.checkout_platform_reader_008(oid) from public,anon,authenticated,service_role;
 create function public.checkout_v1_attempt_guard_008() returns trigger language plpgsql set search_path='' as $fn$
 begin
  if tg_op in ('DELETE','TRUNCATE') then raise exception 'V1_ATTEMPT_IMMUTABLE'; end if;
  if current_user<>'postgres' then raise exception using errcode='42501',message='V1_ATTEMPT_PRIVATE'; end if;
  if tg_op='UPDATE' and (old.state<>'active' or new.state not in ('retired','committed')
-  or (to_jsonb(old)-array['state','request_identity','retired_at']) is distinct from
-     (to_jsonb(new)-array['state','request_identity','retired_at'])) then raise exception 'V1_ATTEMPT_IMMUTABLE'; end if;
+  or (to_jsonb(old)-array['state','request_identity_mac','retired_at']) is distinct from
+     (to_jsonb(new)-array['state','request_identity_mac','retired_at'])) then raise exception 'V1_ATTEMPT_IMMUTABLE'; end if;
  return new;
 end; $fn$;
 create trigger checkout_v1_attempt_immutable before update or delete on public.checkout_v1_attempts for each row execute function public.checkout_v1_attempt_guard_008();
@@ -167,33 +192,40 @@ revoke all on function public.quote_checkout_v1_007_internal(jsonb,uuid) from pu
 create function public.quote_checkout_v1_checked(p_request jsonb,p_customer_id uuid default null) returns jsonb language plpgsql security definer set search_path='' as $fn$
 declare q jsonb; token text; credential text;
 begin
- -- The unchanged 007 validator/resolver owns all price, coupon and shipping math.
  q:=public.quote_checkout_v1_007_internal(p_request,p_customer_id);
  token:='checkout:'||gen_random_uuid()::text;
- credential:=encode(sha256(convert_to(gen_random_uuid()::text||gen_random_uuid()::text,'UTF8')),'hex');
- insert into public.checkout_v1_attempts(token,credential,customer_id,quote_identity,price_fingerprint)
- values(token,credential,p_customer_id,public.checkout_v1_quote_identity_008(p_request->'items',p_request->>'email',p_request->'shipping',p_request->>'couponCode',p_customer_id),q->>'quoteFingerprint');
- -- The public fingerprint is now an opaque quote capability bound to the issued
- -- token. Its underlying 007 price fingerprint remains private and unchanged.
+ credential:=encode(extensions.gen_random_bytes(32),'hex');
+ insert into public.checkout_v1_attempts(token,credential_verifier,quote_identity_mac,price_fingerprint_mac)
+ values(token,public.checkout_v1_verifier_008(credential),
+  public.checkout_v1_mac_008('quote',token,public.checkout_v1_quote_identity_008(p_request->'items',p_request->>'email',p_request->'shipping',p_request->>'couponCode',p_customer_id),credential),
+  public.checkout_v1_mac_008('price',token,to_jsonb(q->>'quoteFingerprint'),credential));
+ -- Only issuance returns the capability. Order/receipt evidence is its verifier.
+ if q->'pricingOutcome' is not null and q->'pricingOutcome'<>'null'::jsonb then q:=jsonb_set(q,'{pricingOutcome}',q->'pricingOutcome'||jsonb_build_object('acceptedQuoteFingerprint',credential)); end if;
  return q||jsonb_build_object('quoteFingerprint',credential,'idempotencyKey',substring(token from 10));
 end; $fn$;
 create or replace function public.create_order_transaction_v1_checked(p_idempotency_key text,p_items jsonb,p_contact jsonb,p_shipping jsonb,p_payment_method text,p_coupon_code text default null,p_shipping_method_id uuid default null,p_customer_id uuid default null,p_quote_fingerprint text default null) returns jsonb language plpgsql security definer set search_path='' as $fn$
-declare key text; previous public.orders%rowtype; attempt public.checkout_v1_attempts%rowtype; identity jsonb; q jsonb; created jsonb;
+declare key text; previous public.orders%rowtype; attempt public.checkout_v1_attempts%rowtype; identity jsonb; request_mac text; verifier text; q jsonb; created jsonb;
 begin
  if coalesce(auth.role(),'')<>'service_role' then raise exception using errcode='42501',message='V2_PERMISSION_DENIED'; end if;
  key:=public.checkout_v2_key(p_idempotency_key);
  perform pg_advisory_xact_lock(hashtextextended(key,0));
  previous:=public.checkout_v2_existing(key);
- if previous.id is not null then
+ select * into attempt from public.checkout_v1_attempts where token=key;
+ if previous.id is not null and attempt.token is null then
   if previous.checkout_version=1 and previous.v1_quote_fingerprint is not null and previous.v1_quote_fingerprint is distinct from p_quote_fingerprint then raise exception 'V2_IDEMPOTENCY_CONFLICT'; end if;
   return public.create_order_transaction(key,p_items,p_contact,p_shipping,p_payment_method,p_coupon_code,p_shipping_method_id,p_customer_id);
  end if;
  identity:=public.checkout_v1_request_identity_008(p_items,p_contact,p_shipping,p_payment_method,p_coupon_code,p_shipping_method_id,p_customer_id,p_quote_fingerprint);
- select * into attempt from public.checkout_v1_attempts where token=key;
+ verifier:=public.checkout_v1_verifier_008(p_quote_fingerprint);
+ request_mac:=public.checkout_v1_mac_008('request',key,identity,p_quote_fingerprint);
  if attempt.token is null then raise exception 'V1_ATTEMPT_UNAVAILABLE'; end if;
- if attempt.customer_id is distinct from p_customer_id or attempt.credential is distinct from p_quote_fingerprint
-  or attempt.quote_identity is distinct from identity->0
-  or (attempt.request_identity is not null and attempt.request_identity is distinct from identity) then raise exception 'V2_IDEMPOTENCY_CONFLICT'; end if;
+ if attempt.credential_verifier is distinct from verifier
+  or attempt.quote_identity_mac is distinct from public.checkout_v1_mac_008('quote',key,identity->0,p_quote_fingerprint)
+  or (attempt.request_identity_mac is not null and attempt.request_identity_mac is distinct from request_mac) then raise exception 'V2_IDEMPOTENCY_CONFLICT'; end if;
+ if previous.id is not null then
+  if previous.checkout_version<>1 or attempt.state<>'committed' or previous.v1_quote_fingerprint is distinct from verifier then raise exception 'V2_IDEMPOTENCY_CONFLICT'; end if;
+  return public.create_order_transaction(key,p_items,p_contact,p_shipping,p_payment_method,p_coupon_code,p_shipping_method_id,p_customer_id);
+ end if;
  if attempt.state='retired' then
   return jsonb_build_object('outcome','retired','code','QUOTE_CHANGED','idempotencyKey',substring(key from 10));
  end if;
@@ -201,13 +233,13 @@ begin
  -- Failed authorization, malformed requests, unavailable products/coupons and
  -- other resolver exceptions roll back; none can authorize replacement.
  q:=public.resolve_checkout_v1_007(key,p_items,p_contact,p_shipping,p_payment_method,p_coupon_code,p_shipping_method_id,p_customer_id);
- if q->>'quoteFingerprint' is distinct from attempt.price_fingerprint then
-  update public.checkout_v1_attempts set state='retired',request_identity=identity,retired_at=clock_timestamp() where token=key;
+ if public.checkout_v1_mac_008('price',key,to_jsonb(q->>'quoteFingerprint'),p_quote_fingerprint) is distinct from attempt.price_fingerprint_mac then
+  update public.checkout_v1_attempts set state='retired',request_identity_mac=request_mac,retired_at=clock_timestamp() where token=key;
   -- Normal return, never RAISE: PostgREST commits before delivering this outcome.
   return jsonb_build_object('outcome','retired','code','QUOTE_CHANGED','idempotencyKey',substring(key from 10));
  end if;
- created:=public.create_order_v1_effects_007(key,p_items,p_contact,p_shipping,p_payment_method,p_coupon_code,p_shipping_method_id,p_customer_id,q||jsonb_build_object('quoteFingerprint',attempt.credential));
- update public.checkout_v1_attempts set state='committed',request_identity=identity where token=key;
+ created:=public.create_order_v1_effects_007(key,p_items,p_contact,p_shipping,p_payment_method,p_coupon_code,p_shipping_method_id,p_customer_id,q||jsonb_build_object('quoteFingerprint',verifier));
+ update public.checkout_v1_attempts set state='committed',request_identity_mac=request_mac where token=key;
  return public.checkout_v2_v1_receipt((created->>'id')::uuid,false);
 end; $fn$;
 -- Share the UUID namespace with V2. The original V2 implementation, financial
@@ -265,15 +297,23 @@ begin
    and b.oid<>r.oid and (r.rolname='postgres' or r.rolsuper or r.rolcreaterole)
    and (pg_has_role(b.oid,r.oid,'USAGE') or pg_has_role(b.oid,r.oid,'SET')
      or exists(select 1 from pg_auth_members m where m.member=b.oid and m.roleid=r.oid and m.admin_option)))
+ or exists(select 1 from pg_roles b cross join pg_roles r where b.rolname !~ '^pg_' and b.rolname<>'postgres'
+  and not (b.rolname='supabase_admin' and b.rolsuper) and b.oid<>r.oid
+  and r.rolname in ('pg_read_all_data','pg_write_all_data','pg_maintain','supabase_etl_admin','supabase_read_only_user')
+  and (exists(select 1 from pg_auth_members m where m.member=b.oid and m.roleid=r.oid and m.admin_option)
+   or ((pg_has_role(b.oid,r.oid,'USAGE') or pg_has_role(b.oid,r.oid,'SET'))
+    and not (r.rolname='pg_read_all_data' and public.checkout_platform_reader_008(b.oid)))))
  then raise exception 'RF_RELEASE008_PRIVATE_ROLE_PATH'; end if;
  if exists(select 1 from pg_roles b cross join pg_roles r
    where b.rolname !~ '^pg_' and b.rolname<>'postgres' and not (b.rolname='supabase_admin' and b.rolsuper)
    and (b.oid=r.oid or pg_has_role(b.oid,r.oid,'USAGE') or pg_has_role(b.oid,r.oid,'SET'))
-   and (has_table_privilege(r.oid,'public.checkout_v1_attempts','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
-     or has_any_column_privilege(r.oid,'public.checkout_v1_attempts','SELECT,INSERT,UPDATE,REFERENCES')))
+   and (has_table_privilege(r.oid,'public.checkout_v1_attempts','INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+     or has_any_column_privilege(r.oid,'public.checkout_v1_attempts','INSERT,UPDATE,REFERENCES')
+     or ((has_table_privilege(r.oid,'public.checkout_v1_attempts','SELECT') or has_any_column_privilege(r.oid,'public.checkout_v1_attempts','SELECT'))
+      and not (public.checkout_platform_reader_008(b.oid) and (r.oid=b.oid or r.rolname='pg_read_all_data')))))
  then raise exception 'RF_RELEASE008_PRIVATE_ACL'; end if;
  if exists(select 1 from pg_proc p where p.pronamespace='public'::regnamespace
-   and p.proname in ('checkout_v1_quote_identity_008','checkout_v1_request_identity_008','checkout_v1_attempt_guard_008','quote_checkout_v1_007_internal','create_order_transaction_v2_008_internal')
+   and p.proname in ('checkout_v1_quote_identity_008','checkout_v1_request_identity_008','checkout_v1_attempt_guard_008','quote_checkout_v1_007_internal','create_order_transaction_v2_008_internal','checkout_v1_verifier_008','checkout_v1_mac_008','checkout_platform_operator_008','checkout_platform_reader_008')
    and (p.proowner<>(select oid from pg_roles where rolname='postgres') or p.proconfig is distinct from array['search_path=""']::text[]
      or exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a where a.grantee<>p.proowner)
      or exists(select 1 from pg_roles b cross join pg_roles r
@@ -281,5 +321,7 @@ begin
        and (b.oid=r.oid or pg_has_role(b.oid,r.oid,'USAGE') or pg_has_role(b.oid,r.oid,'SET'))
        and has_function_privilege(r.oid,p.oid,'EXECUTE'))))
  then raise exception 'RF_RELEASE008_PRIVATE_RPC'; end if;
+ if (select array_agg(attname::text order by attnum) from pg_attribute where attrelid='public.checkout_v1_attempts'::regclass and attnum>0 and not attisdropped)
+  is distinct from array['token','credential_verifier','quote_identity_mac','price_fingerprint_mac','request_identity_mac','state','created_at','retired_at']::text[] then raise exception 'RF_RELEASE008_ATTEMPT_SHAPE'; end if;
 end; $post$;
 commit;

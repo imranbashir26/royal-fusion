@@ -1,6 +1,8 @@
 // Every backend test file appears exactly once. Native groups use fresh owned
 // clusters; unit includes the existing embedded PGlite SQL regressions.
 export const nativeGroups={
+ release008_security:['release008-security-validation-native.test.js'],
+ security_chain:['release008-platform-guard.test.js'],
  coupon_sale:['coupon-sale-native.test.js'],
  all:['orders-v2.test.js','checkout-v2-sql.test.js','checkout-v2-limits.test.js','tester-catalog-api.test.js'],
  acceptance:['post014-default-acl-hardening.test.js','standard-availability-native.test.js','checked-v1-native.test.js','checked-v1-api-native.test.js','checkout-retirement-native.test.js','scheduled-sales-native.test.js','scheduled-sales-api-native.test.js'],

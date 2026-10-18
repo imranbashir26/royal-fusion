@@ -53,7 +53,7 @@ try {
  const configuration=path.join(output,'native-config.json');fs.writeFileSync(configuration,JSON.stringify(config,null,2))
 
  const tests=nativeGroups[options.selection]??(options.selection==='native'?['checked-v1-native.test.js','checked-v1-api-native.test.js']:options.selection==='retirement'?['checkout-retirement-native.test.js']:options.selection==='api'?['orders-v2.test.js']:['checkout-v2-sql.test.js'])
- result=await runTests(['--test','--test-concurrency=1','--test-reporter=tap',...(options.pattern?['--test-name-pattern='+options.pattern]:[]),...tests.map(p=>'backend/server/tests/'+p)],{...process.env,RF_RELEASE005_NATIVE_CONFIG:configuration})
+ result=await runTests(['--test','--test-concurrency=1','--test-reporter=tap',...(options.pattern?['--test-name-pattern='+options.pattern]:[]),...tests.map(p=>'backend/server/tests/'+p)],{...process.env,RF_RELEASE005_NATIVE_CONFIG:configuration,RF_REFRESH_RELEASE008_MANIFESTS:options['refresh-manifests']==='true'?'true':'false'})
  if(result.status===0&&!options.pattern){try{tapTotals(result.stdout)}catch(error){result.status=1;result.error=error}}
  fs.writeFileSync(path.join(output,'native-tests.log'),(result.stdout??'')+(result.stderr??''))
  console.log(result.stdout??'');if(result.stderr)console.error(result.stderr)

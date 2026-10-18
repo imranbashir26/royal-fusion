@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { orderRequestSchema, parseCheckout } from '../schemas/ordersV1.js'
 import { CheckoutApiError, CheckoutQuoteService, cents, normalizedCheckoutCategory, unavailable, publicV1Lines, publicPricingOutcome } from './checkoutQuoteService.js'
 
@@ -73,7 +74,7 @@ function receipt(data, input) {
       || typeof data.paymentStatus !== 'string' || !data.paymentStatus || data.paymentMethod !== input.paymentMethod || data.currency !== 'PKR') throw unavailable()
   const amounts = Object.fromEntries(['subtotal', 'discount', 'shippingFee', 'total'].map(key => [key, cents(data[key])]))
   if(amounts.discount>amounts.subtotal||amounts.total!==amounts.subtotal-amounts.discount+amounts.shippingFee||(data.pricingOutcome!=null&&!Array.isArray(data.lines)))throw unavailable()
-  return { ...publicV1Lines(data.lines,data.subtotal,null,true), ...publicPricingOutcome(data.pricingOutcome,data,input.quoteFingerprint), id: data.id, idempotencyKey: data.idempotencyKey, orderNumber: data.orderNumber, status: data.status,
+  return { ...publicV1Lines(data.lines,data.subtotal,null,true), ...publicPricingOutcome(data.pricingOutcome,data,createHash('sha256').update('rf:v1:capability:008:'+input.quoteFingerprint).digest('hex')), id: data.id, idempotencyKey: data.idempotencyKey, orderNumber: data.orderNumber, status: data.status,
     paymentStatus: data.paymentStatus, paymentMethod: data.paymentMethod,
     ...Object.fromEntries(Object.entries(amounts).map(([key, value]) => [key, Number(value) / 100])), currency: data.currency, idempotent: data.idempotent }
 }

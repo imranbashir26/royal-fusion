@@ -57,7 +57,14 @@ export function createCheckoutClient(fetcher: typeof fetch = fetch, baseUrl = im
       const envelope = await response.json().catch(() => null)
       if (!response.ok) throw new CheckoutClientError(envelope?.error?.code ?? 'CHECKOUT_FAILED', envelope?.error?.message ?? 'Checkout could not be completed.', response.status, order && response.status >= 500)
       if (!validate(envelope?.data)) throw new CheckoutClientError('INVALID_RESPONSE', 'The order service returned an invalid response. Your cart has been saved.', 0, order)
-      if (order && envelope.data.pricingOutcome && envelope.data.pricingOutcome.acceptedQuoteFingerprint !== (body as CanonicalOrderRequest).quoteFingerprint) throw new CheckoutClientError('INVALID_RESPONSE', 'The order service returned an invalid confirmation. Retry the same attempt.', 0, true)
+      if (order && envelope.data.pricingOutcome) {
+        let binding = (body as CanonicalOrderRequest).quoteFingerprint
+        if (path.startsWith('/v1/')) {
+          const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('rf:v1:capability:008:' + binding))
+          binding = Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('')
+        }
+        if (envelope.data.pricingOutcome.acceptedQuoteFingerprint !== binding) throw new CheckoutClientError('INVALID_RESPONSE', 'The order service returned an invalid confirmation. Retry the same attempt.', 0, true)
+      }
       return envelope.data
     } catch (error) {
       if (error instanceof CheckoutClientError) throw error
