@@ -663,9 +663,18 @@ begin
  -- @RELEASE007-PRIVATE-GUARD-BEGIN
  -- Preserve defaults, but fail atomically if they expose a newly created helper.
  -- Only the owner and the identified platform administrator when actually SUPERUSER
- -- have trusted administrative access. No application/custom role is name-exempt.
+ -- have trusted private-function access. Managed CREATEROLE is not EXECUTE authority.
+ -- Supabase init-scripts 00000000000001/2/3 define these bounded role profiles:
+ -- auth/storage: NOINHERIT LOGIN NOCREATEDB NOREPLICATION; dashboard: NOLOGIN
+ -- INHERIT CREATEDB REPLICATION. None may be SUPERUSER or BYPASSRLS here.
+ -- Their memberships and effective private EXECUTE remain checked below.
  if exists(select 1 from pg_roles b where b.rolname<>'postgres'
-   and not (b.rolname='supabase_admin' and b.rolsuper) and (b.rolsuper or b.rolcreaterole))
+   and not (b.rolname='supabase_admin' and b.rolsuper) and (b.rolsuper or b.rolcreaterole)
+   and not (b.rolcreaterole and not b.rolsuper and not b.rolbypassrls and (
+     (b.rolname in ('supabase_auth_admin','supabase_storage_admin')
+       and b.rolcanlogin and not b.rolinherit and not b.rolcreatedb and not b.rolreplication)
+     or (b.rolname='dashboard_user' and not b.rolcanlogin and b.rolinherit
+       and b.rolcreatedb and b.rolreplication))))
  or exists(select 1 from pg_roles b cross join pg_roles r
    where b.rolname<>'postgres' and not (b.rolname='supabase_admin' and b.rolsuper)
    and b.oid<>r.oid and (r.rolname='postgres' or r.rolsuper or r.rolcreaterole)

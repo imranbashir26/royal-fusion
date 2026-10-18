@@ -196,6 +196,108 @@ test('Release 007 source verification rejects substantive and non-line-ending mu
  })
 })
 
+test('Release 007 Supabase platform guard predicates with immutable catalog fixtures',async t=>{
+ // Reuse the native suite's exact-source/guard boundary. This selection does not
+ // call nativeFixture, install migrations, CREATE/ALTER ROLE or change privileges.
+ // Only membership/EXECUTE catalog lookups are substituted with immutable CTEs;
+ // both production IF predicates are evaluated as SQL, not reimplemented in JS.
+ const {sql}=reviewedSource007(await readFile(source,'utf8'))
+ const block=sql.match(/ -- @RELEASE007-PRIVATE-GUARD-BEGIN\n([\s\S]*?) -- @RELEASE007-PRIVATE-GUARD-END/)[1]
+ const predicates=Object.fromEntries([...block.matchAll(/^ if ([\s\S]*?)\n then raise exception 'RF_RELEASE007_PRIVATE_(ROLE_PATH|RPC)'; end if;/gm)].map(m=>[m[2],m[1]]))
+ assert.deepEqual(Object.keys(predicates),['ROLE_PATH','RPC'])
+ const membership=predicates.ROLE_PATH.slice(predicates.ROLE_PATH.indexOf('\n or exists'))
+ const digest=value=>createHash('sha256').update(value).digest('hex')
+ assert.equal(digest(membership),'545a847a0f35a4c1be6d4114e2a87d4d828179a5fe870ef77d3ee38fefee709c','Membership guard must remain unchanged')
+ assert.equal(digest(predicates.RPC),'285a736b44a5766e0dd97bc3d0783ae5877b48ea58ad0f18e9a8cae50a37ca94','Private RPC guard must remain unchanged')
+ assert.match(sql,/if shape <> '56e23c44b26187f5cd2a8d6407be3da0b21cedf07aa29d181e9a89052c7042b8'/)
+ const next=await readFile(new URL('../../supabase/release-migrations/008_durable_checkout_attempts.sql',import.meta.url),'utf8')
+ assert.match(next,/if shape <> '6076eb77ec31ddf953f6207c193cbebe5afb4c2568592676d19da736e8460fcb'/)
+
+ const rewrite=condition=>{
+  let result=condition.replace(/'([^']+)'::regprocedure/g,(_,signature)=>{
+   assert.ok(private007.includes(signature));return `(select oid from pg_proc where signature='${signature}')`
+  })
+  result=result.replace(/pg_has_role\(b\.oid,r\.oid,'(USAGE|SET)'\)/g,(_,mode)=>
+   `(exists(select 1 from role_path q where q.member=b.oid and q.roleid=r.oid and q.mode='${mode}'))`)
+  result=result.replace("aclexplode(coalesce(p.proacl,acldefault('f',p.proowner)))",'(select grantee from fixture_acl where function_oid=p.oid)')
+  result=result.replace("has_function_privilege(r.oid,p.oid,'EXECUTE')",`(r.rolsuper or exists(
+   select 1 from fixture_acl x where x.function_oid=p.oid and (x.grantee=0 or exists(
+    select 1 from role_path q where q.member=r.oid and q.roleid=x.grantee and q.mode='USAGE'))))`)
+  assert.doesNotMatch(result,/::regprocedure|pg_has_role\(|has_function_privilege\(|aclexplode\(|acldefault\(/)
+  return result
+ }
+ const oldRolePredicate="exists(select 1 from pg_roles b where b.rolname<>'postgres' and not (b.rolname='supabase_admin' and b.rolsuper) and (b.rolsuper or b.rolcreaterole))"+membership
+ const query=rolePredicate=>`WITH RECURSIVE
+  input AS (SELECT $1::jsonb value),
+  pg_roles AS (SELECT r.* FROM input,jsonb_to_recordset(value->'roles') AS r(
+   oid oid,rolname text,rolsuper boolean,rolcreaterole boolean,rolbypassrls boolean,
+   rolcanlogin boolean,rolinherit boolean,rolcreatedb boolean,rolreplication boolean)),
+  pg_auth_members AS (SELECT m.* FROM input,jsonb_to_recordset(value->'memberships') AS m(
+   member oid,roleid oid,inherit_option boolean,set_option boolean,admin_option boolean)),
+  pg_proc AS (SELECT p.* FROM input,jsonb_to_recordset(value->'functions') AS p(
+   oid oid,signature text,proowner oid,proconfig text[],prosecdef boolean,proname text)),
+  fixture_acl AS (SELECT a.* FROM input,jsonb_to_recordset(value->'acl') AS a(function_oid oid,grantee oid)),
+  role_path(member,roleid,mode) AS (
+   SELECT b.oid,r.oid,m.mode FROM pg_roles b CROSS JOIN pg_roles r CROSS JOIN (VALUES('USAGE'),('SET')) m(mode)
+    WHERE b.oid=r.oid OR b.rolsuper
+   UNION SELECT q.member,m.roleid,q.mode FROM role_path q JOIN pg_auth_members m ON m.member=q.roleid
+    WHERE CASE q.mode WHEN 'USAGE' THEN m.inherit_option ELSE m.set_option END
+  )
+  SELECT CASE WHEN (${rewrite(rolePredicate)}) THEN 'RF_RELEASE007_PRIVATE_ROLE_PATH'
+   WHEN (${rewrite(predicates.RPC)}) THEN 'RF_RELEASE007_PRIVATE_RPC' ELSE 'PASS' END result`
+ const baseRole=(oid,rolname,patch={})=>({oid,rolname,rolsuper:false,rolcreaterole:false,rolbypassrls:false,
+  rolcanlogin:false,rolinherit:true,rolcreatedb:false,rolreplication:false,...patch})
+ const baseline=()=>({roles:[baseRole(10,'postgres'),baseRole(11,'supabase_admin',{rolsuper:true}),
+  baseRole(12,'anon'),baseRole(13,'authenticated'),baseRole(14,'service_role',{rolbypassrls:true}),
+  baseRole(15,'dashboard_user',{rolcreaterole:true,rolcreatedb:true,rolreplication:true}),
+  baseRole(16,'supabase_auth_admin',{rolcreaterole:true,rolcanlogin:true,rolinherit:false}),
+  baseRole(17,'supabase_storage_admin',{rolcreaterole:true,rolcanlogin:true,rolinherit:false}),baseRole(18,'authenticator')],
+  memberships:[],functions:private007.map((signature,i)=>({oid:100+i,signature,proowner:10,
+   proconfig:['search_path=""'],prosecdef:i!==3,proname:signature.split('.')[1].split('(')[0]})),
+  acl:private007.map((_,i)=>({function_oid:100+i,grantee:10}))})
+ const edge=(member,roleid,mode='SET')=>({member,roleid,inherit_option:mode==='USAGE',set_option:mode==='SET',admin_option:mode==='ADMIN'})
+ const {PGlite}=await import('@electric-sql/pglite'),db=new PGlite()
+ t.after(async()=>{await db.exec('rollback');await db.close()})
+ await db.exec('begin read only')
+ const evaluate=async(fixture,predicate=predicates.ROLE_PATH)=>{
+  try{return (await db.query(query(predicate),[JSON.stringify(fixture)])).rows[0].result}
+  catch(error){throw new Error(error.message)}
+ }
+ const scenario=async(name,mutate,expected='RF_RELEASE007_PRIVATE_ROLE_PATH')=>t.test(name,async()=>{
+  const fixture=baseline();mutate(fixture);assert.equal(await evaluate(fixture),expected)
+ })
+ await t.test('former guard rejects documented Supabase roles; corrected guard accepts without EXECUTE exemptions',async()=>{
+  assert.equal(await evaluate(baseline(),oldRolePredicate),'RF_RELEASE007_PRIVATE_ROLE_PATH')
+  assert.equal(await evaluate(baseline()),'PASS')
+ })
+ await scenario('managed roles absent remains supported',f=>{f.roles=f.roles.filter(r=>![15,16,17].includes(r.oid))},'PASS')
+ await scenario('non-superuser supabase_admin without private access remains supported',f=>{f.roles.find(r=>r.oid===11).rolsuper=false},'PASS')
+ await scenario('custom CREATEROLE cannot borrow a platform profile',f=>f.roles.push(baseRole(20,'custom_admin',{rolcreaterole:true,rolcreatedb:true,rolreplication:true})))
+ await scenario('custom SUPERUSER remains rejected',f=>f.roles.push(baseRole(20,'custom_admin',{rolsuper:true})))
+ for(const id of [15,16,17]){
+  const name=baseline().roles.find(r=>r.oid===id).rolname
+  for(const flag of ['rolsuper','rolbypassrls','rolcanlogin','rolinherit','rolcreatedb','rolreplication'])await scenario(name+' rejects altered '+flag,f=>{
+   const role=f.roles.find(r=>r.oid===id);role[flag]=!role[flag]
+  })
+  for(const mode of ['USAGE','SET','ADMIN']){
+   await scenario(name+' rejects path to postgres / '+mode,f=>f.memberships.push(edge(id,10,mode)))
+   for(const member of [12,13,14,18])await scenario(name+' rejects application membership '+member+' / '+mode,f=>f.memberships.push(edge(member,id,mode)))
+  }
+  for(const mode of ['USAGE','SET'])await scenario(name+' rejects transitive application path / '+mode,f=>{
+   f.roles.push(baseRole(20,'bridge'));f.memberships.push(edge(14,20,mode),edge(20,id,mode))
+  })
+ }
+ for(let index=0;index<private007.length;index++){
+  for(const grantee of [0,11,12,13,14,15,16,17,20])await scenario('private helper '+index+' rejects EXECUTE grantee '+grantee,f=>{
+   if(grantee===20)f.roles.push(baseRole(20,'custom_reader'))
+   f.acl.push({function_oid:100+index,grantee})
+  },'RF_RELEASE007_PRIVATE_RPC')
+  await scenario('private helper '+index+' rejects changed owner',f=>{f.functions[index].proowner=14},'RF_RELEASE007_PRIVATE_RPC')
+  await scenario('private helper '+index+' rejects changed search_path',f=>{f.functions[index].proconfig=['search_path=public']},'RF_RELEASE007_PRIVATE_RPC')
+  await scenario('private helper '+index+' rejects changed security mode',f=>{f.functions[index].prosecdef=!f.functions[index].prosecdef},'RF_RELEASE007_PRIVATE_RPC')
+ }
+})
+
 test('Release 007 native private-function ACL adversarial acceptance; stop at first failure',async t=>{
  const {sql,old}=reviewedSource007(await readFile(source,'utf8'))
  async function scenario(name,run){let passed=false;await t.test(name,async()=>{
