@@ -315,20 +315,30 @@ export function CustomerOrderDetailModal({
                   </ul>
                 </div>
 
-                {/* Shipping Details */}
-                <div className="rounded-lg border border-champagne/30 bg-marble/30 p-4 space-y-1.5">
-                  <h4 className="text-xs font-bold uppercase tracking-[0.15em] text-oldgold">Shipping Address</h4>
-                  <p className="text-sm font-semibold text-brownroyal">{order.shipping.name}</p>
-                  <p className="text-xs text-brownroyal/80">{order.shipping.address}</p>
-                  <p className="text-xs text-brownroyal/80">
-                    {order.shipping.city}
-                    {order.shipping.province ? `, ${order.shipping.province}` : ''}
-                  </p>
-                  {order.shipping.orderNotes && (
-                    <p className="mt-1 text-xs italic text-brownroyal/70">
-                      Notes: {order.shipping.orderNotes}
+                {/* Seller & Shipping Details */}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg border border-champagne/30 bg-marble/30 p-3.5 space-y-1">
+                    <h4 className="text-xs font-bold uppercase tracking-[0.15em] text-oldgold">Seller Details</h4>
+                    <p className="text-sm font-semibold text-burgundy">Royal Fusion</p>
+                    <p className="text-xs text-brownroyal/80 leading-relaxed">
+                      Shop #544, Saddar Bazar, Attock Cantt, Pakistan
                     </p>
-                  )}
+                  </div>
+
+                  <div className="rounded-lg border border-champagne/30 bg-marble/30 p-3.5 space-y-1">
+                    <h4 className="text-xs font-bold uppercase tracking-[0.15em] text-oldgold">Shipping Address</h4>
+                    <p className="text-sm font-semibold text-brownroyal">{order.shipping.name}</p>
+                    <p className="text-xs text-brownroyal/80">{order.shipping.address}</p>
+                    <p className="text-xs text-brownroyal/80">
+                      {order.shipping.city}
+                      {order.shipping.province ? `, ${order.shipping.province}` : ''}
+                    </p>
+                    {order.shipping.orderNotes && (
+                      <p className="mt-1 text-xs italic text-brownroyal/70">
+                        Notes: {order.shipping.orderNotes}
+                      </p>
+                    )}
+                  </div>
                 </div>
 
                 {/* Financial Summary */}
