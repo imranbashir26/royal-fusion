@@ -349,6 +349,43 @@ test('Expired pricing refreshes through detail API; failed refresh hides effecti
   }
 })
 
+test('An early expiry callback still reaches the deadline and hides the stale price', {timeout: 90000}, async t => {
+  const products = [product(1)]
+  Object.assign(products[0].variants[0], {salePrice: 2400.25, effectivePrice: 2400.25, saleActive: true, saleEndsAt: '2026-10-16T00:00:02Z', validUntil: '2026-10-16T00:00:02Z'})
+  const {page, reads} = await fixture(t, {products})
+  await page.addInitScript(() => {
+    const original = window.setTimeout.bind(window)
+    const probe = {armed: false, fired: false}
+    window.__rfBulkExpiryProbe = probe
+    window.setTimeout = (handler, delay, ...args) => {
+      if (!probe.armed && typeof handler === 'function' && delay > 100 && new Error().stack?.includes('AdminBulkSales.tsx')) {
+        probe.armed = true
+        return original(() => {probe.fired = true; handler(...args)}, 0)
+      }
+      return original(handler, delay, ...args)
+    }
+  })
+  await open(page)
+  await editor(page).getByRole('button', {name: 'Choose Perfume 1', exact: true}).click()
+  const add = editor(page).getByRole('button', {name: 'Add Perfume 1 Size: 50 ml', exact: true})
+  await add.waitFor()
+  assert.equal(reads.filter(x => x === products[0].id).length, 1)
+  let refreshRequests = 0
+  await page.route(`**/api/v1/admin/products/${products[0].id}`, route => {
+    if (route.request().method() !== 'GET') return route.fallback()
+    refreshRequests++
+    return route.fulfill({status: 503, json: {error: {code: 'UNAVAILABLE'}}})
+  })
+  await add.click()
+  await page.waitForFunction(() => window.__rfBulkExpiryProbe?.fired, null, {timeout: 3000})
+  assert.deepEqual(await page.evaluate(() => window.__rfBulkExpiryProbe), {armed: true, fired: true})
+  assert.equal(refreshRequests, 0, 'An early callback must not refresh before the deadline')
+  await row(page, 'Perfume 1').getByText(/Effective at database snapshot: Refresh required/).waitFor({timeout: 5000})
+  assert.equal(refreshRequests, 1, 'The deadline must trigger one authoritative refresh attempt')
+  assert.equal(reads.filter(x => x === products[0].id).length, 1, 'The failing refresh must not accept a new snapshot')
+  assert.equal(await row(page, 'Perfume 1').getByText(/Effective at database snapshot: PKR/).count(), 0)
+})
+
 test('Two explicit sibling variants serialize one product group with independent amounts', {timeout: 90000}, async t => {
   const {page, writes} = await fixture(t, {products: [product(1, {count: 2})]})
   await open(page); await select(page, 'Perfume 1')

@@ -91,9 +91,15 @@ export function AdminBulkSales({scope, items}: {scope: Scope; items: readonly So
   // endpoints and cannot rebase a submitted plan or its captured revisions.
   useEffect(() => {
     if (!d.open || !d.rows.length) return
-    const expire = async () => {
+    let timer: number | undefined
+    const armNext = () => {
+      window.clearTimeout(timer)
+      const delay = Math.min(...d.rows.filter(r => !r.expired).map(r => r.expires)) - performance.now()
+      if (Number.isFinite(delay)) timer = window.setTimeout(() => void expire(), Math.min(2147483647, Math.max(1, Math.ceil(delay))))
+    }
+    async function expire() {
       const due = d.rows.filter(r => !r.expired && r.expires <= performance.now())
-      if (!due.length) return
+      if (!due.length) {armNext(); return}
       due.forEach(r => {r.expired = true}); changed(d)
       for (const id of new Set(due.map(ownerId))) {
         try {
@@ -108,8 +114,7 @@ export function AdminBulkSales({scope, items}: {scope: Scope; items: readonly So
       }
       changed(d)
     }
-    const delay = Math.min(...d.rows.filter(r => !r.expired).map(r => r.expires)) - performance.now()
-    const timer = Number.isFinite(delay) ? window.setTimeout(() => void expire(), Math.min(2147483647, Math.max(1, delay))) : undefined
+    armNext()
     const visible = () => {if (document.visibilityState === 'visible') void expire()}
     window.addEventListener('focus', visible); document.addEventListener('visibilitychange', visible)
     return () => {window.clearTimeout(timer); window.removeEventListener('focus', visible); document.removeEventListener('visibilitychange', visible)}
