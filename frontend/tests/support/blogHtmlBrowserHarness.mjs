@@ -4,6 +4,7 @@ import { once } from 'node:events'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import express from 'express'
 import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
@@ -21,9 +22,10 @@ export const canonicalOrigin = 'https://shop.example.invalid'
 export const mediaConfiguration = { projectId: '6n1y88j4', dataset: 'production' }
 export let origin, frontendImages
 let server, vite, browser, network, current
+const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 before(async () => {
   network = blockExternalBlogTestNetwork()
-  vite = await createServer({ root: path.resolve('frontend'), configFile: false, envDir: false, appType: 'custom',
+  vite = await createServer({ root: frontendRoot, configFile: false, envDir: false, appType: 'custom',
     server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true } })
   frontendImages = await vite.ssrLoadModule('/src/services/blogImages.ts')
   const app = express()

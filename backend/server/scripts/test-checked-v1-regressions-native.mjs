@@ -34,14 +34,35 @@ const startupLogTail=name=>{
 const startupFailure=error=>{
  const pgCtl=startupLogTail('pg_ctl.log'),postgres=startupLogTail('postgres.log')
  const evidence=pgCtl.text+'\n'+postgres.text
+ const denied=/permission denied|operation not permitted|access is denied/i
  const matches=[
-  ['permission_denied',/permission denied|operation not permitted|access is denied/i],
+  ['permission_denied',denied],
   ['port_conflict',/address already in use|port \d+ (?:is )?(?:already in use|occupied)/i],
   ['configuration_rejected',/unrecognized configuration parameter|invalid value for parameter|configuration file .* contains errors|syntax error in file/i],
   ['data_directory_failure',/data directory .* (?:does not exist|has wrong ownership|has invalid permissions|is not a database cluster)|database files are incompatible|lock file "postmaster\.pid" already exists/i],
  ].filter(([,pattern])=>pattern.test(evidence))
  const category=matches.length===1?matches[0][0]:'unknown'
- return {exitCode:Number.isInteger(error?.status)?error.status:null,category,pgCtlLogAvailable:pgCtl.available,postgresLogAvailable:postgres.available}
+ const failure={exitCode:Number.isInteger(error?.status)?error.status:null,category,pgCtlLogAvailable:pgCtl.available,postgresLogAvailable:postgres.available}
+ if(category==='permission_denied'){
+  const describe=line=>{
+   const operation=/\b(?:could not|failed to|unable to)\s+(bind|create|open|access|write)\b/i.exec(line)?.[1]?.toLowerCase()??'unknown'
+   if(/\b(?:IPv4|IPv6|TCP\/IP) address\b/i.test(line))
+    return {operation,targetCategory:'network_bind',...(/\b127\.0\.0\.1\b/.test(line)?{safeTarget:'127.0.0.1'}:{})}
+   if(/\bUnix(?:-domain)? (?:address|socket)\b|\/\.s\.PGSQL\.\d+(?:\.lock)?\b/i.test(line)){
+    const socketDir=/\/(var\/run|run)\/postgresql\/\.s\.PGSQL\.\d+(?:\.lock)?(?=["\s:]|$)/.exec(line)?.[1]
+    return {operation,targetCategory:'unix_socket',...(socketDir?{safeTargetDirectory:'/'+socketDir+'/postgresql'}:{})}
+   }
+   if(/\bshared memory\b/i.test(line))return {operation,targetCategory:'shared_memory'}
+   const quoted=/"([^"\r\n]{1,512})"/.exec(line)?.[1]
+   if(!quoted||!path.isAbsolute(quoted))return {operation,targetCategory:'unknown'}
+   const within=base=>{const relative=path.relative(base,quoted);return relative===''||relative!=='..'&&!relative.startsWith('..'+path.sep)&&!path.isAbsolute(relative)}
+   return {operation,targetCategory:within(cluster)?'owned_cluster':within(output)?'owned_output':'filesystem_other'}
+  }
+  const descriptions=[...postgres.text.split(/\r?\n/),...pgCtl.text.split(/\r?\n/)].filter(line=>denied.test(line)).map(describe)
+  const distinct=[...new Map(descriptions.map(item=>[JSON.stringify(item),item])).values()]
+  Object.assign(failure,distinct.length===1?distinct[0]:{operation:'unknown',targetCategory:distinct.length?'ambiguous':'unknown'})
+ }
+ return failure
 }
 let interrupted=false,stopActiveTest
 const initializationAbort=new AbortController()

@@ -4,6 +4,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import express from 'express'
 import helmet from 'helmet'
 import cors from 'cors'
@@ -21,6 +22,7 @@ let playwright
 try { playwright = require('playwright') } catch { playwright = require(process.env.ROYAL_FUSION_PLAYWRIGHT_PATH
   ?? path.join(homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')) }
 let vite, browser, network, current
+const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 export let origin
 export { configuration, productId, variantId, secondVariantId }
 export const customer = { id: '00000000-0000-4000-8000-000000000101', name: 'Fixture Customer', email: 'customer@example.invalid', phone: '', address: '', city: '', province: '' }
@@ -121,7 +123,7 @@ before(async () => {
   })
   app.get('/api/public/storefront', (_req, res) => res.json({ products: [], categories: [], collections: [], blogs: [legacyBlog], settings: {}, homepage: {}, shipping: {}, payments: [], seo: [] }))
   app.use('/api', (_req, res) => res.json({ data: [] }))
-  vite = await createServer({ root: path.resolve('frontend'), envDir: false, cacheDir: 'node_modules/.vite-blog-html-integration', logLevel: 'silent',
+  vite = await createServer({ root: frontendRoot, envDir: false, cacheDir: 'node_modules/.vite-blog-html-integration', logLevel: 'silent',
     plugins: [{ name: 'injected-blog-document-integration',
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
