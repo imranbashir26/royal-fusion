@@ -1,8 +1,10 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { LogOut, Mail, Phone, User, X } from 'lucide-react'
 import type { FormEvent } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Button } from '../common/Button'
+import { CustomerOrderHistory } from './CustomerOrderHistory'
 import { useCustomerAuthStore, type CustomerProfileUpdate } from '../../store/customerAuthStore'
 import { cn } from '../../utils/cn'
 
@@ -12,6 +14,7 @@ interface AccountModalProps {
 }
 
 type AccountMode = 'signin' | 'signup'
+type CustomerTab = 'profile' | 'orders'
 type FieldErrors = Partial<Record<string, string>>
 
 const emptyAuthForm = {
@@ -24,13 +27,21 @@ const emptyAuthForm = {
 
 export function AccountModal({ isOpen, onClose }: AccountModalProps) {
   const currentCustomer = useCustomerAuthStore((state) => state.currentCustomer)
+  const isRestoring = useCustomerAuthStore(state => state.isRestoring)
+  const sessionMessage = useCustomerAuthStore(state => state.sessionMessage)
+  const dialogRef = useRef<HTMLElement | null>(null)
+  const closeRef = useRef<HTMLButtonElement | null>(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
   const signIn = useCustomerAuthStore((state) => state.signIn)
   const signUp = useCustomerAuthStore((state) => state.signUp)
   const updateProfile = useCustomerAuthStore((state) => state.updateProfile)
   const logout = useCustomerAuthStore((state) => state.logout)
   const restoreSession = useCustomerAuthStore((state) => state.restoreSession)
   const [mode, setMode] = useState<AccountMode>('signin')
+  const [customerTab, setCustomerTab] = useState<CustomerTab>('profile')
   const [authForm, setAuthForm] = useState(emptyAuthForm)
+  const [profileOwnerId, setProfileOwnerId] = useState('')
   const [profileForm, setProfileForm] = useState<CustomerProfileUpdate>({
     name: '',
     phone: '',
@@ -50,17 +61,42 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
   }, [isOpen, restoreSession])
 
   useEffect(() => {
-    if (!currentCustomer) return
+    if (!currentCustomer) {
+      setProfileForm({ name: '', phone: '' }); setProfileOwnerId(''); setCustomerTab('profile')
+      return
+    }
+    setProfileOwnerId(currentCustomer.id)
     setProfileForm({
       name: currentCustomer.name,
       phone: currentCustomer.phone,
     })
   }, [currentCustomer])
 
+  useEffect(() => {
+    if (!isOpen) return
+    const trigger = document.activeElement as HTMLElement | null
+    const frame = requestAnimationFrame(() => closeRef.current?.focus())
+    const keyboard = (event: KeyboardEvent) => {
+      if (document.querySelector('[role="dialog"][aria-label="Order Receipt"]')) return
+      if (event.key === 'Escape') { event.preventDefault(); onCloseRef.current(); return }
+      if (event.key !== 'Tab' || !dialogRef.current) return
+      const controls = [...dialogRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), [tabindex="0"]')].filter(el => el.getClientRects().length > 0)
+      const first = controls[0], last = controls.at(-1)
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+    }
+    window.addEventListener('keydown', keyboard)
+    return () => { cancelAnimationFrame(frame); window.removeEventListener('keydown', keyboard); if (trigger?.isConnected) trigger.focus() }
+  }, [isOpen])
+
+  const visibleProfileForm = currentCustomer && profileOwnerId !== currentCustomer.id
+    ? { name: currentCustomer.name, phone: currentCustomer.phone } : profileForm
   const panelTitle = useMemo(() => {
-    if (currentCustomer) return 'Your Royal Profile'
+    if (currentCustomer) {
+      return customerTab === 'orders' ? 'Your Order History' : 'Your Royal Profile'
+    }
     return mode === 'signin' ? 'Sign in to Royal Fusion' : 'Create your account'
-  }, [currentCustomer, mode])
+  }, [currentCustomer, mode, customerTab])
 
   const handleAuthSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -94,18 +130,23 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
 
   const handleProfileSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const validation = validateProfileForm(profileForm)
+    const validation = validateProfileForm(visibleProfileForm)
     setErrors(validation)
     setMessage('')
     if (Object.keys(validation).length > 0) return
 
     setIsSaving(true)
     try {
-      await updateProfile(profileForm)
+      await updateProfile(visibleProfileForm)
       setMessage('Profile updated successfully.')
     } catch (err) {
       setErrors({ form: err instanceof Error ? err.message : 'Unable to update profile.' })
     } finally { setIsSaving(false) }
+  }
+
+  const handleLogout = () => {
+    setErrors({}); setMessage(''); setAuthForm(emptyAuthForm)
+    void logout().catch(error => setErrors({ form: error instanceof Error ? error.message : 'Sign out unavailable.' }))
   }
 
   return (
@@ -119,6 +160,9 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
           onClick={onClose}
         >
           <motion.aside
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
             aria-label="Customer account"
             className="ml-auto flex h-full w-full max-w-md flex-col overflow-hidden rounded-lg border border-champagne/35 bg-ivory shadow-2xl"
             initial={{ x: 48, opacity: 0 }}
@@ -133,6 +177,7 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
                 <h2 className="mt-1 font-serif text-3xl font-semibold text-burgundy">{panelTitle}</h2>
               </div>
               <button
+                ref={closeRef}
                 aria-label="Close account panel"
                 className="grid h-10 w-10 place-items-center rounded-full border border-champagne/35 text-brownroyal transition hover:bg-champagne/15"
                 onClick={onClose}
@@ -143,43 +188,75 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
             </div>
 
             <div className="flex-1 overflow-y-auto p-5">
-              {currentCustomer ? (
-                <form className="space-y-4" onSubmit={handleProfileSubmit}>
-                  <ProfileHeader
-                    email={currentCustomer.email}
-                    name={currentCustomer.name}
-                    phone={currentCustomer.phone}
-                  />
-                  <Field
-                    error={errors.name}
-                    label="Full name"
-                    onChange={(value) => setProfileForm((current) => ({ ...current, name: value }))}
-                    required
-                    value={profileForm.name}
-                  />
-
-                  <Field
-                    error={errors.phone}
-                    label="Phone number (optional)"
-                    onChange={(value) => setProfileForm((current) => ({ ...current, phone: value }))}
-                    value={profileForm.phone}
-                  />
-
-                  <Alert errors={errors} message={message} />
-                  <div className="flex flex-col gap-3 sm:flex-row">
-                    <Button className="flex-1" type="submit" disabled={isSaving}>Update Profile</Button>
-                    <Button
-                      className="flex-1"
-                      onClick={() => { void logout().then(() => setMessage('')).catch(error => setErrors({ form: error instanceof Error ? error.message : 'Sign out unavailable.' })) }}
-                      variant="outline"
+              {isRestoring ? <p role="status">Checking your account session...</p> : currentCustomer ? (
+                <div className="space-y-5">
+                  <div className="grid grid-cols-2 rounded-full border border-champagne/30 bg-marble p-1">
+                    <button
+                      className={cn(
+                        'rounded-full px-4 py-2 text-sm font-bold transition',
+                        customerTab === 'profile'
+                          ? 'bg-burgundy text-ivory shadow-sm'
+                          : 'text-brownroyal hover:bg-champagne/12'
+                      )}
+                      aria-pressed={customerTab === 'profile'}
+                      onClick={() => { setCustomerTab('profile'); setErrors({}); setMessage('') }}
+                      type="button"
                     >
-                      <LogOut className="h-4 w-4" aria-hidden="true" />
-                      Logout
-                    </Button>
+                      Profile
+                    </button>
+                    <button
+                      className={cn(
+                        'rounded-full px-4 py-2 text-sm font-bold transition',
+                        customerTab === 'orders'
+                          ? 'bg-burgundy text-ivory shadow-sm'
+                          : 'text-brownroyal hover:bg-champagne/12'
+                      )}
+                      aria-pressed={customerTab === 'orders'}
+                      onClick={() => { setCustomerTab('orders'); setErrors({}); setMessage('') }}
+                      type="button"
+                    >
+                      My Orders
+                    </button>
                   </div>
-                </form>
+
+                  {customerTab === 'orders' ? (
+                    <CustomerOrderHistory key={currentCustomer.id} onExploreClick={onClose} />
+                  ) : (
+                    <form className="space-y-4" onSubmit={handleProfileSubmit}>
+                      <ProfileHeader
+                        email={currentCustomer.email}
+                        name={currentCustomer.name}
+                        phone={currentCustomer.phone}
+                      />
+                      <Field
+                        error={errors.name}
+                        label="Full name"
+                        onChange={(value) => setProfileForm((current) => ({ ...current, name: value }))}
+                        required
+                        value={visibleProfileForm.name}
+                      />
+
+                      <Field
+                        error={errors.phone}
+                        label="Phone number (optional)"
+                        onChange={(value) => setProfileForm((current) => ({ ...current, phone: value }))}
+                        value={visibleProfileForm.phone}
+                      />
+
+                      <Alert errors={errors} message={message} />
+                      <div className="flex flex-col gap-3 sm:flex-row">
+                        <Button className="flex-1" type="submit" disabled={isSaving}>Update Profile</Button>
+                      </div>
+                    </form>
+                  )}
+                  <Button className="w-full" onClick={handleLogout} variant="outline">
+                    <LogOut className="h-4 w-4" aria-hidden="true" />
+                    Logout
+                  </Button>
+                </div>
               ) : (
                 <>
+                  {sessionMessage && <p role="status" className="mb-4 text-sm text-burgundy">{sessionMessage}</p>}
                   <div className="mb-5 grid grid-cols-2 rounded-full border border-champagne/30 bg-marble p-1">
                     {(['signin', 'signup'] as AccountMode[]).map((item) => (
                       <button
@@ -243,6 +320,18 @@ export function AccountModal({ isOpen, onClose }: AccountModalProps) {
                     <Button className="w-full" disabled={isSaving} type="submit">
                       {isSaving ? 'Please wait...' : mode === 'signin' ? 'Sign In' : 'Create Account'}
                     </Button>
+                    {mode === 'signup' && (
+                      <p className="mt-3 text-center text-xs text-brownroyal/70 leading-relaxed">
+                        By creating an account, you agree to our{' '}
+                        <Link to="/terms-and-conditions" onClick={onClose} className="underline hover:text-burgundy">
+                          Terms and Conditions
+                        </Link>{' '}
+                        and{' '}
+                        <Link to="/privacy-policy" onClick={onClose} className="underline hover:text-burgundy">
+                          Privacy Policy
+                        </Link>.
+                      </p>
+                    )}
                   </form>
                 </>
               )}
@@ -258,6 +347,7 @@ function ProfileHeader({ name, email, phone }: { name: string; email: string; ph
   const primaryContact = email || phone
   return (
     <div className="rounded-lg border border-champagne/25 bg-marble p-4">
+      <p className="mb-3 text-xs font-bold uppercase tracking-wider text-oldgold">Account overview</p>
       <div className="flex items-center gap-3">
         <div className="grid h-12 w-12 place-items-center rounded-full bg-burgundy text-ivory">
           <User className="h-5 w-5" aria-hidden="true" />
@@ -268,6 +358,7 @@ function ProfileHeader({ name, email, phone }: { name: string; email: string; ph
             {email ? <Mail className="h-4 w-4" aria-hidden="true" /> : <Phone className="h-4 w-4" aria-hidden="true" />}
             {primaryContact}
           </p>
+          {email && phone && <p className="mt-1 text-sm text-brownroyal/70">{phone}</p>}
         </div>
       </div>
     </div>
@@ -302,6 +393,8 @@ function Field({
         )}
         onChange={(event) => onChange(event.target.value)}
         type={type}
+        required={required}
+        aria-invalid={Boolean(error)}
         value={value}
       />
       {error && <span className="mt-1 block text-xs font-semibold text-burgundy">{error}</span>}
@@ -311,10 +404,10 @@ function Field({
 
 function Alert({ errors, message }: { errors: FieldErrors; message: string }) {
   if (errors.form) {
-    return <p className="rounded-lg border border-burgundy/20 bg-burgundy/8 px-4 py-3 text-sm font-semibold text-burgundy">{errors.form}</p>
+    return <p role="alert" className="rounded-lg border border-burgundy/20 bg-burgundy/8 px-4 py-3 text-sm font-semibold text-burgundy">{errors.form}</p>
   }
   if (message) {
-    return <p className="rounded-lg border border-[#2f8f5b]/20 bg-[#2f8f5b]/10 px-4 py-3 text-sm font-semibold text-[#2f8f5b]">{message}</p>
+    return <p role="status" className="rounded-lg border border-[#2f8f5b]/20 bg-[#2f8f5b]/10 px-4 py-3 text-sm font-semibold text-[#2f8f5b]">{message}</p>
   }
   return null
 }

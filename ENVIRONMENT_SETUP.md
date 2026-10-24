@@ -66,14 +66,15 @@ Put local Studio configuration in `sanity/.env.local`:
 - `SANITY_STUDIO_PROJECT_ID`
 - `SANITY_STUDIO_DATASET`
 - `SANITY_STUDIO_API_VERSION`
+- `SANITY_STUDIO_CANONICAL_ORIGIN` (optional approved primary HTTPS storefront origin)
 
-These are public Studio configuration values. They come from the Sanity project settings and the API version selected by the development team. Never put a Sanity write token in a `SANITY_STUDIO_` variable. The current `sanity` folder contains schema starters but no Studio package/configuration that reads these variables yet.
+These are public Studio configuration values. Never put a Sanity write token in a `SANITY_STUDIO_` variable. Phase 4C configures the standalone `@royal-fusion/studio` npm workspace in `sanity/`, using reviewed defaults of project `6n1y88j4`, dataset `production`, and API date `2025-01-01`. Existing blank local values use those defaults. A different project/dataset is rejected. Canonical overrides remain read-only until an approved primary storefront origin is configured. See `sanity/README.md` for local startup and safety boundaries; this setup does not deploy Studio or change the frontend/backend environment.
 
 ## Deployment Mapping
 
 Vercel currently needs the six public `VITE_` variables listed in the frontend section. Belmo needs the backend variables actually used by Express. Sanity Studio variables belong in the Studio deployment environment after a Studio application is configured.
 
-Do not create a root `.env`: no confirmed root-level script reads one. Workspace commands delegate to the frontend or backend, whose environment files belong in their own folders.
+Do not create a root `.env`: no confirmed root-level script reads one. Workspace commands delegate to the frontend, backend or standalone Studio, whose environment files belong in their own folders.
 
 ## Git Safety Check
 

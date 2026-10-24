@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
+  },
+  "include": ["sanity.config.ts", "sanity.cli.ts", "studioConfiguration.ts", "schemas/index.ts", "schemas/blogPost.ts", "schemas/author.ts", "schemas/blogCategory.ts", "schemas/blogImage.ts", "schemas/validation.ts", "tests/**/*.ts"]
+}

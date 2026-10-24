@@ -1,7 +1,8 @@
+import { CheckoutPricingDetails, SelectedCheckoutCharges } from '../components/common/CheckoutPricingDetails'
 import { Link } from 'react-router-dom'
 import { PageHeader } from '../components/common/PageHeader'
 import { useCheckoutIntentStore } from '../store/checkoutIntentStore'
-import { formatCurrency } from '../utils/format'
+import { formatCheckoutCurrency } from '../utils/checkoutMoney'
 
 export function CheckoutSuccessPage() {
   const { receipt, completion } = useCheckoutIntentStore()
@@ -15,7 +16,9 @@ export function CheckoutSuccessPage() {
         <div><dt>Order status</dt><dd>{receipt.status}</dd></div>
         <div><dt>Payment status</dt><dd>{receipt.paymentStatus}</dd></div>
         <div><dt>Payment method</dt><dd>{receipt.paymentMethod}</dd></div>
-        {(['subtotal', 'discount', 'shippingFee', 'total'] as const).map((key) => <div className="flex justify-between" key={key}><dt>{({ subtotal: 'Subtotal', discount: 'Discount', shippingFee: 'Shipping', total: 'Total' })[key]}</dt><dd>{formatCurrency(receipt[key])}</dd></div>)}
+        {(['subtotal', 'discount', 'shippingFee', 'total'] as const).map((key) => <div className="flex justify-between" key={key}><dt>{({ subtotal: 'Subtotal', discount: 'Discount', shippingFee: 'Shipping', total: 'Total' })[key]}</dt><dd>{formatCheckoutCurrency(receipt[key])}</dd></div>)}
+        {receipt.lines && <div><dt>Frozen item charges</dt><dd><SelectedCheckoutCharges label="Frozen item charges" unitLabel="Frozen unit price" lines={receipt.lines} /></dd></div>}
+        {receipt.pricingOutcome && <div><dt>Pricing</dt><dd><CheckoutPricingDetails outcome={receipt.pricingOutcome} /></dd></div>}
         <div><dt>Currency</dt><dd>{receipt.currency}</dd></div>
         <Link to="/shop" className="text-burgundy underline">Continue shopping</Link>
       </dl>

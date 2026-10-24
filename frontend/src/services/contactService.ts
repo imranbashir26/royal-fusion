@@ -1,4 +1,4 @@
-import { apiClient } from './apiClient'
+import { API_BASE_URL } from './apiClient'
 
 export interface ContactPayload {
   name: string
@@ -9,12 +9,15 @@ export interface ContactPayload {
 
 export const contactService = {
   async sendMessage(payload: ContactPayload) {
-    return apiClient.request<{
-      status?: string
-      message: string
-    }>('/public/contact', {
+    const response = await fetch(`${API_BASE_URL}/v1/public/contact`, {
       method: 'POST',
-      body: JSON.stringify({ subject: 'Website inquiry', ...payload }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     })
+    const body = await response.json().catch(() => null)
+    if (!response.ok || typeof body?.data?.message !== 'string' || !body.data.message.trim()) {
+      throw new Error('Your message could not be sent. Please try again later.')
+    }
+    return { message: body.data.message as string }
   },
 }

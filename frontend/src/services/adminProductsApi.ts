@@ -1,5 +1,7 @@
 import { adminAuthClient } from './adminAuthClient'
 import { toProductPayload } from './adminProductContract'
+import {bulkSaleRequestOptions} from './bulkSaleContract.ts'
+import type {ProductId, ProductSalePayload} from './bulkSaleContract'
 export { productErrorMessage } from './adminProductContract'
 
 export interface AdminProduct extends Record<string, unknown> {
@@ -38,8 +40,8 @@ export const adminProductsApi = {
     if (status !== 'All') params.set('status', status)
     return adminAuthClient.protectedRequest<AdminProductPage>(`${basePath}?${params}`)
   },
-  get(id: string) {
-    return adminAuthClient.protectedRequest<AdminProduct>(`${basePath}/${encodeURIComponent(id)}`)
+  get(id: string, options?: {signal?: AbortSignal}) {
+    return adminAuthClient.protectedRequest<AdminProduct>(`${basePath}/${encodeURIComponent(id)}`, options)
   },
   create(form: Record<string, unknown>) {
     return adminAuthClient.protectedRequest<AdminProduct>(basePath, {
@@ -49,6 +51,12 @@ export const adminProductsApi = {
   update(id: string, form: Record<string, unknown>) {
     return adminAuthClient.protectedRequest<AdminProduct>(`${basePath}/${encodeURIComponent(id)}`, {
       method: 'PUT', body: JSON.stringify(toProductPayload(form)),
+    })
+  },
+  updateSaleVariants(id: ProductId, body: ProductSalePayload, options?: {requestId?: string; signal?: AbortSignal}) {
+    return adminAuthClient.protectedRequest<AdminProduct>(`${basePath}/${encodeURIComponent(id)}`, {
+      ...bulkSaleRequestOptions(options), method: 'PUT',
+      body: JSON.stringify({variants: body.variants, expectedRevision: body.expectedRevision}),
     })
   },
   archive(id: string) {

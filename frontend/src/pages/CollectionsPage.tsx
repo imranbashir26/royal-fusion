@@ -5,7 +5,7 @@ import { ProductBottle } from '../components/products/ProductBottle'
 import { resolveCollectionSlug, selectCollectionProduct } from '../services/productionMappers'
 import { useStorefront } from '../storefront/StorefrontProvider'
 import { buttonClasses } from '../utils/buttonClasses'
-import { formatCurrency } from '../utils/format'
+import {ProductPrice} from '../components/products/ProductPrice'
 
 export function CollectionsPage() {
   const { products, collections = [], isLoading } = useStorefront()
@@ -74,7 +74,7 @@ export function CollectionsPage() {
                       <ProductBottle floating name={productName} tone={product.image} />
                       <div className="mt-4 text-center">
                         <h3 className="font-serif text-3xl font-semibold text-burgundy">{productName}</h3>
-                        <p className="font-bold text-brownroyal">{formatCurrency(product.price)}</p>
+                        <p className="font-bold text-brownroyal"><ProductPrice product={product} /></p>
                       </div>
                     </>
                   ) : (

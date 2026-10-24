@@ -54,6 +54,47 @@ test('collection form maps to production update contract', () => {
   assert.equal(validation.data.active, false)
 })
 
+for (const [operation, schema] of [['create', createCollectionSchema], ['update', updateCollectionSchema]]) {
+  test(`collection ${operation} serializes single and empty banner values without losing existing images`, () => {
+    const image = 'https://cdn.example.com/existing-banner.webp'
+    for (const [value, expected] of [[image, image], [[image], image], ['', ''], [[], '']]) {
+      const form = { name: 'Royal Edit', slug: 'royal-edit', bannerSecureUrl: value }
+      const payload = toCollectionPayload(form)
+      assert.equal(payload.bannerSecureUrl, expected)
+      assert.equal(typeof payload.bannerSecureUrl, 'string')
+      assert.equal(schema.parse(JSON.parse(JSON.stringify(payload))).bannerSecureUrl, expected)
+      assert.deepEqual(form.bannerSecureUrl, value, 'serialization does not mutate the form')
+    }
+  })
+
+  test(`collection ${operation} preserves an explicit banner clear over stale image aliases`, () => {
+    const payload = toCollectionPayload({
+      name: 'Royal Edit', slug: 'royal-edit', bannerSecureUrl: [],
+      image: 'https://cdn.example.com/old.webp', imageUrl: 'https://cdn.example.com/old.webp',
+    })
+    assert.equal(schema.parse(payload).bannerSecureUrl, '')
+    assert.equal(Object.hasOwn(payload, 'image'), false)
+    assert.equal(Object.hasOwn(payload, 'imageUrl'), false)
+  })
+
+  test(`collection ${operation} refuses ambiguous banner arrays instead of silently choosing an image`, () => {
+    for (const field of ['bannerSecureUrl', 'image', 'imageUrl']) {
+      for (const value of [['https://cdn.example.com/one.webp', 'https://cdn.example.com/two.webp'], [null]]) {
+        assert.throws(() => toCollectionPayload({ name: 'Royal Edit', slug: 'royal-edit', [field]: value }), /Select one collection banner image/)
+      }
+    }
+  })
+}
+
+test('collection update leaves omitted banner fields unchanged and retains legacy string aliases', () => {
+  assert.equal(Object.hasOwn(toCollectionPayload({ name: 'Renamed' }), 'bannerSecureUrl'), false)
+  for (const field of ['image', 'imageUrl']) {
+    const image = 'https://cdn.example.com/legacy.webp'
+    assert.equal(toCollectionPayload({ [field]: image }).bannerSecureUrl, image)
+    assert.equal(toCollectionPayload({ [field]: [image] }).bannerSecureUrl, image)
+  }
+})
+
 test('collection errors explain duplicate identities, session and permission failures', () => {
   const failure = (status, code) => Object.assign(new Error('Server detail'), { status, code })
   assert.match(collectionErrorMessage(failure(409, 'COLLECTION_CONFLICT')), /slug already exists/i)

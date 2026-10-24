@@ -1,4 +1,4 @@
-import type { AdminOrderAction, AdminOrderError, AdminOrderMutationResult } from '../types/adminOrders.ts';
+import type { AdminOrderAction, AdminOrderDetail, AdminOrderError, AdminOrderMutationResult } from '../types/adminOrders.ts';
 export interface AdminOrderCommand {
     action: AdminOrderAction;
     body: Record<string, string> & {
@@ -12,7 +12,14 @@ const fields: Record<AdminOrderAction, string[]> = {
 };
 // These RPC rejections occur after durable replay lookup. Auth/rate-limit failures
 // cannot prove that an earlier lost response did not commit and retain the command.
-const definitiveRejections = new Set(['ORDER_NOT_FOUND', 'ORDER_STALE', 'INVALID_ORDER_TRANSITION', 'CANCELLATION_NOT_ALLOWED', 'PAID_CANCELLATION_BLOCKED', 'ORDER_LEDGER_INCONSISTENT', 'PAYMENT_NOT_FOUND', 'PAYMENT_INCONSISTENT', 'PAYMENT_CONFIRMATION_CONFLICT', 'FULFILLMENT_REQUIRED', 'INVALID_TRACKING']);
+const definitiveRejections = new Set(['ORDER_NOT_FOUND', 'ORDER_STALE', 'INVALID_ORDER_TRANSITION', 'CANCELLATION_NOT_ALLOWED', 'PAID_CANCELLATION_BLOCKED', 'ORDER_LEDGER_INCONSISTENT', 'ORDER_SNAPSHOT_INCONSISTENT', 'INVENTORY_RESTORATION_OVERFLOW', 'ORDER_REVISION_OVERFLOW', 'PAYMENT_NOT_FOUND', 'PAYMENT_INCONSISTENT', 'PAYMENT_CONFIRMATION_CONFLICT', 'FULFILLMENT_REQUIRED', 'INVALID_TRACKING']);
+export function supportedOrderActions(order: AdminOrderDetail, canManage: boolean, canPay: boolean) {
+    const version=order.checkoutVersion??1;
+    if(order.fulfillmentSupported===false||![1,2].includes(version))return [];
+    const local=allowedOrderActions(order.status,order.paymentMethod,order.paymentStatus,canManage,canPay);
+    if(version===2)return order.fulfillmentSupported===true&&Array.isArray(order.allowedActions)?local.filter(a=>order.allowedActions!.includes(a)):[];
+    return local;
+}
 export function allowedOrderActions(status: string, paymentMethod: string, paymentStatus: string, canManage: boolean, canPay: boolean) {
     const actions: string[] = [];
     if (canManage) {

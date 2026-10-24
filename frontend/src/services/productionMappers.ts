@@ -2,6 +2,8 @@ import type { BlogPost, Category, Collection, Product, ProductVariant, Review } 
 import type { Banner, StorefrontData, Testimonial } from '../types/admin'
 
 export interface SupabaseProductRow {
+  seo_title?: string
+  seo_description?: string
   id: string
   name: string
   slug: string
@@ -10,7 +12,8 @@ export interface SupabaseProductRow {
   concentration?: string
   collection?: string
   gender?: Product['gender']
-  price: number
+  commerce_kind: 'standard' | 'tester' | 'tester_pack'
+  price: number | null
   sale_price?: number | null
   old_price?: number | null
   main_image_url: string
@@ -62,6 +65,8 @@ export function mapProductVariant(row: SupabaseVariantRow): ProductVariant {
 }
 
 export interface SupabaseCategoryRow {
+  seo_title?: string
+  seo_description?: string
   id: string
   name: string
   slug: string
@@ -126,6 +131,8 @@ export function mapCollection(row: SupabaseCollectionRow): Collection {
     featured: Boolean(row.featured),
     active: row.active ?? true,
     productIds: [],
+    seoTitle: row.seo_title ?? '',
+    seoDescription: row.seo_description ?? '',
   }
 }
 
@@ -179,18 +186,22 @@ export function normalizeProductType(categoryName?: string, concentration?: stri
 }
 
 export function mapProduct(row: SupabaseProductRow): Product {
+  if (!['standard', 'tester'].includes(row.commerce_kind) || row.price == null || !Number.isFinite(Number(row.price)) || Number(row.price) <= 0 || (row.sale_price != null && row.sale_price !== 0 && (!Number.isFinite(Number(row.sale_price)) || Number(row.sale_price) < 0 || Number(row.sale_price) >= Number(row.price)))) throw new Error('Invalid normal product catalog row.')
   const categoryName = normalizeProductType(row.category_name, row.concentration)
   const isAttar = isAttarCategory(categoryName)
     || (categoryName === 'Uncategorized' && Boolean(row.is_attar))
 
   return {
     id: row.id,
+    commerceKind: row.commerce_kind as 'standard' | 'tester',
+    seoTitle: row.seo_title ?? '',
+    seoDescription: row.seo_description ?? '',
     slug: row.slug,
     name: row.name,
     category: categoryName,
     collection: '',
     gender: row.gender || 'Unisex',
-    price: Number(row.sale_price || row.price),
+    price: Number(row.sale_price) > 0 ? Number(row.sale_price) : Number(row.price),
     oldPrice: Number(row.old_price || row.price),
     rating: null,
     reviewCount: 0,
@@ -228,6 +239,8 @@ export function mapCategory(row: SupabaseCategoryRow): Category {
     slug: row.slug,
     description: row.description || '',
     icon: row.image_url || 'Crown',
+    seoTitle: row.seo_title ?? '',
+    seoDescription: row.seo_description ?? '',
   }
 }
 
@@ -257,6 +270,7 @@ export function mergeStorefrontData(
   return {
     ...fallback,
     ...data,
+    products: (data.products ?? fallback.products ?? []).filter(product => ['standard','tester'].includes(Object.hasOwn(product, 'commerceKind') ? product.commerceKind! : 'standard') && Number.isFinite(product.price) && product.price > 0),
     collections: data.collections ?? fallback.collections ?? [],
     settings: {
       ...fallback.settings,
@@ -291,6 +305,8 @@ export function mapSanityBlog(document: Record<string, unknown>): BlogPost {
     publishedAt: String(document.publishedAt ?? ''),
     image: String(document.image ?? ''),
     imageAlt: String(document.imageAlt ?? ''),
+    seoTitle: String(document.seoTitle ?? ''),
+    seoDescription: String(document.seoDescription ?? ''),
   }
 }
 

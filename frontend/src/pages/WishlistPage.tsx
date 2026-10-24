@@ -8,9 +8,9 @@ import { ProductBottle } from '../components/products/ProductBottle'
 import { useCartStore } from '../store/cartStore'
 import { useWishlistStore } from '../store/wishlistStore'
 import { useStorefront } from '../storefront/StorefrontProvider'
-import { defaultVariant, variantPrice } from '../services/productVariants'
+import { defaultVariant } from '../services/productVariants'
+import {ProductPrice} from '../components/products/ProductPrice'
 import { buttonClasses } from '../utils/buttonClasses'
-import { formatCurrency } from '../utils/format'
 
 export function WishlistPage() {
   const { products } = useStorefront()
@@ -65,7 +65,7 @@ export function WishlistPage() {
               <div className="mt-3">
                 <RatingStars count={product.reviewCount} rating={product.rating} />
               </div>
-              <p className="mt-3 text-lg font-extrabold text-brownroyal">{formatCurrency(variant ? variantPrice(variant) : product.price)}</p>
+              <p className="mt-3 text-lg font-extrabold text-brownroyal"><ProductPrice product={product} variant={variant} /></p>
               <div className="mt-5 grid grid-cols-2 gap-2">
                 <Button disabled={!canAdd} onClick={() => {
                   if (variant && canAdd) addItem(product, variant.id)

@@ -163,22 +163,24 @@ export class CollectionAdminService {
       .select(`
         collection_id,
         display_order,
-        products (
+        products!inner (
           id,
           name,
           slug,
           price,
+          commerce_kind,
           main_image_url,
           active,
           status
         )
       `)
       .eq('collection_id', collectionId)
+      .in('products.commerce_kind', ['standard','tester'])
       .order('display_order', { ascending: true })
 
     if (error) throw databaseError(error)
 
-    return (data ?? []).map((row) => ({
+    return (data ?? []).filter(row => row.products && ['standard','tester'].includes(row.products.commerce_kind) && row.products.price != null && Number(row.products.price)>0).map((row) => ({
       collectionId: row.collection_id,
       displayOrder: row.display_order,
       product: row.products ? {
@@ -197,25 +199,11 @@ export class CollectionAdminService {
     const client = this.requireClient()
     await this.get(collectionId)
 
-    // Remove existing assignments
-    const { error: delError } = await client
-      .from('product_collections')
-      .delete()
-      .eq('collection_id', collectionId)
-    if (delError) throw databaseError(delError)
-
-    if (productIds.length > 0) {
-      const rows = productIds.map((productId, index) => ({
-        collection_id: collectionId,
-        product_id: productId,
-        display_order: index + 1,
-      }))
-      const { error: insError } = await client.from('product_collections').insert(rows)
-      if (insError) throw databaseError(insError)
-    }
-
-    await this.audit('collection.assign_products', collectionId, actor, { count: productIds.length })
-    return { success: true, count: productIds.length }
+    const { data, error } = await client.rpc('save_normal_collection_products', {
+      p_collection_id:collectionId,p_product_ids:productIds,p_actor_id:actor.userId,p_request_id:actor.requestId,
+    })
+    if (error) throw databaseError(error)
+    return data
   }
 
   async audit(action, id, actor, metadata = {}) {
@@ -241,6 +229,8 @@ function notFound() {
 }
 
 function databaseError(error) {
+  if (error.code === '42501' && error.message === 'TESTER_PERMISSION_DENIED') return new CollectionApiError(403,'PERMISSION_DENIED','Collection access denied.')
+  if (error.message?.startsWith('TESTER_')) return new CollectionApiError(400,'INVALID_REQUEST','Choose valid normal products.')
   if (error.code === '23505') return new CollectionApiError(409, 'COLLECTION_CONFLICT', 'Collection slug already exists.')
   if (error.code === '23503') return new CollectionApiError(400, 'INVALID_REFERENCE', 'Referenced entity does not exist.')
   if (error.code === '23514' || error.code === '22P02') {

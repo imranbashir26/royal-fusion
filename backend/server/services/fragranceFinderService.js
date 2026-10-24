@@ -29,7 +29,7 @@ export class FragranceFinderService {
 
   async eligibleProducts() {
     const { data, error } = await this.requireClient().from('products')
-      .select('id,name').eq('status', 'Published').eq('active', true).order('name', { ascending: true })
+      .select('id,name').in('commerce_kind', ['standard','tester']).eq('status', 'Published').eq('active', true).order('name', { ascending: true })
     if (error) throw databaseError()
     return (data ?? []).map((product) => ({ id: product.id, name: product.name }))
   }
@@ -43,7 +43,7 @@ export class FragranceFinderService {
 
     if (input.productId) {
       const { data: product, error: productError } = await client.from('products')
-        .select('id,status,active').eq('id', input.productId).maybeSingle()
+        .select('id,status,active').in('commerce_kind', ['standard','tester']).eq('id', input.productId).maybeSingle()
       if (productError) throw databaseError()
       if (!product || product.status !== 'Published' || product.active !== true) {
         throw new FinderApiError(400, 'INVALID_FINDER_PRODUCT', 'Choose a published, active product.')
@@ -69,7 +69,7 @@ export class FragranceFinderService {
     let validIds = new Set()
     if (ids.length > 0) {
       const { data: products, error: productsError } = await client.from('products')
-        .select('id').in('id', ids).eq('status', 'Published').eq('active', true)
+        .select('id').in('id', ids).in('commerce_kind', ['standard','tester']).eq('status', 'Published').eq('active', true)
       if (productsError) throw databaseError()
       validIds = new Set((products ?? []).map((product) => product.id))
     }

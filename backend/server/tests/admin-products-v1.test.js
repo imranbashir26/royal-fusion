@@ -173,7 +173,8 @@ test('protected API persists explicit variants and accepts variants-only edits w
   assert.equal(updated.body.data.variants[0].id, first.id)
   assert.equal(updated.body.data.variants[0].regularPrice, 2100)
   const fetched = await request(api, `/${id}`, { actor: 'owner' })
-  assert.deepEqual(fetched.body.data.variants, updated.body.data.variants)
+  assert.deepEqual(fetched.body.data.variants.map(({effectivePrice,saleActive,pricingAt,validUntil,...configured}) => configured), updated.body.data.variants)
+  assert.equal(fetched.body.data.variants[0].effectivePrice, 2100)
   const rejected = await request(api, `/${id}`, { method: 'PUT', actor: 'owner', body: { stockQuantity: 99 } })
   assert.equal(rejected.status, 400)
   assert.equal(api.db.products[0].stock_quantity, 5)
@@ -313,12 +314,18 @@ function mockClient(db) {
   return {
     from(table) { return new Query(db, table) },
     async rpc(name, args) {
+      // Mapping fixture only: these historical catalog tests have no scheduled SQL.
+      if (name === 'catalog_sale_prices_009') return {data:{pricingAt:'2001-01-01T00:00:00Z',packs:[],
+        variants:db.product_variants.filter(v => args.p_variant_ids.includes(v.id)).map(v => ({
+          variantId:v.id,regularPrice:v.regular_price,salePrice:v.sale_price,
+          effectivePrice:v.sale_price ?? v.regular_price,saleActive:v.sale_price != null,validUntil:null,
+        }))},error:null}
       assert.equal(name, 'save_catalog_product')
       try {
         const data = await saveCatalog(catalogDatabase, args.p_product_id, args.p_patch, args.p_variants)
-        db.products = (await catalogDatabase.query('select * from public.products')).rows
+        db.products = (await catalogDatabase.query('select * from public.products')).rows.map(row => ({...row,commerce_kind:'standard'}))
         db.product_variants = (await catalogDatabase.query('select * from public.product_variants')).rows
-        return { data, error: null }
+        return { data: {...data,product:{...data.product,commerce_kind:'standard'}}, error: null }
       } catch (error) { return { data: null, error } }
     },
   }
@@ -335,6 +342,7 @@ function failingCreateClient(stage, failure, throws = false) {
         return {
           select() { return this },
           eq() { return this },
+          in() { return this },
           async maybeSingle() {
             return stage === 'category.resolve'
               ? { data: null, error: failure }
@@ -366,6 +374,7 @@ class Query {
   }
   select(_columns, options = {}) { this.count = options.count === 'exact'; return this }
   eq(key, value) { this.filters.push((row) => row[key] === value); return this }
+  in(key, values) { this.filters.push(row => values.includes(row[key])); return this }
   or(value) {
     const search = value.match(/name\.ilike\.%(.+?)%,slug\.ilike/)[1].toLowerCase()
     this.filters.push((row) => ['name', 'slug', 'sku'].some((key) => String(row[key] ?? '').toLowerCase().includes(search)))

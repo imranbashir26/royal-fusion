@@ -1,0 +1,83 @@
+name: Backend verification
+on: [pull_request, push, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  backend-required:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install pinned Playwright Chromium and Ubuntu dependencies
+        working-directory: backend
+        run: npx --no-install playwright install --with-deps chromium --no-shell
+      - name: Install PostgreSQL 17 from the official PGDG repository
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --silent --show-error -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-17 postgresql-client-17
+      - name: Complete required backend verification
+        run: npm test --workspace backend -- --pg-bin /usr/lib/postgresql/17/bin --output "$RUNNER_TEMP/royal-fusion-backend"
+  frontend-verification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install pinned Playwright Chromium and Ubuntu dependencies
+        working-directory: backend
+        run: npx --no-install playwright install --with-deps chromium --no-shell
+      - name: Lint frontend
+        run: npm run lint --workspace frontend
+      - name: Typecheck frontend
+        run: npm exec --workspace frontend -- tsc -b
+      - name: Default frontend tests
+        run: npm test --workspace frontend
+      - name: Additional frontend tests (inventory checked, sequential)
+        working-directory: frontend
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs'
+          import { spawnSync } from 'node:child_process'
+
+          const { scripts } = JSON.parse(fs.readFileSync('package.json', 'utf8'))
+          const selected = [...scripts.test.matchAll(/(?:^|\s)tests\/([A-Za-z0-9-]+\.test\.mjs)(?=\s|$)/g)].map(match => match[1])
+          const available = fs.readdirSync('tests').filter(file => file.endsWith('.test.mjs')).sort()
+          const defaultFiles = new Set(selected)
+          const remaining = available.filter(file => !defaultFiles.has(file))
+          const browserFiles = remaining.filter(file => file.endsWith('Browser.test.mjs'))
+          if (available.length !== 48 || selected.length !== 24 || defaultFiles.size !== 24 ||
+              !selected.every(file => available.includes(file)) || remaining.length !== 24 || browserFiles.length !== 16) {
+            throw new Error('Frontend test inventory changed; review default selection and additional tests')
+          }
+          console.log(`Frontend inventory: ${selected.length} default, ${remaining.length} additional (${browserFiles.length} browser)`)
+          for (const file of remaining) {
+            console.log(`Running tests/${file}`)
+            const result = spawnSync(process.execPath, ['--test', '--test-reporter=tap', `tests/${file}`], { stdio: 'inherit' })
+            if (result.error || result.status !== 0) {
+              console.error(`Frontend test failed: ${file} (${result.error?.message ?? result.signal ?? `exit ${result.status}`})`)
+              process.exit(1)
+            }
+          }
+          NODE
+      - name: Build frontend
+        env:
+          VITE_API_URL: /api
+        run: npm run build --workspace frontend

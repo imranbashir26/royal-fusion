@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom'
 import { productMatchesSearch } from '../../services/productSearch'
 import { useStorefront } from '../../storefront/StorefrontProvider'
 import { cn } from '../../utils/cn'
-import { formatCurrency } from '../../utils/format'
+import {ProductPrice} from '../products/ProductPrice'
 import { ProductBottle } from '../products/ProductBottle'
 
 interface SearchOverlayProps {
@@ -92,7 +92,7 @@ export function SearchOverlay({ isOpen, onClose }: SearchOverlayProps) {
                       <p className="font-serif text-xl font-semibold text-burgundy">{product.name}</p>
                       <p className="mt-1 text-sm text-brownroyal/65">{product.shortDescription}</p>
                       <p className="mt-2 text-sm font-extrabold text-brownroyal">
-                        {formatCurrency(product.price)}
+                        <ProductPrice product={product} />
                       </p>
                     </div>
                   </Link>

@@ -5,10 +5,11 @@ import { readFile } from 'node:fs/promises';
 import { fulfillmentDatabase, seedActor, seedOrder, sqlClient, revision } from './support/fulfillmentDatabase.js';
 import { AdminOrdersV1Service } from '../services/adminOrdersV1Service.js';
 import { AdminAuthorizationService } from '../services/adminAuthorizationService.js';
-import { OrdersV1Service } from '../services/ordersV1Service.js';
 test('disposable SQL: real canonical authorization, fulfillment transactions and catalog revisions', async (t) => {
     const db = await fulfillmentDatabase();
     t.after(() => db.close());
+    // This v1-only fixture exercises the service after 013's version discriminator.
+    await db.exec('alter table public.orders add column checkout_version smallint not null default 1');
     const client = sqlClient(db), service = new AdminOrdersV1Service(client, {
         warn() {
         }
@@ -68,13 +69,8 @@ test('disposable SQL: real canonical authorization, fulfillment transactions and
         const detail = await service.detail(o.id, ['orders.read'], 'req_detail_fixture');
         assert.deepEqual(detail.audit.find(a => a.id === audit.id).trackingCorrection, correction);
         assert.doesNotMatch(JSON.stringify(detail), /fingerprint|"metadata"|"payload"/);
-        const publicReceipt = await new OrdersV1Service(client, { logger: { warn() {} } }).create({
-            idempotencyKey: o.key.slice('checkout:'.length), items: [{ variantId: o.variant, quantity: 2 }],
-            contact: { name: 'Fixture', email: 'fixture@example.invalid', phone: '00000000000' },
-            shipping: { address: 'Fictional Address', city: 'Karachi', province: 'Sindh', notes: 'Customer note' }, paymentMethod: 'Cash on Delivery'
-        });
-        assert.equal(JSON.stringify(publicReceipt).includes(reason), false);
-        assert.equal('audit' in publicReceipt, false);
+        // Public receipt privacy now exercises the actual 013 order RPC in
+        // checkout-v2-sql.test.js; this fixture deliberately retains 011's baseline.
         assert.equal(detail.shipping.customerNotes, 'Customer note');
         assert.equal((await db.query('select internal_notes from public.orders where id=$1', [o.id])).rows[0].internal_notes.includes(reason), false);
         // Authenticated users have SELECT gated by the existing audit.read RLS policy.

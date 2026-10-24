@@ -5,8 +5,23 @@
       "destination": "https://royal-fusion-3fd8.onbelmo.uk/api/:path*"
     },
     {
+      "source": "/blog-sitemap.xml",
+      "destination": "https://royal-fusion-3fd8.onbelmo.uk/blog-sitemap.xml"
+    },
+    {
       "source": "/(.*)",
       "destination": "/"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/blog-sitemap.xml",
+      "headers": [
+        {
+          "key": "x-vercel-enable-rewrite-caching",
+          "value": "0"
+        }
+      ]
     }
   ]
 }
