@@ -292,12 +292,61 @@ test('Keyboard review and mobile controls remain accessible without clipped edit
 test('Expired pricing refreshes through detail API; failed refresh hides effective snapshot and never derives a new price', {timeout: 90000}, async t => {
   const products = [product(1)]
   Object.assign(products[0].variants[0], {salePrice: 2400.25, effectivePrice: 2400.25, saleActive: true, saleEndsAt: '2026-10-16T00:00:02Z', validUntil: '2026-10-16T00:00:02Z'})
-  const {page, reads} = await fixture(t, {products})
-  await open(page); await select(page, 'Perfume 1')
-  await page.route(`**/api/v1/admin/products/${products[0].id}`, route => route.fulfill({status: 503, json: {error: {code: 'UNAVAILABLE'}}}))
-  await row(page, 'Perfume 1').getByText(/Effective at database snapshot: Refresh required/).waitFor({timeout: 10000})
-  assert.equal(reads.filter(x => x === products[0].id).length, 1)
-  assert.equal(await row(page, 'Perfume 1').getByText(/Effective at database snapshot: PKR/).count(), 0)
+  const started = performance.now(), detailEvents = [], byRequest = new WeakMap()
+  let detailGetCount = 0, rowAddedMs = null, handlerInstalledMs = null
+  const elapsed = () => Math.round(performance.now() - started)
+  const isDetailGet = request => request.method() === 'GET' && new URL(request.url()).pathname === `/api/v1/admin/products/${products[0].id}`
+  const record = request => {
+    let event = byRequest.get(request)
+    if (!event) {
+      event = {number: ++detailGetCount, requestedMs: elapsed(), after503Handler: handlerInstalledMs !== null}
+      byRequest.set(request, event)
+      if (detailEvents.length < 8) detailEvents.push(event)
+    }
+    return event
+  }
+  const {page, reads} = await fixture(t, {products, onDetailRead: (request, detail) => {
+    const variant = detail.variants?.find(v => v.id === products[0].variants[0].id)
+    Object.assign(record(request), {
+      fixtureHandledMs: elapsed(), fixtureEffectivePrice: variant?.effectivePrice ?? null,
+      fixturePricingAt: variant?.pricingAt ?? null, fixtureValidUntil: variant?.validUntil ?? null,
+    })
+  }})
+  page.on('request', request => {if (isDetailGet(request)) record(request)})
+  page.on('response', response => {
+    const request = response.request()
+    if (isDetailGet(request)) Object.assign(record(request), {status: response.status(), respondedMs: elapsed()})
+  })
+  page.on('requestfinished', request => {if (isDetailGet(request)) record(request).finishedMs = elapsed()})
+  page.on('requestfailed', request => {if (isDetailGet(request)) record(request).failedMs = elapsed()})
+  try {
+    await open(page); await select(page, 'Perfume 1'); rowAddedMs = elapsed()
+    await page.route(`**/api/v1/admin/products/${products[0].id}`, route => {
+      const request = route.request()
+      if (isDetailGet(request)) record(request).intercepted503Ms = elapsed()
+      return route.fulfill({status: 503, json: {error: {code: 'UNAVAILABLE'}}})
+    })
+    handlerInstalledMs = elapsed()
+    await row(page, 'Perfume 1').getByText(/Effective at database snapshot: Refresh required/).waitFor({timeout: 10000})
+    assert.equal(reads.filter(x => x === products[0].id).length, 1)
+    assert.equal(await row(page, 'Perfume 1').getByText(/Effective at database snapshot: PKR/).count(), 0)
+  } catch (error) {
+    try {
+      const saleRow = row(page, 'Perfume 1'), exists = await saleRow.count(), visible = exists > 0 && await saleRow.isVisible()
+      const safe = value => String(value).replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, '<uuid>').replace(/[0-9a-f]{64}/gi, '<hex>').replace(/\S+@\S+/g, '<email>').replace(/\b(?:Bearer|Cookie)\s+\S+/gi, '<credential>').replace(/[A-Za-z0-9_-]{48,}/g, '<token>').replace(/\s+/g, ' ').slice(0, 240)
+      const rowText = visible ? safe(await saleRow.innerText({timeout: 500})) : ''
+      const states = (await editor(page).locator('[role="status"], [role="alert"]').allInnerTexts()).slice(0, 3).map(safe)
+      t.diagnostic(`BULK_EXPIRY_TEST20_FAILURE ${JSON.stringify({
+        elapsedMs: elapsed(), rowAddedMs, handlerInstalledMs, detailGetCount, detailEvents,
+        rowExists: exists > 0, rowVisible: visible, rowText,
+        refreshRequiredVisible: rowText.includes('Refresh required'), loadingVisible: /loading/i.test(rowText) || states.some(x => /loading/i.test(x)),
+        errorVisible: states.some(x => /error|unavailable|failed/i.test(x)), expectedMessageInRow: rowText.includes('Effective at database snapshot: Refresh required'),
+        locatorMatches: visible ? await saleRow.getByText(/Effective at database snapshot: Refresh required/).count() : 0,
+        states,
+      })}`)
+    } catch {t.diagnostic('BULK_EXPIRY_TEST20_FAILURE diagnostic collection was unavailable')}
+    throw error
+  }
 })
 
 test('Two explicit sibling variants serialize one product group with independent amounts', {timeout: 90000}, async t => {
