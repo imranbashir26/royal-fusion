@@ -3,9 +3,9 @@ import type { Faq } from '../types'
 export const faqs: Faq[] = [
   {
     id: 'faq-returns',
-    question: 'Do you offer returns?',
+    question: 'Do you offer returns and exchanges?',
     answer:
-      'Yes. Royal Fusion offers a 7-day return policy for eligible unused products in original packaging.',
+      'Yes. Royal Fusion offers a 15-day return and exchange policy for eligible fragrances with 97–98% perfume remaining in original packaging.',
   },
   {
     id: 'faq-attars',

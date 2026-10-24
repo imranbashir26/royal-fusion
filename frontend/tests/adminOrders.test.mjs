@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { allowedOrderActions, createAdminOrderCommands } from '../src/services/adminOrderCommands.ts';
+import { allowedOrderActions, supportedOrderActions, createAdminOrderCommands } from '../src/services/adminOrderCommands.ts';
 const id = '90000000-0000-4000-8000-000000000001';
 const result = {
     id, revision: '1', status: 'Pending', paymentStatus: 'Unpaid', changed: true, replayed: false, refundRequired: false
@@ -12,6 +12,20 @@ const disk = () => {
         map, getItem: k => map.get(k) ?? null, setItem: (k, v) => map.set(k, v), removeItem: k => map.delete(k)
     };
 };
+test('V2 actions require explicit backend support and intersect backend allowlist with local permissions',()=>{
+    const order={checkoutVersion:2,fulfillmentSupported:true,status:'Pending',paymentMethod:'Cash on Delivery',paymentStatus:'Unpaid',allowedActions:['cancel','note','payment','Shipped']};
+    assert.deepEqual(supportedOrderActions(order,true,true),['cancel','note']);
+    assert.deepEqual(supportedOrderActions(order,false,true),[]);
+    for(const patch of [{fulfillmentSupported:false},{allowedActions:undefined},{checkoutVersion:3}])assert.deepEqual(supportedOrderActions({...order,...patch},true,true),[]);
+    assert.deepEqual(supportedOrderActions({...order,checkoutVersion:1},true,false),['Confirmed','cancel','note']);
+});
+test('definitive V2 snapshot/overflow rejection releases a saved command without retry substitution',async()=>{
+    for(const code of ['ORDER_SNAPSHOT_INCONSISTENT','INVENTORY_RESTORATION_OVERFLOW','ORDER_REVISION_OVERFLOW']){
+        const storage=disk(),commands=createAdminOrderCommands(id,storage,async()=>{throw Object.assign(new Error(code),{status:409,code})},()=>id);
+        await assert.rejects(commands.submit('cancel','0',{reason:'Review required'}));
+        assert.equal(commands.pending,null);assert.equal(storage.map.size,0);
+    }
+});
 test('launch actions enforce forward states, permissions, Bank Transfer and COD rules', () => {
     assert.deepEqual(allowedOrderActions('Pending', 'Cash on Delivery', 'Unpaid', true, false), ['Confirmed', 'cancel', 'note']);
     assert.equal(allowedOrderActions('Confirmed', 'Bank Transfer', 'Pending', true, true).includes('Processing'), false);

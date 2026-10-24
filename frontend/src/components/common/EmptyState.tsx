@@ -1,6 +1,6 @@
+import { BlogNavigationLink } from '../blog/BlogNavigationLink'
 import type { ReactNode } from 'react'
 import { Crown } from 'lucide-react'
-import { Link } from 'react-router-dom'
 import { buttonClasses } from '../../utils/buttonClasses'
 
 interface EmptyStateProps {
@@ -26,9 +26,9 @@ export function EmptyState({
       <h2 className="font-serif text-2xl font-semibold text-royal-burgundy md:text-3xl">{title}</h2>
       <p className="mx-auto mt-2.5 max-w-xl text-sm leading-relaxed text-muted-taupe md:text-base">{description}</p>
       {children}
-      <Link className={buttonClasses({ variant: 'primary', className: 'mt-6' })} to={actionTo}>
+      <BlogNavigationLink className={buttonClasses({ variant: 'primary', className: 'mt-6' })} to={actionTo}>
         {actionLabel}
-      </Link>
+      </BlogNavigationLink>
     </div>
   )
 }

@@ -3,9 +3,13 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": "^22.20.0 || ^24.0.0"
+  },
   "workspaces": [
     "frontend",
-    "backend"
+    "backend",
+    "sanity"
   ],
   "scripts": {
     "dev": "npm run dev --workspace frontend",
@@ -25,9 +29,15 @@
     "test:auth-foundation": "npm run test:backend",
     "test:sql-auth-schema": "npm run test:sql-auth-schema --workspace backend",
     "test:auth-sessions": "npm run test:auth-sessions --workspace backend",
-    "test:sql-auth-sessions": "npm run test:sql-auth-sessions --workspace backend"
+    "test:sql-auth-sessions": "npm run test:sql-auth-sessions --workspace backend",
+    "dev:studio": "npm run dev --workspace @royal-fusion/studio",
+    "build:studio": "npm run build --workspace @royal-fusion/studio",
+    "test:studio": "npm test --workspace @royal-fusion/studio",
+    "typecheck:studio": "npm run typecheck --workspace @royal-fusion/studio"
   },
   "devDependencies": {
-    "concurrently": "^10.0.3"
+    "concurrently": "10.0.6",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   }
 }

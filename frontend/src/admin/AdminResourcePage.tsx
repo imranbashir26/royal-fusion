@@ -1,9 +1,9 @@
-import { Download, Edit, Plus, Search, Trash2 } from 'lucide-react'
+import {AdminBulkSales} from './AdminBulkSales'
+import { Edit, Plus, Search, Trash2 } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Button } from '../components/common/Button'
-import { adminApi } from '../services/adminApi'
 import { AdminAuthError } from '../services/adminAuthClient'
 import { adminProductsApi, productErrorMessage } from '../services/adminProductsApi'
 import { adminCategoriesApi, categoryErrorMessage } from '../services/adminCategoriesApi'
@@ -15,6 +15,9 @@ import { AdminMediaUploader } from './AdminMediaUploader'
 import { useAdminAuth } from './AdminAuthProvider'
 import type { AdminField, AdminResourceConfig } from './adminConfig'
 import { resourceConfigs } from './adminConfig'
+import {SaleScheduleFields} from './SaleScheduleFields'
+import type {AdminSaleSnapshot} from '../services/saleSchedule'
+import {useSaleSchedulingCapability} from '../services/saleSchedulingCapability'
 
 type AdminRecord = Record<string, unknown> & { id?: string }
 
@@ -44,7 +47,18 @@ export function AdminResourceManager({ resource }: { resource: string }) {
     )
   }
 
-  return <ConfiguredResourcePage config={config} />
+  if (!['products', 'categories', 'collections'].includes(config.endpoint)) {
+    return (
+      <section className="space-y-5">
+        <AdminShellTitle title={config.label} eyebrow="Integration pending" />
+        <p className="rounded-lg border border-champagne/25 bg-ivory p-5 text-brownroyal" role="status">
+          Production integration for {config.label.toLowerCase()} is pending. This module is currently unavailable.
+        </p>
+      </section>
+    )
+  }
+
+  return <ConfiguredResourcePage key={config.endpoint} config={config} />
 }
 
 function ConfiguredResourcePage({ config }: { config: AdminResourceConfig }) {
@@ -106,10 +120,6 @@ function ConfiguredResourcePage({ config }: { config: AdminResourceConfig }) {
         if (sequence !== loadSequence.current) return
         setItems(result)
         setTotal(result.length)
-      } else {
-        const result = await adminApi.list<AdminRecord>(config.endpoint, searchQuery)
-        if (sequence !== loadSequence.current) return
-        setItems(result)
       }
     } catch (err) {
       if (err instanceof AdminAuthError && err.status === 401) void refreshSession().catch(() => {})
@@ -129,7 +139,7 @@ function ConfiguredResourcePage({ config }: { config: AdminResourceConfig }) {
     } finally {
       if (sequence === loadSequence.current) setIsLoading(false)
     }
-  }, [config.endpoint, isCategory, isCollection, isProduct, page, refreshSession, searchQuery, statusFilter])
+  }, [isCategory, isCollection, isProduct, page, refreshSession, searchQuery, statusFilter])
 
   useEffect(() => {
     void load()
@@ -214,9 +224,6 @@ function ConfiguredResourcePage({ config }: { config: AdminResourceConfig }) {
         } else {
           setSuccess(`Collection "${title}" deleted.`)
         }
-      } else {
-        await adminApi.remove(config.endpoint, item.id)
-        setSuccess(`${config.singular} deleted.`)
       }
       await load()
     } catch (err) {
@@ -279,16 +286,10 @@ function ConfiguredResourcePage({ config }: { config: AdminResourceConfig }) {
             <option>false</option>
             </>}
           </select>
-          {!isDedicated && <button
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-champagne/35 bg-marble px-4 text-sm font-bold text-brownroyal transition hover:bg-champagne/15"
-            onClick={() => void adminApi.exportResource(config.endpoint)}
-            type="button"
-          >
-            <Download className="h-4 w-4" />
-            Export
-          </button>}
         </div>
       </div>
+
+      {isProduct && canEdit && <AdminBulkSales scope="products" items={filteredItems.map(item => ({id:item.id, name:String(item.name ?? item.id)}))} />}
 
       {error && <Alert tone="error">{error}</Alert>}
       {success && <Alert tone="success">{success}</Alert>}
@@ -389,6 +390,7 @@ function AdminRecordForm({
   const { refreshSession } = useAdminAuth()
   const [form, setForm] = useState<AdminRecord>(() => ({
     ...(initialValue ?? createDefaultRecord(config.fields)),
+    ...(initialValue && config.endpoint === 'products' ? {variantEditBaseline:structuredClone(Object.fromEntries(['price','salePrice','stockQuantity','sku','bottleSize','variations'].map(key=>[key,initialValue[key]])))} : {}),
     ...(!initialValue && config.endpoint === 'categories' ? { active: true } : {}),
   } as AdminRecord))
   const [error, setError] = useState('')
@@ -414,7 +416,11 @@ function AdminRecordForm({
   }, [config.endpoint])
 
   const setValue = (field: AdminField, value: unknown) => {
-    setForm((current) => setPath(current, field.name, value))
+    if (field.name === 'commerceKind' && (initialValue?.id || form.id)) return
+    setForm((current) => {
+      const next = setPath(current, field.name, value)
+      return field.name === 'commerceKind' && value === 'tester' ? {...next,bottleSize:'5 ml',variations:[],testerAvailable:true} : next
+    })
   }
 
   const stagedMediaRef = useRef(new Map<string, string>())
@@ -535,7 +541,6 @@ function AdminRecordForm({
         }
         else if (config.endpoint === 'categories') await adminCategoriesApi.update(String(initialValue?.id), payload)
         else if (config.endpoint === 'collections') await adminCollectionsApi.update(String(initialValue?.id), payload)
-        else await adminApi.update(config.endpoint, String(initialValue?.id), payload)
         onSaved(`${config.singular} updated.`)
       } else {
         if (config.endpoint === 'products') {
@@ -558,9 +563,6 @@ function AdminRecordForm({
           onSaved(`${config.singular} created.`)
         } else if (config.endpoint === 'collections') {
           await adminCollectionsApi.create(payload)
-          onSaved(`${config.singular} created.`)
-        } else {
-          await adminApi.create(config.endpoint, payload)
           onSaved(`${config.singular} created.`)
         }
       }
@@ -661,10 +663,16 @@ function ProductFormSections({
   onUploadMedia?: (fieldName: string, file: File) => Promise<string>
   onDeleteMedia?: (fieldName: string, imageUrl: string) => Promise<void>
 }) {
+  const {can} = useAdminAuth()
+  const scheduling = useSaleSchedulingCapability(can('products:manage'))
+  const edits = (form.saleScheduleEdits ?? {}) as Record<string,AdminSaleSnapshot>
+  const editSale = (id: string, patch: AdminSaleSnapshot) => setForm(current => ({...current,
+    saleScheduleEdits:{...(current.saleScheduleEdits as Record<string,AdminSaleSnapshot> ?? {}),[id]:{...edits[id],...patch}},
+  }))
   const sections = [
     {
       title: '🏷️ 1. Basic Information & Pricing',
-      fields: ['name', 'slug', 'sku', 'categoryId', 'price', 'salePrice', 'oldPrice', 'stockQuantity', 'bottleSize', 'shortDescription', 'description'],
+      fields: ['commerceKind', 'sourceProductId', 'testerAvailable', 'name', 'slug', 'sku', 'categoryId', 'price', 'salePrice', 'oldPrice', 'stockQuantity', 'bottleSize', 'shortDescription', 'description'],
     },
     {
       title: '🧪 2. Fragrance Pyramid & Notes Profile',
@@ -688,6 +696,10 @@ function ProductFormSections({
 
   return (
     <div className="space-y-6">
+      {Array.isArray(form.variants) && form.variants.map((variant: AdminSaleSnapshot & {id: string; optionValue?: string}) => (
+        <SaleScheduleFields key={variant.id} sale={variant} label={`Variant ${variant.optionValue ?? variant.id}`} enabled={scheduling} edited={edits[variant.id]} onChange={patch=>editSale(variant.id,patch)} />
+      ))}
+      {!form.id && !Array.isArray(form.variants) && <SaleScheduleFields sale={{regularPrice:Number(form.price),salePrice:form.salePrice ? Number(form.salePrice) : null}} label="New canonical variant" enabled={scheduling} edited={edits.new} onChange={patch=>editSale('new',patch)} />}
       {sections.map((section) => {
         const sectionFields = section.fields
           .map((fieldName) => fieldMap.get(fieldName))
@@ -993,6 +1005,7 @@ function AdminFormField({
     const isSingleImageField =
       field.name === 'image' ||
       field.name === 'avatar' ||
+      field.name === 'bannerSecureUrl' ||
       field.name === 'cardImage' ||
       field.name === 'cardHoverImage'
 
@@ -1042,6 +1055,7 @@ function AdminFormField({
         className="h-12 w-full rounded-full border border-champagne/35 bg-marble px-4 outline-none focus:border-burgundy"
         onChange={(event) => onChange(type === 'number' ? Number(event.target.value) : event.target.value)}
         min={type === 'number' ? 0 : undefined}
+        step={type === 'number' && ['price','salePrice','oldPrice'].includes(field.name) ? '0.01' : undefined}
         required={field.required}
         type={type === 'number' ? 'number' : type === 'date' ? 'date' : 'text'}
         value={String(value ?? '')}

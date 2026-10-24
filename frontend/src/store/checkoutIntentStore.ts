@@ -1,9 +1,10 @@
 import { create } from 'zustand'
 import type { CanonicalOrderReceipt, CanonicalOrderRequest } from '../types/index.ts'
 import { isOrderReceipt } from '../services/checkoutClient.ts'
+import { matchesV2Checkout } from '../services/checkoutV2Validation.ts'
 import { isVariantId } from '../services/productVariants.ts'
 import { useCartStore } from './cartStore.ts'
-import { aggregateRequestItems, validIntent, type CheckoutIntent, type PurchasedLine, type ConsumptionResult } from './checkoutAttempt.ts'
+import { aggregateRequestItems, aggregateRequestLines, validIntent, type CheckoutIntent, type PurchasedLine, type ConsumptionResult } from './checkoutAttempt.ts'
 export type { CheckoutIntent, PurchasedLine } from './checkoutAttempt.ts'
 interface Completion { intent: CheckoutIntent; receipt: CanonicalOrderReceipt; consumption: Exclude<ConsumptionResult, 'recovery-required'> }
 interface Recovery { attemptId: string | null; reason: string }
@@ -15,9 +16,10 @@ interface IntentState {
   completion: Completion | null
   pendingReceipt: CanonicalOrderReceipt | null
   recovery: Recovery | null
-  freeze: (request: Omit<CanonicalOrderRequest, 'idempotencyKey'>, lines: PurchasedLine[]) => CheckoutIntent
+  freeze: (request: Omit<CanonicalOrderRequest, 'idempotencyKey'>, lines: PurchasedLine[], issuedToken?: string) => CheckoutIntent
   complete: (receipt: CanonicalOrderReceipt) => Promise<void>
   newAttempt: () => void
+  rejectQuote: (attemptId: string) => void
 }
 interface Storage { getItem: (key: string) => string | null; setItem: (key: string, value: string) => void }
 const key = 'royal-fusion-checkout-intent-v1'
@@ -25,6 +27,8 @@ const object = (value: unknown): value is Record<string, unknown> => Boolean(val
 const exactKeys = (value: Record<string, unknown>, expected: string[]) => Object.keys(value).length === expected.length && expected.every((name) => Object.hasOwn(value, name))
 const boundReceipt = (receipt: unknown, intent: CheckoutIntent): receipt is CanonicalOrderReceipt =>
   isOrderReceipt(receipt) && receipt.idempotencyKey === intent.request.idempotencyKey && receipt.paymentMethod === intent.request.paymentMethod
+    && (!intent.request.lines?.some(line => line.kind !== 'normal_variant')
+      || typeof intent.request.quoteFingerprint === 'string' && matchesV2Checkout(receipt, intent.request.lines, intent.request.quoteFingerprint))
 const validCompletion = (value: unknown): value is Completion => {
   if (!object(value) || !exactKeys(value, ['intent', 'receipt', 'consumption'])) return false
   const record = value
@@ -87,13 +91,17 @@ export function createCheckoutIntentStore(storage?: Storage, uuid = () => crypto
     target.setItem(key, JSON.stringify({ version: 2, ...value, ...(reset ? { reset: true } : {}) }))
   }
   return create<IntentState>()((set, get) => ({ ...initial, hydrationStatus: hydration.status, receipt: initial.completion?.receipt ?? null,
-    freeze: (request, lines) => {
+    freeze: (request, lines, issuedToken) => {
       if (get().recovery) throw new Error('The saved checkout attempt requires explicit recovery.')
       if (get().intent) return get().intent!
-      const grouped = aggregateRequestItems(request.items)
-      if (!grouped) throw new Error('Invalid checkout items.')
+      if (issuedToken !== undefined && !isVariantId(issuedToken)) throw new Error('Invalid issued checkout token.')
+      const hasLines = Array.isArray(request.lines)
+      const groupedLines = hasLines ? aggregateRequestLines(request.lines) : null
+      const groupedItems = !hasLines ? aggregateRequestItems(request.items) : null
+      if (!groupedLines && !groupedItems) throw new Error('Invalid checkout items.')
       const intent = JSON.parse(JSON.stringify({ request: { ...request,
-        items: [...grouped].sort(([a], [b]) => a.localeCompare(b)).map(([variantId, quantity]) => ({ variantId, quantity })), idempotencyKey: uuid() }, lines })) as CheckoutIntent
+        ...(hasLines ? { lines: request.lines } : { items: [...groupedItems!].sort(([a], [b]) => a.localeCompare(b)).map(([variantId, quantity]) => ({ variantId, quantity })) }),
+        idempotencyKey: issuedToken ?? uuid() }, lines })) as CheckoutIntent
       if (!validIntent(intent)) throw new Error('Invalid checkout intent.')
       const frozen = immutable(intent)
       write({ intent: frozen, completion: get().completion, pendingReceipt: null, recovery: null })
@@ -121,6 +129,13 @@ export function createCheckoutIntentStore(storage?: Storage, uuid = () => crypto
         write({ intent, completion: get().completion, pendingReceipt: validated, recovery })
         set({ recovery, hydrationStatus: 'recovery_required' }); throw error
       }
+    },
+    // Only the explicit QUOTE_CHANGED/QUOTE_REQUIRED no-effect response permits this.
+    // Uncertain transport outcomes must retain the original immutable request.
+    rejectQuote: (attemptId) => {
+      if (!get().intent || get().intent!.request.idempotencyKey !== attemptId || get().pendingReceipt || get().recovery) throw new Error('The saved checkout attempt requires recovery.')
+      write({ intent: null, completion: get().completion, pendingReceipt: null, recovery: null }, !get().completion)
+      set({ intent: null, pendingReceipt: null, recovery: null, hydrationStatus: get().completion ? 'completed' : 'reset' })
     },
     newAttempt: () => {
       write({ intent: null, completion: get().completion, pendingReceipt: null, recovery: null }, !get().completion)

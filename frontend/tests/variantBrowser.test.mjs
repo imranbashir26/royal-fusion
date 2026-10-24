@@ -229,7 +229,10 @@ test('same-product refresh preserves variant/gallery/quantity, clamps stock, fal
   catalog.variants = [variantRow, hundred, otherVariant]
   await refreshCatalog(page)
   await page.getByRole('button', { name: 'Change product', exact: true }).click()
-  await page.getByRole('heading', { name: 'Royal Test', exact: true }).waitFor()
+  // The related-product h3 exists before navigation; wait for the detail route and reset effect.
+  await page.getByRole('heading', { name: 'Royal Test', exact: true, level: 1 }).waitFor()
+  await page.getByRole('button', { name: 'View Royal Test gallery 1' })
+    .and(page.locator('.border-burgundy')).waitFor()
   assert.match(await size.getAttribute('class'), /bg-burgundy/)
   assert.match(await page.getByRole('button', { name: 'View Royal Test gallery 1' }).getAttribute('class'), /border-burgundy/)
   assert.match(await quantity(), /1/)

@@ -64,6 +64,22 @@ function adminFixture(overrides = {}, permissions = ['*']) {
   }
   return admin
 }
+test('V2 frozen pack detail distinguishes modes and shows physical quantities/reference prices without historical fallback',async t=>{
+  const component={id:'component',testerVariantId:variantId,testerProductId:'tester',testerName:'Frozen tester',sku:'TST-5',size:'5 ml',volumeMl:5,quantityPerPack:2,totalPhysicalQuantity:4,referenceUnitPrice:250,position:0};
+  const pack={id:'pack-line',productId:'pack',variantId:null,name:'Frozen purchased pack',size:'Tester pack',sku:'PACK',quantity:2,unitPrice:450,lineTotal:900,snapshotVersion:2,position:0,packId:'pack',definitionRevision:'7',components:[component]};
+  const admin=adminFixture({checkoutVersion:2,snapshotVersion:2,fulfillmentSupported:true,physicalQuantity:4,allowedActions:['cancel','note'],items:[{...pack,kind:'fixed_tester_pack'}]}),page=await setup(t,admin);
+  await page.getByText('Fixed tester pack · Pack pack · Purchased definition revision 7').waitFor();
+  await page.getByText('Purchased snapshot · 4 physical units').waitFor();
+  await page.getByText('2 per pack · 4 total physical units').waitFor();
+  assert.match(await page.getByLabel('Frozen tester components').innerText(),/Reference price only:.*per tester; included in the pack price above/);
+  assert.equal(await page.getByText(/Historical item/).count(),0);
+  assert.equal(await page.getByRole('button',{name:'Confirm',exact:true}).count(),0);
+  await page.getByRole('button',{name:'Cancel Order',exact:true}).waitFor();
+  admin.order.items=[{...pack,kind:'configurable_tester_pack'}];await page.reload();
+  await page.getByText('Configurable tester pack · Pack pack · Purchased definition revision 7').waitFor();
+  admin.order.fulfillmentSupported=false;await page.reload();
+  await page.getByText('This order is read-only for your role and its current state.').waitFor();assert.equal(admin.writes.length,0);
+});
 async function setup(t, admin, path = `/admin/orders/${id}`) {
   const { page } = await pageFixture(t, { admin })
   page.setDefaultTimeout(15000)
@@ -121,7 +137,11 @@ test('duplicate click blocked; lost response survives refresh and replays exact 
   assert.equal(admin.writes.length, 1)
   await page.reload()
   await page.getByRole('button', { name: 'Retry saved action' }).click()
+  await page.getByRole('button', { name: 'Retry saved action' }).waitFor({ state: 'hidden' })
+  assert.equal(new URL(page.url()).pathname, `/admin/orders/${id}`)
+  await page.getByRole('heading', { name: 'RF-ADMIN-FIXTURE' }).waitFor()
   await page.getByRole('button', { name: 'Start Processing' }).waitFor()
+  assert.equal(await page.getByRole('button', { name: 'Start Processing' }).isEnabled(), true)
   assert.equal(admin.writes.length, 2); assert.deepEqual(admin.writes[0].body, admin.writes[1].body)
   assert.equal(admin.writes[0].csrf, 'fixture-csrf')
   assert.equal(await page.evaluate(key => sessionStorage.getItem(key), `royal-fusion-admin-order:${id}`), null)

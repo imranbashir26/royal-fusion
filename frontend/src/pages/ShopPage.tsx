@@ -10,6 +10,7 @@ import { ProductGrid } from '../components/products/ProductGrid'
 import { scentNotes } from '../data/scentNotes'
 import { catalogRouteCategory, compareNewArrivals, matchesCatalogFacets } from '../services/catalogFacets'
 import { collectionProductIdsForSlug } from '../services/productionMappers'
+import {productDisplayPrice} from '../services/productVariants'
 import { useStorefront } from '../storefront/StorefrontProvider'
 import { cn } from '../utils/cn'
 import { formatCurrency } from '../utils/format'
@@ -79,15 +80,19 @@ export function ShopPage() {
         matchesSearch &&
         matchesCatalogFacets(product, { category, gender, bestOnly, newOnly, attarsOnly }) &&
         (scent === 'All' || product.scentFamily === scent) &&
-        product.price <= maxPrice &&
+        (productDisplayPrice(product) === null || productDisplayPrice(product)! <= maxPrice) &&
         (!minRating || (product.rating !== null && product.rating >= 4.8))
       )
     })
 
     return result.sort((a, b) => {
       if (sort === 'Best Selling') return Number(b.isBestSeller) - Number(a.isBestSeller)
-      if (sort === 'Price Low to High') return a.price - b.price
-      if (sort === 'Price High to Low') return b.price - a.price
+      if (sort === 'Price Low to High' || sort === 'Price High to Low') {
+        const first = productDisplayPrice(a), second = productDisplayPrice(b)
+        if (first === null) return second === null ? 0 : 1
+        if (second === null) return -1
+        return sort === 'Price Low to High' ? first - second : second - first
+      }
       if (sort === 'New Arrivals') return compareNewArrivals(a, b)
       return Number(b.isFeatured) - Number(a.isFeatured)
     })

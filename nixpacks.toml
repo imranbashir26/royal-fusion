@@ -1,0 +1,32 @@
+# Belmo Base Directory must be / (the repository root).
+# Clear dashboard install/build/start commands and conflicting NIXPACKS_* overrides:
+# environment and CLI settings take precedence over this file.
+# Production credentials must be runtime-only hosting variables, never build variables.
+providers = ["node"]
+
+[variables]
+NIXPACKS_NODE_VERSION = "22"
+NODE_ENV = "production"
+
+[phases.setup]
+# nodejs_22 includes npm and resolves to Node 22.23.3 in this confirmed revision:
+# https://github.com/NixOS/nixpkgs/blob/6fcc160353f63555b560f25588925133c8f61f2a/pkgs/development/web/nodejs/v22.nix
+nixPkgs = ["nodejs_22"]
+nixpkgsArchive = "6fcc160353f63555b560f25588925133c8f61f2a"
+# Use the archive's bundled npm instead of the provider's floating npm overlay.
+nixOverlays = []
+
+[phases.install]
+cmds = [
+  '''node -e "const [major,minor]=process.versions.node.split('.').map(Number); if(major!==22||minor<12) throw new Error('Node 22.12+ within 22.x required'); console.log(process.version)"''',
+  "env -u NPM_CONFIG_PRODUCTION npm ci --workspace @royal-fusion/backend --include-workspace-root=false --omit=dev"
+]
+
+[phases.build]
+# The backend is JavaScript; override the root's frontend build with a runtime check.
+cmds = [
+  '''node -e "const [major,minor]=process.versions.node.split('.').map(Number); if(major!==22||minor<12) throw new Error('Node 22.12+ within 22.x required'); console.log(process.version)"'''
+]
+
+[start]
+cmd = "npm run start --workspace @royal-fusion/backend"

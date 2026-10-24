@@ -20,6 +20,8 @@ export function toProductColumns(input) {
   for (const [field, column] of Object.entries(FIELD_TO_COLUMN)) {
     if (Object.hasOwn(input, field)) columns[column] = input[field]
   }
+  // Legacy display JSON is not a second schedule store. Bounds go only to canonical variants.
+  if (input.variations) columns.variations=input.variations.map(({saleStartsAt,saleEndsAt,...legacy})=>legacy)
   if (Object.hasOwn(input, 'notes')) {
     columns.top_notes = input.notes.top
     columns.middle_notes = input.notes.middle
@@ -29,7 +31,8 @@ export function toProductColumns(input) {
 }
 
 export function toProductDto(row) {
-  const dto = { id: row.id }
+  if (!['standard','tester'].includes(row.commerce_kind) || row.price == null || !Number.isFinite(Number(row.price)) || Number(row.price) <= 0) throw new Error('Invalid normal product DTO.')
+  const dto = { id: row.id, commerceKind: row.commerce_kind }
   for (const [field, column] of Object.entries(FIELD_TO_COLUMN)) {
     dto[field] = ['price', 'salePrice', 'oldPrice'].includes(field) && row[column] != null
       ? Number(row[column]) : row[column]

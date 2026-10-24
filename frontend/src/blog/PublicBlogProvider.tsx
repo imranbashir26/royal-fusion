@@ -1,0 +1,97 @@
+/* eslint-disable react/only-export-components */
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useLocation } from 'react-router-dom'
+import type { BlogArticle, BlogListInput, BlogListResponse } from '../../../shared/contracts/blogV1'
+import { PublicBlogError, validatePublicBlogConfiguration, type BlogFailure, type PublicBlogClient } from '../services/publicBlogsApi'
+
+/** A configuration failure retains the enabled authority boundary, with no legacy fallback. */
+export type BlogIntegration = ({ readonly enabled: true; readonly client: PublicBlogClient }
+  | { readonly enabled: true; readonly unavailable: true }) & { readonly documentMode?: boolean }
+export type BlogLoadState<T> = { status: 'idle' | 'loading' | 'ready' | 'empty' | BlogFailure; data?: T }
+export type BlogRouteState = BlogLoadState<BlogArticle>
+interface BlogContext {
+  enabled: boolean
+  documentMode: boolean
+  client?: PublicBlogClient
+  routeKey: string
+  pathname: string
+  search: string
+  metadata: BlogRouteState
+  publishMetadata: (path: string, state: BlogRouteState) => void
+}
+const disabled: BlogContext = { enabled: false, documentMode: false, routeKey: '', pathname: '', search: '', metadata: { status: 'idle' }, publishMetadata: () => {} }
+const Context = createContext<BlogContext>(disabled)
+
+export function PublicBlogProvider({ integration, children }: { integration?: BlogIntegration; children: ReactNode }) {
+  const location = useLocation()
+  const enabled = integration?.enabled === true
+  const client = enabled && 'client' in integration ? integration.client : undefined
+  if (integration && !('unavailable' in integration) && (!client || typeof client.list !== 'function' || typeof client.getBySlug !== 'function')) throw new TypeError('Blog configuration is invalid.')
+  if (client) validatePublicBlogConfiguration(client.configuration)
+  const [route, setRoute] = useState<{ key: string; client?: PublicBlogClient; metadata: BlogRouteState }>({ key: location.key, client, metadata: { status: 'loading' } })
+  // Reset before rendering descendants, so history navigation cannot briefly reuse old article metadata.
+  if (route.key !== location.key || route.client !== client) setRoute({ key: location.key, client, metadata: { status: 'loading' } })
+  const publishMetadata = useCallback((path: string, metadata: BlogRouteState) => {
+    if (path !== location.pathname) return
+    setRoute(previous => previous.key === location.key && previous.client === client ? { ...previous, metadata } : previous)
+  }, [location.key, location.pathname, client])
+  const documentMode = enabled && integration.documentMode === true
+  const value = useMemo<BlogContext>(() => ({ enabled, documentMode, client, routeKey: location.key, pathname: location.pathname, search: location.search,
+    metadata: enabled && !client ? { status: 'unavailable' } : route.key === location.key && route.client === client ? route.metadata : { status: 'loading' }, publishMetadata,
+  }), [enabled, documentMode, client, location.key, location.pathname, location.search, route, publishMetadata])
+  return <Context.Provider value={value}>{children}</Context.Provider>
+}
+export const usePublicBlogIntegration = () => useContext(Context)
+
+function useRequest<T>(load: (signal: AbortSignal) => Promise<T>, active: boolean, routeKey: string,
+  publish: (state: BlogLoadState<T>) => void, empty: (value: T) => boolean) {
+  const [snapshot, setSnapshot] = useState<{ routeKey: string; load: typeof load; revision: number; state: BlogLoadState<T> }>()
+  const [revision, setRevision] = useState(0)
+  const sequence = useRef(0)
+  const revalidate = useCallback(() => { publish({ status: 'loading' }); setRevision(value => value + 1) }, [publish])
+  useEffect(() => {
+    if (!active) return
+    const current = ++sequence.current, controller = new AbortController()
+    const update = (next: BlogLoadState<T>) => {
+      if (!controller.signal.aborted && current === sequence.current) { setSnapshot({ routeKey, load, revision, state: next }); publish(next) }
+    }
+    update({ status: 'loading' })
+    void load(controller.signal).then(data => update({ status: empty(data) ? 'empty' : 'ready', data })).catch(error => {
+      update({ status: error instanceof PublicBlogError ? error.kind : 'unavailable' })
+    })
+    return () => controller.abort()
+  }, [active, load, routeKey, revision, publish, empty])
+  const state: BlogLoadState<T> = !active ? { status: 'idle' }
+    : snapshot?.routeKey === routeKey && snapshot.load === load && snapshot.revision === revision ? snapshot.state : { status: 'loading' }
+  return { state, revalidate }
+}
+const listEmpty = (response: BlogListResponse) => !response.data.length
+const neverEmpty = () => false
+export function usePublicBlogList(input: BlogListInput, scope: 'listing' | 'preview' | 'related' = 'listing') {
+  const { enabled, client, pathname, routeKey, publishMetadata } = usePublicBlogIntegration()
+  const { page, pageSize } = input
+  const load = useCallback((signal: AbortSignal) => {
+    if (!client) return Promise.reject(new PublicBlogError('unavailable'))
+    return client.list({ page, pageSize }, signal)
+  }, [client, page, pageSize])
+  const publish = useCallback((state: BlogLoadState<BlogListResponse>) => {
+    if (scope === 'listing') publishMetadata(pathname, { status: state.status })
+  }, [scope, pathname, publishMetadata])
+  const request = useRequest(load, Boolean(client) && (scope === 'listing' ? /^\/blogs\/?$/.test(pathname) : scope === 'preview' ? pathname === '/' : pathname.startsWith('/blogs/')), routeKey, publish, listEmpty)
+  const state: BlogLoadState<BlogListResponse> = enabled && !client ? { status: 'unavailable' } : request.state
+  return { ...request, state }
+}
+export function usePublicBlogArticle(slug: string) {
+  const { enabled, client, pathname, search, routeKey, publishMetadata } = usePublicBlogIntegration()
+  let currentSlug = ''
+  try { const match = /^\/blogs\/([^/]+)\/?$/.exec(pathname); if (match) currentSlug = decodeURIComponent(match[1]) } catch { /* Invalid path never becomes a canonical. */ }
+  const load = useCallback(async (signal: AbortSignal) => {
+    if (!client) throw new PublicBlogError('unavailable')
+    if (search) throw new PublicBlogError('invalid', 400)
+    return (await client.getBySlug(slug, signal)).data
+  }, [client, slug, search])
+  const publish = useCallback((state: BlogLoadState<BlogArticle>) => publishMetadata(pathname, state), [pathname, publishMetadata])
+  const request = useRequest(load, Boolean(client) && pathname.startsWith('/blogs/') && (currentSlug === slug || !currentSlug), routeKey, publish, neverEmpty)
+  const state: BlogLoadState<BlogArticle> = enabled && !client ? { status: 'unavailable' } : request.state
+  return { ...request, state }
+}

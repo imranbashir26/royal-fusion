@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createHash,randomUUID,randomBytes } from 'node:crypto'
 import { createServer } from 'vite'
 import { productId, secondVariantId, productRow, variantRow } from '../variantFixtures.mjs'
 
@@ -81,11 +82,7 @@ before(async () => {
   })
   await server.listen()
   origin = `http://127.0.0.1:${server.httpServer.address().port}`
-  try { browser = await playwright.chromium.launch({ headless: true, timeout: 15000 }) }
-  catch {
-    try { browser = await playwright.chromium.launch({ headless: true, timeout: 15000, channel: 'chrome' }) }
-    catch { throw new Error('Cannot launch browser tests. Provide Playwright Chromium or install Google Chrome, then rerun npm run test:variants:browser.') }
-  }
+  browser = await playwright.chromium.launch({ headless: true, channel: 'chromium', timeout: 15000 })
 }, { timeout: 60000 })
 
 after(async () => {
@@ -94,7 +91,7 @@ after(async () => {
 })
 
 export async function pageFixture(t, { admin = null, webLocks = true, checkout = null, variants = [variantRow, otherVariant], legacy, wishlist = false, products = [productRow, otherProduct], variantError = false } = {}) {
-  const catalog = { products, variants, variantError, productError: false }
+  const catalog = { products, variants, variantError, productError: false, priceError:false, priceOverrides:{}, priceReads:[] }
   const context = await browser.newContext({ serviceWorkers: 'block' })
   t.after(() => context.close())
   await context.addInitScript(({ webLocks, legacy, wishlist, productId }) => {
@@ -107,6 +104,9 @@ export async function pageFixture(t, { admin = null, webLocks = true, checkout =
     if (wishlist) localStorage.setItem('royal-fusion-wishlist', JSON.stringify({ state: { productIds: [productId] }, version: 0 }))
   }, { webLocks, legacy, wishlist, productId })
   const orders = [], variantReads = [], errors = []
+  const issued=new Map()
+  const quoteIdentity=body=>JSON.stringify([(body.lines??body.items??[]).map(l=>({variantId:l.variantId,quantity:l.quantity})),body.shipping.city,body.shipping.province,body.email??body.contact?.email,body.couponCode??''])
+  const receiptFor=(body,amounts,idempotent)=>({contractVersion:2,snapshotVersion:2,id:body.idempotencyKey,idempotencyKey:body.idempotencyKey,orderNumber:'RF-20261002-1234ABCD',status:'Pending',paymentStatus:'Unpaid',paymentMethod:body.paymentMethod,...amounts,currency:'PKR',idempotent})
   await context.route('**/*', async (route) => {
     const url = new URL(route.request().url())
     if (admin && url.pathname.startsWith('/api/')) {
@@ -116,23 +116,74 @@ export async function pageFixture(t, { admin = null, webLocks = true, checkout =
     if (url.pathname.includes('/rpc/')) { orders.push(url.pathname); return route.abort() }
     if (url.pathname.endsWith('/public/orders')) {
       if (!checkout) { orders.push(url.pathname); return route.abort() }
-      const body = route.request().postDataJSON(); orders.push(body)
+      const rawBody = route.request().postDataJSON()
+      const body = { ...rawBody }
+      if (rawBody.lines && !rawBody.items) {
+        body.items = rawBody.lines.map(l => ({ variantId: l.variantId, quantity: l.quantity }))
+      }
+      if (checkout.historicalRequest?.idempotencyKey === body.idempotencyKey) {
+        orders.push(checkout.historicalRequest)
+      } else {
+        orders.push(body)
+      }
       if (checkout.pending) await checkout.pending
+      const conflict=code=>route.fulfill({status:409,json:{error:{code,message:'Checkout attempt cannot be reused.'}}})
+      // Historical replay is an explicitly seeded committed fixture, never an
+      // unconditional success for unissued saved requests.
+      if(checkout.historicalRequest?.idempotencyKey===body.idempotencyKey){
+        return route.fulfill({json:{data:receiptFor(body,checkout.historicalAmounts,true)}})
+      }
+      const attempt=issued.get(body.idempotencyKey)
+      if(!attempt)return route.fulfill({status:503,json:{error:{code:'CHECKOUT_UNAVAILABLE',message:'Saved attempt requires recovery.'}}})
+      if(body.quoteFingerprint!==attempt.quote.quoteFingerprint||quoteIdentity(body)!==attempt.identity)return conflict('IDEMPOTENCY_CONFLICT')
+      if(attempt.request)assert.deepEqual(rawBody,attempt.request)
+      if(attempt.state==='retired')return conflict('QUOTE_CHANGED')
+      if(attempt.state==='committed')return route.fulfill({json:{data:{...attempt.receipt,idempotent:true}}})
       if (checkout.mode === 'network') return route.abort()
+      if (checkout.mode === 'quoteChanged') {
+        attempt.state='retired';attempt.request=structuredClone(rawBody)
+        checkout.mode = 'success'; checkout.shippingFee = 1000
+        return route.fulfill({ status: 409, json: { error: { code: 'QUOTE_CHANGED', message: 'Review the updated total and confirm again.' } } })
+      }
       if (checkout.mode === 'stock') return route.fulfill({ status: 409, json: { error: { code: 'INSUFFICIENT_STOCK', message: 'Not enough stock.' } } })
-      const subtotal = body.items.reduce((sum, item) => sum + item.quantity * 2900, 0), shippingFee = checkout.shippingFee ?? 777
-      return route.fulfill({ json: { data: checkout.mode === 'malformed' ? { id: 'bad' } : {
-        id: body.idempotencyKey, idempotencyKey: body.idempotencyKey, orderNumber: 'RF-20261002-1234ABCD', status: 'Pending', paymentStatus: 'Unpaid',
-        paymentMethod: body.paymentMethod, subtotal, discount: 0, shippingFee, total: subtotal + shippingFee, currency: 'PKR', idempotent: orders.slice(0, -1).some((previous) => previous.idempotencyKey === body.idempotencyKey),
-      } } })
+      const {subtotal,discount,shippingFee,total}=attempt.quote
+      attempt.receipt=receiptFor(body,{subtotal,discount,shippingFee,total},false);
+      if(attempt.quote.lines)attempt.receipt.lines=attempt.quote.lines.map(line=>({...structuredClone(line),id:randomUUID()}));
+      if(attempt.quote.pricingOutcome){
+        attempt.receipt.pricingOutcome=structuredClone(attempt.quote.pricingOutcome)
+        if(url.pathname.endsWith('/v1/public/orders')){
+          attempt.receipt.pricingOutcome.acceptedQuoteFingerprint=createHash('sha256').update('rf:v1:capability:008:'+attempt.quote.quoteFingerprint,'utf8').digest('hex')
+        }
+      }
+      attempt.request=structuredClone(rawBody);attempt.state='committed'
+      return route.fulfill({ json: { data: checkout.mode === 'malformed' ? { id: 'bad' } : attempt.receipt } })
     }
     if (url.pathname.endsWith('/v1/auth/session')) return route.fulfill({ json: { data: admin?.session ?? { authenticated: false, csrfToken: 'fixture-csrf' } } })
     if (url.pathname.endsWith('/checkout/quote') && checkout) {
       const body = route.request().postDataJSON(); checkout.quotes ??= []; checkout.quotes.push(body)
-      const subtotal = body.items.reduce((sum, item) => sum + item.quantity * 2900, 0), shippingFee = checkout.shippingFee ?? 777
-      return route.fulfill({ json: { data: { subtotal, discount: 0, shippingFee, total: subtotal + shippingFee, currency: 'PKR', shippingMethodId: '60000000-0000-4000-8000-000000000001', paymentMethods: ['Cash on Delivery'], orderingEnabled: checkout.orderingEnabled !== false } } })
+      if(checkout.invalidCoupon && body.couponCode)return route.fulfill({status:422,json:{error:{code:'INVALID_COUPON',message:'This coupon cannot be applied to your order.'}}})
+      const lineList = body.lines ?? body.items ?? []
+      const subtotal = lineList.reduce((sum, item) => sum + item.quantity * 2900, 0), shippingFee = checkout.shippingFee ?? 777
+      // Explicit normalized server-response amounts support presentation tests;
+      // receipts replay those issued values without recomputing a financial quote.
+      const amounts=checkout.amounts??{subtotal,discount:0,shippingFee,total:subtotal+shippingFee}
+      assert.deepEqual(Object.keys(amounts).sort(),['discount','shippingFee','subtotal','total'])
+      const quote={contractVersion:2,idempotencyKey:randomUUID(),...amounts,currency:'PKR',shippingMethodId:'60000000-0000-4000-8000-000000000001',paymentMethods:['Cash on Delivery'],orderingEnabled:checkout.orderingEnabled!==false,quoteFingerprint:randomBytes(32).toString('hex')}
+      // Explicit HTTP fixtures only; no SQL or catalog-derived pricing claim.
+      if(checkout.selectedLines)quote.lines=structuredClone(checkout.selectedLines)
+      if(checkout.pricingOutcome)quote.pricingOutcome={...structuredClone(checkout.pricingOutcome),acceptedQuoteFingerprint:quote.quoteFingerprint}
+      issued.set(quote.idempotencyKey,{identity:quoteIdentity(body),quote,state:'active'});checkout.issuedQuotes??=[];checkout.issuedQuotes.push(quote)
+      return route.fulfill({json:{data:quote}})
     }
     const fulfill = (body) => route.fulfill({ json: body, headers: { 'access-control-allow-origin': '*' } })
+    if (url.pathname.endsWith('/v2/public/catalog/variant-prices')) {
+      catalog.priceReads.push(url.search)
+      if(catalog.priceError)return route.fulfill({status:503,json:{error:{code:'CATALOG_PRICING_UNAVAILABLE'}}})
+      const requested=url.searchParams.get('ids').split(',')
+      return fulfill({data:{currency:'PKR',items:catalog.variants.filter(v=>requested.includes(v.id)&&v.active&&v.available&&catalog.products.some(p=>p.id===v.product_id)).map(v=>({
+        variantId:v.id,productId:v.product_id,regularPrice:Number(v.regular_price),effectivePrice:Number(v.sale_price??v.regular_price),price:Number(v.sale_price??v.regular_price),salePrice:v.sale_price==null?null:Number(v.sale_price),saleActive:v.sale_price!=null,pricingAt:new Date().toISOString(),validUntil:null,...catalog.priceOverrides[v.id],
+      }))}})
+    }
     if (url.hostname === 'catalog.invalid') {
       const table = url.pathname.split('/').at(-1)
       if (table === 'products') {

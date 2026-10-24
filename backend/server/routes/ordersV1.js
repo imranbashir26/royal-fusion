@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import rateLimit from 'express-rate-limit'
-import { createOptionalIdentity, createOriginGuard, requireAuthenticatedCsrf, sendCode } from '../middleware/authSecurity.js'
+import { createOptionalIdentity, createOriginGuard, requireAuthenticatedCsrf, sendCode, requestLogMetadata, checkoutLogCategory } from '../middleware/authSecurity.js'
 import { AUTH_ERROR_CODES } from '../auth/contracts.js'
 import { parseCheckout, orderRequestSchema, quoteRequestSchema } from '../schemas/ordersV1.js'
 import { CheckoutApiError, CheckoutQuoteService, unavailable } from '../services/checkoutQuoteService.js'
@@ -33,8 +33,8 @@ export function createOrdersV1Router(runtime, { client = runtime.repository.clie
   router.use((error, req, res, next) => {
     if (Object.values(AUTH_ERROR_CODES).includes(error.code)) return next(error)
     const known = error instanceof CheckoutApiError || typeof error.code === 'string' && error.code.startsWith('INVALID_')
-    logger.warn?.({ event: 'checkout.request_failed', requestId: req.requestId, operation: 'request', subsystem: 'orders_v1',
-      category: known ? error.code : 'UNEXPECTED_FAILURE' })
+    logger.warn?.({ event: 'checkout.request_failed', ...requestLogMetadata(req), operation: 'request', subsystem: 'orders_v1',
+      category: checkoutLogCategory(error.code) })
     res.status(known ? error.status : 500).json({ error: { code: known ? error.code : 'CHECKOUT_FAILED', message: known ? error.message : 'Checkout could not be completed.', requestId: req.requestId } })
   })
   return router

@@ -64,7 +64,7 @@ test('relational API: real authorization, list/detail, strict writes, replay and
             } : {})
         });
         return {
-            status: response.status, cache: response.headers.get('cache-control'), body: await response.json()
+            status: response.status, cache: response.headers.get('cache-control'), requestId: response.headers.get('x-request-id'), body: await response.json()
         };
     }
     await t.test('Admin allowed; legacy assignments/customer/guest/disabled authority denied', async () => {
@@ -124,7 +124,8 @@ test('relational API: real authorization, list/detail, strict writes, replay and
         }
         const mutationId = randomUUID(), revision = (await request('/' + o.id)).body.data.revision;
         const reason = 'Operator corrected courier record', fields = { courier: 'After courier', trackingNumber: 'AFTER', reason };
-        assert.equal((await write('fulfillment', { ...fields, reason: '\t  ' + reason + '  \n' }, mutationId, revision)).status, 200);
+        const corrected = await write('fulfillment', { ...fields, reason: '\t  ' + reason + '  \n' }, mutationId, revision);
+        assert.equal(corrected.status, 200);
         assert.equal((await write('fulfillment', fields, mutationId, revision)).body.data.replayed, true);
         assert.equal((await write('fulfillment', { ...fields, reason: ' ' + reason + ' ' }, mutationId, revision)).body.data.replayed, true);
         assert.equal((await write('fulfillment', { ...fields, reason: 'Changed reason' }, mutationId, revision)).body.error.code, 'MUTATION_CONFLICT');
@@ -132,7 +133,8 @@ test('relational API: real authorization, list/detail, strict writes, replay and
         assert.equal(audit.length, 1);
         assert.deepEqual(audit[0].trackingCorrection, { kind: 'tracking_correction', reason, previous: { courier: 'Before courier', trackingNumber: 'BEFORE' }, next: { courier: 'After courier', trackingNumber: 'AFTER' } });
         assert.equal(audit[0].actor, owner);
-        assert.equal(audit[0].requestId, 'req_api_fulfillment');
+        assert.equal(audit[0].requestId, corrected.requestId);
+        assert.match(audit[0].requestId, /^req_[0-9a-f-]{36}$/);
         assert.doesNotMatch(JSON.stringify(response.body), /fingerprint|"metadata"|"payload"/);
         assert.equal((await request('/' + o.id, { actor: customer })).status, 403);
         assert.equal((await request('/' + o.id, { actor: null })).status, 403);
@@ -174,8 +176,9 @@ test('relational API: real authorization, list/detail, strict writes, replay and
             }
         });
         assert.equal(stale.body.error.code, 'ORDER_STALE');
-        assert.equal(stale.body.error.requestId, 'req_api_fulfillment');
+        assert.equal(stale.body.error.requestId, stale.requestId);
+        assert.match(stale.requestId, /^req_[0-9a-f-]{36}$/);
         assert.doesNotMatch(JSON.stringify(stale.body), /SELECT|stack|Authorization/);
-        assert.ok(logs.some(l => l.requestId === 'req_api_fulfillment' && l.subsystem === 'admin_orders'));
+        assert.ok(logs.some(l => l.requestId === stale.requestId && l.subsystem === 'admin_orders'));
     });
 });
