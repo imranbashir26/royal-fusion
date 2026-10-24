@@ -90,6 +90,7 @@ async function runTests(args,env){
 const version=execFileSync(path.join(bin,'postgres'+suffix),['--version'],{encoding:'utf8',windowsHide:true}).trim()
 if (!/PostgreSQL\) 17\./.test(version)) throw Error('Native PostgreSQL 17 required: '+version)
 const marker=randomUUID(),port=59705
+const socketDir=process.platform==='win32'?null:path.join(output,'pgsocket')
 let started=false,result,primaryError=null,phase='initialization'
 const report={version,host:'127.0.0.1',port,status:1,error:null,productionAccess:false,output,
  initialization:{started:false,succeeded:false},startup:{started:false,succeeded:false},
@@ -108,7 +109,18 @@ try {
  if(interrupted)throw Error('Interrupted before PostgreSQL startup')
  fs.writeFileSync(path.join(cluster,'release005-owned-marker'),marker)
  phase='startup';report.startup.started=true
- try{command('pg_ctl',['start','-D',cluster,'-l',path.join(output,'postgres.log'),'-o','-h 127.0.0.1 -p '+port,'-w','-t','20'],'pg_ctl.log');started=true}
+ let socketOption=''
+ if(socketDir){
+  // pg_ctl forwards -o through a shell on Unix. Accept only an unquoted safe path.
+  if(!/^\/[A-Za-z0-9_./-]+$/.test(socketDir) || Buffer.byteLength(path.join(socketDir,'.s.PGSQL.'+port),'utf8')>=100)
+   throw Error('Disposable PostgreSQL socket path is unsafe or too long')
+  fs.mkdirSync(socketDir,{mode:0o700});fs.chmodSync(socketDir,0o700)
+  const info=fs.lstatSync(socketDir)
+  if(!info.isDirectory()||info.isSymbolicLink()||info.uid!==process.getuid()||(info.mode&0o777)!==0o700)
+   throw Error('Disposable PostgreSQL socket directory is not privately owned')
+  socketOption=' -k '+socketDir
+ }
+ try{command('pg_ctl',['start','-D',cluster,'-l',path.join(output,'postgres.log'),'-o','-h 127.0.0.1 -p '+port+socketOption,'-w','-t','20'],'pg_ctl.log');started=true}
  catch(error){report.startup.failure=startupFailure(error);console.error('POSTGRES_STARTUP_DIAGNOSTIC '+JSON.stringify(report.startup.failure));throw error}
  report.startup.succeeded=true
  const config={cluster:cluster.replaceAll('\\','/'),marker,port,pgModule:path.resolve(pgModule),version,pgBin:path.resolve(bin)}
@@ -141,6 +153,10 @@ try {
    if(running)command('pg_ctl',['stop','-D',cluster,'-m','fast','-w','-t','20'],'pg_ctl.log')
    if(fs.existsSync(cluster+'/postmaster.pid'))throw Error('Owned cluster shutdown incomplete')
    report.shutdown.succeeded=true
+  }
+  if(socketDir&&fs.existsSync(socketDir)){
+   if(!report.shutdown.succeeded)throw Error('Private socket directory retained because cluster shutdown was not confirmed')
+   fs.rmdirSync(socketDir) // PostgreSQL removes its own socket and lock on shutdown.
   }
   report.cleanup.complete=true
  }catch(error){report.cleanup.error=error.message;report.cleanup.complete=false;report.error??=error.message;report.failedPhase??='cleanup'}
