@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { randomUUID,randomBytes } from 'node:crypto'
+import { randomUUID,randomBytes,createHash } from 'node:crypto'
 import express from 'express'
 import cookieParser from 'cookie-parser'
 import { createAuthConfig } from '../auth/config.js'
@@ -435,12 +435,45 @@ test('retired prototype coupon writer cannot bypass canonical percentage policy'
 })
 
 
-test('Release010 V1 projections allowlist SQL evidence and never perform a second price read',async()=>{
+test('Release010 V1 projections allowlist SQL evidence and never perform a second price read',async t=>{
  const body=input({couponCode:'SAFE20'}),quote={subtotal:1000,discount:200,shippingFee:250,total:1050,currency:'PKR',shippingMethodId:methodId,paymentMethods:['Cash on Delivery'],quoteFingerprint:body.quoteFingerprint,idempotencyKey:body.idempotencyKey,
   lines:[{variantId,quantity:1,unitPrice:1000,lineTotal:1000,futureSalePrice:1}],_prices:[{private:true}],_coupon:{private:true},_shippingMethod:{private:true},
   pricingOutcome:{policy:'GLOBAL_PERCENTAGE_V1',strategy:'COUPON',regularSubtotal:1000,saleSubtotal:900,couponDiscount:200,couponSubtotal:800,merchandiseTotal:800,requestedCouponCode:'SAFE20',appliedCouponId:customerId,appliedCouponCode:'SAFE20',couponOutcome:'applied',acceptedQuoteFingerprint:body.quoteFingerprint,privateEligibility:'hidden'}}
- const client={from(){throw Error('Unexpected second catalog read')},rpc:async()=>({data:quote,error:null})},q=await new CheckoutQuoteService(client).quote({items:body.items,shipping:{city:body.shipping.city,province:body.shipping.province},email:body.contact.email,couponCode:body.couponCode})
+ const originalQuote=structuredClone(quote)
+ const client={from(){throw Error('Unexpected second catalog read')},rpc:async name=>{assert.equal(name,'quote_checkout_v1_checked');return {data:quote,error:null}}},q=await new CheckoutQuoteService(client).quote({items:body.items,shipping:{city:body.shipping.city,province:body.shipping.province},email:body.contact.email,couponCode:body.couponCode})
  assert.deepEqual(q.lines,[{variantId,quantity:1,unitPrice:1000,lineTotal:1000}]);assert.doesNotMatch(JSON.stringify(q),/privateEligibility|futureSalePrice|_prices|_coupon|_shippingMethod/)
- const frozen={...quote,id:customerId,orderNumber:'RF-20261016-1234ABCD',status:'Pending',paymentStatus:'Unpaid',paymentMethod:body.paymentMethod,idempotent:false,lines:quote.lines.map(l=>({...l,id:methodId}))}
- client.rpc=async()=>({data:frozen,error:null});const r=await new OrdersV1Service(client).create(body);assert.deepEqual(r.lines,[{id:methodId,variantId,quantity:1,unitPrice:1000,lineTotal:1000}]);assert.deepEqual(r.pricingOutcome,q.pricingOutcome);assert.doesNotMatch(JSON.stringify(r),/privateEligibility|futureSalePrice|_prices|_coupon|_shippingMethod/)
+ // 8460b2 introduced comparison evidence. Security commit 9330874 changed V1
+ // receipts to the Release 008 verifier; only quote issuance returns the bearer.
+ // Match checkout_v1_verifier_008 and the existing native contract fixture.
+ const verifier=createHash('sha256').update('rf:v1:capability:008:'+body.quoteFingerprint,'utf8').digest('hex')
+ assert.equal(q.pricingOutcome.acceptedQuoteFingerprint,body.quoteFingerprint)
+ const frozen={...quote,pricingOutcome:{...quote.pricingOutcome,acceptedQuoteFingerprint:verifier},id:customerId,orderNumber:'RF-20261016-1234ABCD',status:'Pending',paymentStatus:'Unpaid',paymentMethod:body.paymentMethod,idempotent:false,lines:quote.lines.map(l=>({...l,id:methodId}))}
+ let rpcData=frozen,rpcCount=0
+ client.rpc=async name=>{assert.equal(name,'create_order_transaction_v1_checked');rpcCount++;return {data:rpcData,error:null}}
+ const service=new OrdersV1Service(client),r=await service.create(body)
+ assert.equal(rpcCount,1)
+ assert.deepEqual(r.lines,[{id:methodId,variantId,quantity:1,unitPrice:1000,lineTotal:1000}])
+ assert.deepEqual(r.pricingOutcome,{...q.pricingOutcome,acceptedQuoteFingerprint:verifier})
+ assert.equal(r.pricingOutcome.acceptedQuoteFingerprint,verifier)
+ assert.notEqual(r.pricingOutcome.acceptedQuoteFingerprint,body.quoteFingerprint)
+ const allowedOutcome=['policy','strategy','couponOutcome','requestedCouponCode','appliedCouponId','appliedCouponCode','regularSubtotal','saleSubtotal','couponDiscount','couponSubtotal','merchandiseTotal','acceptedQuoteFingerprint'].sort()
+ assert.deepEqual(Object.keys(q.pricingOutcome).sort(),allowedOutcome)
+ assert.deepEqual(Object.keys(r.pricingOutcome).sort(),allowedOutcome)
+ for(const key of ['subtotal','discount','shippingFee','total','currency'])assert.equal(r[key],quote[key])
+ assert.doesNotMatch(JSON.stringify(r),/privateEligibility|futureSalePrice|_prices|_coupon|_shippingMethod/)
+ for(const [name,change] of [
+  ['raw capability',outcome=>{outcome.acceptedQuoteFingerprint=body.quoteFingerprint}],
+  ['incorrect verifier',outcome=>{outcome.acceptedQuoteFingerprint=(verifier[0]==='0'?'1':'0')+verifier.slice(1)}],
+  ['inconsistent monetary evidence',outcome=>{outcome.merchandiseTotal++}],
+ ])await t.test('receipt rejects '+name+' through pricing validation',async()=>{
+  rpcData=structuredClone(frozen);change(rpcData.pricingOutcome)
+  const before=rpcCount
+  await assert.rejects(()=>service.create(body),error=>{
+   assert.equal(error.code,'CHECKOUT_UNAVAILABLE');assert.equal(error.status,503)
+   assert.match(error.stack,/publicPricingOutcome/);return true
+  })
+  assert.equal(rpcCount,before+1,'Rejected evidence must not trigger another pricing RPC')
+ })
+ assert.deepEqual(quote,originalQuote,'Receipt fixtures must not mutate issuance evidence')
+ assert.equal(q.pricingOutcome.acceptedQuoteFingerprint,body.quoteFingerprint)
 })

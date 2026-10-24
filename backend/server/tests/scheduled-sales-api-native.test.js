@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import express from 'express'
 import cookieParser from 'cookie-parser'
-import {randomUUID} from 'node:crypto'
+import {randomUUID,createHash} from 'node:crypto'
 import {readFile} from 'node:fs/promises'
 import {pathToFileURL} from 'node:url'
 import {createAuthConfig} from '../auth/config.js'
@@ -21,7 +21,7 @@ import {connection} from './support/release005NativeFixture.js'
 import {createOrdersV2Router} from '../routes/ordersV2.js'
 import {timestampMicros} from '../schemas/saleSchedule.js'
 import {createSaleSchedulingPolicy} from '../services/saleSchedulingPolicy.js'
-import {scheduledSalesBrowser} from './support/scheduledSalesBrowser.js'
+import {scheduledSalesBrowser,scheduledSalesDiagnostics} from './support/scheduledSalesBrowser.js'
 import {CouponsService} from '../services/adminPhase3Service.js'
 import {createAdminPhase3V1Router} from '../routes/adminPhase3V1.js'
 import {phase3SqlClient} from './support/phase3Database.js'
@@ -33,6 +33,30 @@ import {OrdersV2Service} from '../services/ordersV2Service.js'
 import {toProductPayload} from '../../../frontend/src/services/adminProductContract.ts'
 
 const future='2099-01-01T00:00:00Z',past='2000-01-01T00:00:00Z',origin='https://sale-api.example.invalid'
+function assertAuditRequestId(response,audit){
+ const requestId=response.headers.get('x-request-id')
+ assert.match(requestId,/^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+ assert.equal(response.body.meta.requestId,requestId)
+ assert.equal(audit.request_id,requestId)
+ assert.notEqual(audit.request_id,'scheduled-api-native-request')
+}
+function assertV1PricingEvidence(quote,receipt,request){
+ const fields=['policy','strategy','couponOutcome','requestedCouponCode','acceptedQuoteFingerprint','regularSubtotal','saleSubtotal','couponDiscount','merchandiseTotal','couponSubtotal','appliedCouponId','appliedCouponCode'].sort()
+ for(const outcome of [quote.pricingOutcome,receipt.pricingOutcome]){
+  assert.ok(outcome!==null&&typeof outcome==='object'&&!Array.isArray(outcome),'Pricing outcome must be a public evidence object')
+  assert.deepEqual(Object.keys(outcome).sort(),fields,'Pricing outcome must contain exactly the approved public fields')
+  assert.equal(outcome.policy,'GLOBAL_PERCENTAGE_V1')
+ }
+ const {acceptedQuoteFingerprint:quoteFingerprint,...quoteEvidence}=quote.pricingOutcome
+ const {acceptedQuoteFingerprint:receiptFingerprint,...receiptEvidence}=receipt.pricingOutcome
+ assert.deepEqual(receiptEvidence,quoteEvidence,'Receipt must preserve every monetary and coupon evidence field')
+ assert.deepEqual([receipt.subtotal,receipt.discount,receipt.shippingFee,receipt.total],[quote.subtotal,quote.discount,quote.shippingFee,quote.total])
+ assert.ok(/^[0-9a-f]{64}$/.test(request.quoteFingerprint),'Issued V1 capability must have the approved format')
+ assert.ok(quote.quoteFingerprint===request.quoteFingerprint&&quoteFingerprint===request.quoteFingerprint,'Quote must retain its original issued capability')
+ const verifier=createHash('sha256').update('rf:v1:capability:008:'+request.quoteFingerprint,'utf8').digest('hex')
+ assert.ok(receiptFingerprint===verifier,'Receipt must contain the canonical capability verifier')
+ assert.ok(receiptFingerprint!==request.quoteFingerprint,'Receipt must never expose the raw capability')
+}
 async function administrationState(db){
  const commerce=await state014(db)
  const packs=(await db.query(`select jsonb_build_object(
@@ -41,8 +65,24 @@ async function administrationState(db){
   'allowed',(select jsonb_agg(to_jsonb(d) order by pack_id,tester_variant_id) from tester_pack_allowed_variants d)) state`)).rows[0].state
  return {commerce,packs}
 }
-async function harness(t,{enabled=false}={}){
- const f=await salesFixture(t),native=JSON.parse(await readFile(process.env.RF_RELEASE005_NATIVE_CONFIG,'utf8'))
+async function diagnosticSalesFixture(t,diagnostic){
+ const native=JSON.parse(await readFile(process.env.RF_RELEASE005_NATIVE_CONFIG,'utf8'))
+ const {Client}= (await import(pathToFileURL(native.pgModule))).default
+ const original=Client.prototype.query
+ // Observe only this sequential fixture installation; preserve SQL, arguments,
+ // returned promises and errors. Never print SQL, parameters or result values.
+ Client.prototype.query=function(...args){
+  const sql=typeof args[0]==='string'?args[0]:args[0]?.text??''
+  const release=/RF_RELEASE(005|006|007|008|009)_/.exec(sql)?.[1]
+  const label=/^create database\b/i.test(sql)?'fixture.database.create':release?'fixture.release'+release:'fixture.sql'
+  const end=diagnostic.begin(label)
+  try{const result=original.apply(this,args);result.then(()=>end(),()=>end('failed',{category:'SQL_FAILED'}));return result}
+  catch(error){end('failed',{category:'SQL_FAILED'});throw error}
+ }
+ try{return await salesFixture(diagnostic.context)}finally{Client.prototype.query=original}
+}
+async function harness(t,{enabled=false,diagnostic=null}={}){
+ const f=await (diagnostic?diagnostic.stage('fixture.installation',()=>diagnosticSalesFixture(t,diagnostic)):salesFixture(t)),native=JSON.parse(await readFile(process.env.RF_RELEASE005_NATIVE_CONFIG,'utf8'))
  const {types}= (await import(pathToFileURL(native.pgModule))).default
  // PostgREST delivers timestamp JSON strings. pg's default Date parser silently
  // truncates microseconds; preserve them in this native API transport fixture.
@@ -67,13 +107,21 @@ async function harness(t,{enabled=false}={}){
   return {record:{sessionClass:accessToken==='customer'?'customer':'administrator',mfaAssurance:'aal2'},identity:{id:accessToken,assuranceLevel:'aal2'}}
  }},adminAuthorization:{resolve:async id=>id===f.admin?{userId:id,permissions:['*']}:id===reader?{userId:id,permissions:['products.read']}:null}}
  const app=express();app.use(requestContext,express.json({limit:'32kb'}),cookieParser())
+ if(diagnostic)app.use((req,res,next)=>{
+  const label=req.path==='/products/sale-capabilities'?'backend.capability':req.path==='/products/'+f.normal.product?'backend.product':'backend.other'
+  const at=performance.now(),method=['GET','PUT'].includes(req.method)?req.method:'OTHER'
+  diagnostic.record(label,'request',{method})
+  res.on('finish',()=>diagnostic.record(label,'response',{method,status:res.statusCode,durationMs:Math.round(performance.now()-at),...(/^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(req.requestId??'')?{requestId:req.requestId}:{})}))
+  next()
+ })
  const saleScheduling=createSaleSchedulingPolicy(client,{enabled})
  app.use('/products',createAdminProductsV1Router(runtime,{saleScheduling,logger:{warn(){},error(){}}}))
  app.use('/packs',createTesterPacksV2Router(runtime,{saleScheduling,logger:{error(){}}}))
  app.use('/public-packs',createTesterPacksV2Router(runtime,{publicOnly:true,logger:{error(){}}}))
  app.use('/catalog',createCatalogPricesV2Router(runtime))
  app.use(authErrorHandler(config));app.use((e,req,res,_next)=>res.status(e.status??500).json({error:{code:'SAFE_FAILURE',requestId:req.requestId}}))
- const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));t.after(()=>new Promise(r=>server.close(r)))
+ const expressReady=diagnostic?.begin('express.listen')
+ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));expressReady?.();t.after(()=>diagnostic?diagnostic.stage('express.cleanup',()=>new Promise(r=>server.close(r))):new Promise(r=>server.close(r)))
  const root='http://127.0.0.1:'+server.address().port
  async function http(path,{method='GET',actor,body,csrf=true,requestOrigin=origin}={}){
   const headers={'Content-Type':'application/json','X-Request-ID':'scheduled-api-native-request'}
@@ -226,7 +274,7 @@ test('Scheduled sales backend and HTTP contracts against owned native PG17',{tim
   const result=cleared.body.data.variants[0]
   assert.deepEqual([result.id,result.salePrice,result.saleStartsAt,result.saleEndsAt,result.stockQuantity,result.standardManualAvailable],[v.id,null,null,null,12,true])
   const audit=(await f.db.query("select admin_id,request_id from admin_audit_logs where action='product.update' order by created_at desc limit 1")).rows[0]
-  assert.equal(audit.admin_id,f.admin);assert.equal(audit.request_id,'scheduled-api-native-request')
+  assert.equal(audit.admin_id,f.admin);assertAuditRequestId(cleared,audit)
   const payload=f.calls.find(c=>c.name==='save_catalog_product').args.p_variants
   assert.equal(payload,null,'Metadata never synthesizes a variant mutation')
  })
@@ -299,7 +347,10 @@ test('Scheduled sales backend and HTTP contracts against owned native PG17',{tim
 test('Controlled scheduled-sale administration enabled and disabled native acceptance',{timeout:180000},async t=>{
  async function scenario(name,fn){let ok=false;await t.test(name,{timeout:60000},async s=>{await fn(s);ok=true});if(!ok)throw Error('Critical activation verification failure: '+name)}
  await scenario('Chrome controls use real authorized capability, backend persistence and native PG17',async s=>{
-  const f=await harness(s,{enabled:true});await scheduledSalesBrowser(s,f)
+  const diagnostic=scheduledSalesDiagnostics(s)
+  await diagnostic.stage('scenario.work',async()=>{
+   const f=await harness(s,{enabled:true,diagnostic});await scheduledSalesBrowser(s,f,diagnostic)
+  })
  })
  await scenario('Capability is authenticated, permission-scoped, default-disabled and fails closed on RPC loss',async s=>{
   for(const enabled of [false,true]){
@@ -411,7 +462,7 @@ test('Controlled scheduled-sale administration enabled and disabled native accep
   assert.deepEqual(await state014(f.db),before)
   r=await f.http('/products/'+id,{method:'PUT',actor:f.admin,body:{variants:[{...v,saleEndsAt:'2099-03-01T00:00:00Z'}],expectedRevision:dto.catalogRevision}});assert.equal(r.status,200)
   r=await f.http('/products/'+id,{method:'PUT',actor:f.admin,body:{variants:[{...v,salePrice:null,saleStartsAt:null,saleEndsAt:null}],expectedRevision:r.body.data.catalogRevision}});assert.equal(r.status,200);assert.deepEqual([r.body.data.variants[0].salePrice,r.body.data.variants[0].saleStartsAt,r.body.data.variants[0].saleEndsAt],[null,null,null])
-  const audit=(await f.db.query("select admin_id,request_id from admin_audit_logs where action='product.update' order by created_at desc limit 1")).rows[0];assert.equal(audit.admin_id,f.admin);assert.equal(audit.request_id,'scheduled-api-native-request')
+  const audit=(await f.db.query("select admin_id,request_id from admin_audit_logs where action='product.update' order by created_at desc limit 1")).rows[0];assert.equal(audit.admin_id,f.admin);assertAuditRequestId(r,audit)
  })
  await scenario('Enabled tester and fixed pack schedules retain independent pricing; configurable parents reject own prices',async s=>{
   const f=await harness(s,{enabled:true}),tester=await f.products.get(f.tester.product.id),v=await variantInput(f.db,f.tester.tester.variant_id,{salePrice:200.25,saleStartsAt:past,saleEndsAt:future})
@@ -492,7 +543,7 @@ test('Release 010 application coupon administration, V1/V2 quotation and frozen 
   }
  })
  await scenario('Authorized percentage creation persists explicit policy, cap/minimum and audit attribution',async()=>{
-  const r=await http({...input,maxDiscountAmount:150});assert.equal(r.status,201,JSON.stringify(r.body));const c=r.body.data;assert.equal(c.pricingPolicy,'GLOBAL_PERCENTAGE_V1');assert.equal(c.maxDiscountAmount,150);assert.equal(c.minimumOrderAmount,1000)
+  const r=await http({...input,maxDiscountAmount:150});assert.equal(r.status,201,'Authorized coupon creation must return HTTP 201');const c=r.body.data;assert.equal(c.pricingPolicy,'GLOBAL_PERCENTAGE_V1');assert.equal(c.maxDiscountAmount,150);assert.equal(c.minimumOrderAmount,1000)
   const row=(await db.query('select * from coupons where id=$1',[c.id])).rows[0];assert.equal(row.pricing_policy,'GLOBAL_PERCENTAGE_V1');assert.equal(Number(row.max_discount_amount),150)
   assert.equal((await db.query("select count(*)::int n from admin_audit_logs where resource_id=$1 and admin_id=$2 and permission_key='coupons.manage' and action='coupon.create' and request_id is not null",[c.id,f.admin])).rows[0].n,1)
  })
@@ -514,12 +565,14 @@ test('Release 010 application coupon administration, V1/V2 quotation and frozen 
   let q,request,r
   if(version===1){const quoteInput=v1Request(f.normal.variant,c?.code??'');q=await v1.quote(quoteInput);request={idempotencyKey:q.idempotencyKey,items:quoteInput.items,contact:{name:'Fixture',email:quoteInput.email,phone:'00000000000'},shipping:{address:'Fixture address',...quoteInput.shipping,notes:''},paymentMethod:'Cash on Delivery',couponCode:c?.code??'',quoteFingerprint:q.quoteFingerprint};r=await orders.create(request)}
   else{q=await v2.quote({...quoteRequest([normalLine(f.normal.variant)]),couponCode:c?.code??''});request={contractVersion:2,idempotencyKey:randomUUID(),lines:[normalLine(f.normal.variant)],contact:{name:'Fixture Customer',email:'fixture@example.invalid',phone:'00000000000'},shipping:{address:'Fixture address',city:'Karachi',province:'Sindh',notes:''},paymentMethod:'Cash on Delivery',couponCode:c?.code??'',quoteFingerprint:q.quoteFingerprint};r=await orders2.create(request)}
-  assert.equal(q.pricingOutcome.strategy,kind==='COUPON'?'COUPON':'SALE');assert.deepEqual(r.pricingOutcome,q.pricingOutcome)
+  if(version===1)assertV1PricingEvidence(q,r,request)
+  else assert.deepEqual(r.pricingOutcome,q.pricingOutcome)
+  assert.equal(q.pricingOutcome.strategy,kind==='COUPON'?'COUPON':'SALE')
   const frozen=(await db.query('select variant_id,quantity,unit_price::text,line_total::text from order_items where order_id=$1',[r.id])).rows;assert.equal(frozen.length,1);assert.equal(frozen[0].variant_id,f.normal.variant);assert.equal(Number(frozen[0].unit_price),q.lines[0].unitPrice);assert.equal(Number(frozen[0].line_total),q.lines[0].lineTotal)
   if(version===1)assert.deepEqual(r.lines.map(({id,...line})=>line),q.lines)
   assert(!('_prices' in q));assert(!('_coupon' in q));assert(!('_demand' in q));await committed(db,r.id,q,{coupon:kind==='COUPON'?c.id:null})
   const before=await state014(db);assert.deepEqual(await(version===1?orders.create(request):orders2.create(request)),{...r,idempotent:true});assert.deepEqual(await state014(db),before)
-  console.log('Release010 application evidence '+JSON.stringify({version,kind,quote:q,receipt:r}))
+  console.log('Release010 application evidence '+JSON.stringify({version,kind,subtotal:q.subtotal,discount:q.discount,shippingFee:q.shippingFee,total:q.total,strategy:q.pricingOutcome.strategy,couponOutcome:q.pricingOutcome.couponOutcome}))
  })
  await scenario('V2 fixed/configurable selected lines retain composition and independent/component pricing',async()=>{
   for(const lines of [[fixedLine(f)],[configuredLine(f)]]){const q=await v2.quote(quoteRequest(lines));assert.equal(q.lines.length,1);assert(q.lines[0].components.length>0);assert(q.lines[0].definitionFingerprint)}
@@ -598,7 +651,7 @@ test('V2 quantity projection preserves SQL service and canonical HTTP receipt co
    assert.doesNotMatch(JSON.stringify(result),/_prices|_coupon|_demand|serviceRole|_regularPrice|saleStartsAt|saleEndsAt|salePrice|privateResolution|privateEligibility|_regularReference/)
   })
   await scenario('HTTP/PostgreSQL: '+item.name,async()=>{
-   const response=await http('checkout/quote',input);assert.equal(response.status,200,JSON.stringify(response.body))
+   const response=await http('checkout/quote',input);assert.equal(response.status,200,'V2 quote must return HTTP 200')
    const q=response.body.data,underlying=sqlResults.at(-1)
    assert.equal(underlying.name,'quote_checkout_v2');assertLines(q.lines,underlying.data.lines);assertLines(q.lines,sql.lines)
    assert.equal(q.quoteFingerprint,sql.quoteFingerprint);assert.deepEqual(q.pricingOutcome,sql.pricingOutcome)
@@ -608,7 +661,7 @@ test('V2 quantity projection preserves SQL service and canonical HTTP receipt co
    assert.equal(q.lines.reduce((sum,line)=>sum+money(line.lineTotal),0n),money(q.subtotal))
    assert.doesNotMatch(JSON.stringify(q),/_prices|_coupon|_demand|_regularPrice|_regularReference|saleStartsAt|saleEndsAt|serviceRole/)
    const request={contractVersion:2,idempotencyKey:randomUUID(),lines:item.lines,contact:{name:'Fixture Customer',email:input.email,phone:'00000000000'},shipping:{address:'Fixture address',...input.shipping,notes:''},paymentMethod:'Cash on Delivery',couponCode:code,quoteFingerprint:q.quoteFingerprint}
-   const placed=await http('orders',request);assert.equal(placed.status,201,JSON.stringify(placed.body))
+   const placed=await http('orders',request);assert.equal(placed.status,201,'V2 order creation must return HTTP 201')
    const receipt=placed.body.data
    assert.equal(receipt.quoteFingerprint,q.quoteFingerprint);assert.deepEqual(receipt.pricingOutcome,q.pricingOutcome)
    const receiptLines=receipt.lines.map(({id,components,...line})=>({...line,components:components.map(({id,...component})=>component)}))
@@ -618,11 +671,11 @@ test('V2 quantity projection preserves SQL service and canonical HTTP receipt co
    assert.deepEqual(stored.map(row=>({quantity:row.quantity,unitPrice:Number(row.unit_price),lineTotal:Number(row.line_total)})),q.lines.map(({quantity,unitPrice,lineTotal})=>({quantity,unitPrice,lineTotal})))
    const beforeReplay=await state014(db),replay=await http('orders',request)
    assert.equal(replay.status,200);assert.deepEqual(replay.body.data,{...receipt,idempotent:true});assert.deepEqual(await state014(db),beforeReplay)
-   console.log('V2 quantity HTTP evidence '+JSON.stringify({case:item.name,request:input,sqlQuote:sql,httpQuote:q,receipt,stored,physicalDemand:item.physical}))
+   console.log('V2 quantity HTTP evidence '+JSON.stringify({case:item.name,operation:'checkout.v2.quote-order-replay',quoteStatus:response.status,orderStatus:placed.status,replayStatus:replay.status,lineCount:q.lines.length,physicalDemand:item.physical,assertions:'passed'}))
   })
  }
  const state=await state014(db)
  assert.equal(state.orders.length,cases.length);assert.equal(state.payments.length,cases.length);assert.equal(state.movements.length,expectedMovementRows)
  assert.equal(state.movements.reduce((sum,row)=>sum-row.quantity_delta,0),cases.reduce((sum,item)=>sum+item.physical,0))
- console.log('V2 quantity committed state '+JSON.stringify(state))
+ console.log('V2 quantity committed state '+JSON.stringify({operation:'checkout.v2.committed-state',scenarios:cases.length,orders:state.orders.length,payments:state.payments.length,inventoryMovements:state.movements.length,assertions:'passed'}))
 })

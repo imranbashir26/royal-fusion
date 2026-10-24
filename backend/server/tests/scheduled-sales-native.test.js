@@ -293,8 +293,17 @@ test('Release 009 scheduled fixed prices: native PG17 acceptance',{timeout:24000
  })
  await scenario('Predecessor drift and reinstallation reject atomically; late ACL failure rolls back all changes',async s=>{
   const f=await salesFixture(s,{install:false}),{db}=f,source=await source009(),before=(await db.query(shapeSQL)).rows[0].shape,data=await state014(db)
-  const wrong=source.replace('00bf3eb3276b0ddf57d260397f117c30c175d29c86d8cc9c9c9c33476a8663b3','0'.repeat(64))
-  await assert.rejects(()=>apply009(db,wrong),/RF_RELEASE009_BASELINE_DRIFT/)
+  const guards=[...source.matchAll(/if shape <> '([0-9a-f]{64})' then raise exception 'RF_RELEASE009_BASELINE_DRIFT'; end if;/g)]
+  assert.equal(guards.length,1,'Release 009 must have exactly one target predecessor guard')
+  const guard=guards[0],offset=guard.index+guard[0].indexOf(guard[1]),corrupt='0'.repeat(64)
+  assert.equal(guard[1],before,'Guard must pin the actual post-008 catalog')
+  assert.notEqual(corrupt,guard[1],'Negative fixture must change the expected fingerprint')
+  const wrong=source.slice(0,offset)+corrupt+source.slice(offset+64)
+  assert.notEqual(wrong,source,'Negative SQL mutation must not be a no-op')
+  assert.equal(wrong.length,source.length)
+  assert.equal(wrong.slice(offset,offset+64),corrupt)
+  assert.ok(wrong.slice(0,offset)+guard[1]+wrong.slice(offset+64)===source,'Only the predecessor fingerprint may change')
+  await assert.rejects(()=>apply009(db,wrong),{code:'P0001',message:'RF_RELEASE009_BASELINE_DRIFT'})
   assert.equal((await db.query(shapeSQL)).rows[0].shape,before);assert.deepEqual(await state014(db),data)
   const marker='-- @RELEASE009-POST-GUARD-BEGIN'
   assert.equal(source.split(marker).length,2)

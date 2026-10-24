@@ -4,7 +4,8 @@ import {readFile} from 'node:fs/promises'
 import {openSync,closeSync} from 'node:fs'
 import {execFileSync} from 'node:child_process'
 import path from 'node:path'
-import {randomUUID} from 'node:crypto'
+import {randomUUID,createHash} from 'node:crypto'
+import {isDeepStrictEqual} from 'node:util'
 import {checkedFixture} from './support/checkedV1Database.js'
 import {connection} from './support/release005NativeFixture.js'
 import {clientV2,requestV2,normalLine,orderV2} from './support/checkoutV2Database.js'
@@ -52,7 +53,7 @@ test('Release 008 durable attempt acceptance; real PG17 and stop on first failur
  t.after(async()=>{for(const c of clients)await c.end();if(db!==f.db)await db.end();for(const fn of cleanup)await fn()})
  const quote=async(coupon='')=>new CheckoutQuoteService(clientV2(db),{logger:{warn(){}}}).quote(quoteInput(coupon))
  const place=(c,body)=>new OrdersV1Service(clientV2(c),{logger:{warn(){}}}).create(body)
- const terminal=async token=>(await db.query('select state,customer_id,quote_identity,request_identity,credential from checkout_v1_attempts where token=$1',['checkout:'+token])).rows[0]
+ const terminal=async token=>(await db.query('select token,credential_verifier,quote_identity_mac,price_fingerprint_mac,request_identity_mac,state,created_at,retired_at from checkout_v1_attempts where token=$1',['checkout:'+token])).rows[0]
  const counts=async()=>(await db.query(`select (select count(*)::int from orders) orders,(select count(*)::int from payments) payments,(select count(*)::int from inventory_movements where reason='Order placed') movements,(select count(*)::int from coupon_redemptions) redemptions,(select stock_quantity from product_variants where id=$1) stock`,[variant])).rows[0]
  async function scenario(name,fn){let ok=false;await t.test(name,{timeout:60000},async()=>{await fn();ok=true});if(!ok)throw Error('Critical verification failure: '+name)}
  let retiredInput,replacementInput,replacementReceipt
@@ -77,7 +78,10 @@ test('Release 008 durable attempt acceptance; real PG17 and stop on first failur
   const ledger=(await db.query("select quantity_delta,balance_after,reference_id from inventory_movements where reason='Order placed'")).rows
   assert.deepEqual(ledger,[{quantity_delta:-1,balance_after:11,reference_id:replacementReceipt.id}])
   const saved=(await db.query('select idempotency_key,v1_quote_fingerprint from orders where id=$1',[replacementReceipt.id])).rows[0]
-  assert.equal(saved.idempotency_key,'checkout:'+replacementInput.idempotencyKey);assert.equal(saved.v1_quote_fingerprint,replacementInput.quoteFingerprint)
+  assert.equal(saved.idempotency_key,'checkout:'+replacementInput.idempotencyKey)
+  const verifier=createHash('sha256').update('rf:v1:capability:008:'+replacementInput.quoteFingerprint,'utf8').digest('hex')
+  assert.ok(saved.v1_quote_fingerprint===verifier,'Stored confirmation must equal the canonical capability verifier')
+  assert.ok(saved.v1_quote_fingerprint!==replacementInput.quoteFingerprint,'Raw checkout capability must never be persisted')
   assert.equal((await terminal(replacementInput.idempotencyKey)).state,'committed')
   console.log('Committed ABA effects: '+JSON.stringify({counts:await counts(),finances,ledger,retiredToken:a.idempotencyKey,retiredState:'retired',replacementState:'committed'}))
  })
@@ -107,7 +111,7 @@ test('Release 008 durable attempt acceptance; real PG17 and stop on first failur
   await assert.rejects(()=>place(db,{...body,items:[{variantId:variant,quantity:0}]}),{code:'INVALID_QUANTITY'})
   await assert.rejects(()=>place(db,{...body,idempotencyKey:randomUUID()}),{code:'CHECKOUT_UNAVAILABLE'})
   const wrongOwner=new OrdersV1Service(clientV2(db),{logger:{warn(){}}});await assert.rejects(()=>wrongOwner.create(body,randomUUID()),{code:'IDEMPOTENCY_CONFLICT'})
-  assert.deepEqual(await terminal(q.idempotencyKey),before);await place(db,body);assert.equal((await terminal(q.idempotencyKey)).state,'committed')
+  assert.ok(isDeepStrictEqual(await terminal(q.idempotencyKey),before),'Rejected requests must not alter any attempt field');await place(db,body);assert.equal((await terminal(q.idempotencyKey)).state,'committed')
  })
  await scenario('different full request cannot reuse a retired token; UUID textual aliases cannot reactivate it',async()=>{
   await assert.rejects(()=>place(db,{...retiredInput,contact:{...contact,name:'Different'}}),{code:'IDEMPOTENCY_CONFLICT'})

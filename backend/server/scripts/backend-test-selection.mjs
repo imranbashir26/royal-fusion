@@ -14,6 +14,7 @@ export const unitFiles=[
  'admin-orders-v1.test.js','admin-phase3.test.js','admin-products-v1.test.js','auth-backend-cookie-sessions.test.js',
  'auth-contract-foundation.test.js','blog-activation.test.js','blog-domain.test.js','blog-html.test.js','blog-sitemap.test.js',
  'catalog-normalization.test.js','catalog-variants.test.js','contact-v1.test.js','dependency-security.test.js',
+ 'customer-orders.test.js','customer-orders-readonly.test.js',
  'fragrance-finder-v1.test.js','guest-checkout-regression.test.js','newsletter-v1.test.js',
  'orders-v1.test.js','pre013-acl-hardening.test.js','public-settings-contract.test.js','reviews-v1.test.js','sanity-blog-v1.test.js',
  'settings-v1.test.js','single-admin-transition.test.js','tester-catalog-sql.test.js','checkout-v2-protected.test.js','test-orchestration.test.js',

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { before, after } from 'node:test'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import path from 'node:path'
@@ -33,6 +34,11 @@ export const savedCart = { version: 2, state: {
   selectedLineIds: [lineId], lineInstances: { [lineId]: entryId }, lineAppliedUnits: { [lineId]: 1 },
 } }
 const csrf = 'fixture-csrf'
+const secondVariantRow = { ...variantRow, id: secondVariantId, option_value: '100 ml', display_order: 1 }
+const quoteIdentity = (body) => JSON.stringify([
+  body.items.map(({ variantId, quantity }) => ({ variantId, quantity })),
+  body.shipping.city, body.shipping.province, body.email ?? body.contact?.email, body.couponCode ?? '',
+])
 before(async () => {
   network = blockExternalBlogTestNetwork()
   const app = express()
@@ -68,21 +74,50 @@ before(async () => {
     ? res.json({ data: customer }) : res.status(403).json({ error: { code: 'PERMISSION_DENIED' } }))
   app.post('/api/v1/public/checkout/quote', (req, res) => {
     const subtotal = req.body.items.reduce((total, item) => total + item.quantity * 2900, 0), shippingFee = 777
-    res.json({ data: { subtotal, discount: 0, shippingFee, total: subtotal + shippingFee, currency: 'PKR',
-      shippingMethodId: '60000000-0000-4000-8000-000000000001', paymentMethods: ['Cash on Delivery'], orderingEnabled: current.orderingEnabled } })
+    const quoteFingerprint = randomBytes(32).toString('hex')
+    const quote = { idempotencyKey: randomUUID(), quoteFingerprint,
+      subtotal, discount: 0, shippingFee, total: subtotal + shippingFee, currency: 'PKR',
+      shippingMethodId: '60000000-0000-4000-8000-000000000001', paymentMethods: ['Cash on Delivery'], orderingEnabled: current.orderingEnabled,
+      lines: req.body.items.map(({ variantId, quantity }) => ({ variantId, quantity, unitPrice: 2900, lineTotal: quantity * 2900 })),
+      pricingOutcome: { policy: 'GLOBAL_PERCENTAGE_V1', strategy: 'SALE', couponOutcome: 'not_requested',
+        regularSubtotal: subtotal, saleSubtotal: subtotal, couponDiscount: 0, couponSubtotal: null,
+        merchandiseTotal: subtotal, requestedCouponCode: '', appliedCouponId: null, appliedCouponCode: null,
+        acceptedQuoteFingerprint: quoteFingerprint } }
+    current.issued.set(quote.idempotencyKey, { identity: quoteIdentity(req.body), quote })
+    res.json({ data: quote })
   })
   app.post('/api/v1/public/orders', (req, res) => {
     const body = req.body, previous = current.receipts.get(body.idempotencyKey)
+    const issued = current.issued.get(body.idempotencyKey)
+    if (!issued || body.quoteFingerprint !== issued.quote.quoteFingerprint || quoteIdentity(body) !== issued.identity
+      || !issued.quote.paymentMethods.includes(body.paymentMethod))
+      return res.status(409).json({ error: { code: 'IDEMPOTENCY_CONFLICT' } })
     current.orders.push(body)
     if (!current.orderingEnabled) return res.status(503).json({ error: { code: 'ORDERING_UNAVAILABLE' } })
     if (previous && JSON.stringify(previous.request) !== JSON.stringify(body)) return res.status(409).json({ error: { code: 'IDEMPOTENCY_CONFLICT' } })
-    const subtotal = body.items.reduce((total, item) => total + item.quantity * 2900, 0)
+    const { subtotal, discount, shippingFee, total } = issued.quote
     const receipt = previous?.receipt ?? { id: body.idempotencyKey, idempotencyKey: body.idempotencyKey, orderNumber: 'RF-20261011-1234ABCD',
-      status: 'Pending', paymentStatus: 'Unpaid', paymentMethod: body.paymentMethod, subtotal, discount: 0, shippingFee: 777, total: subtotal + 777, currency: 'PKR' }
+      status: 'Pending', paymentStatus: 'Unpaid', paymentMethod: body.paymentMethod, subtotal, discount, shippingFee, total, currency: 'PKR',
+      lines: issued.quote.lines.map((line) => ({ ...line, id: randomUUID() })),
+      pricingOutcome: { ...issued.quote.pricingOutcome, acceptedQuoteFingerprint: createHash('sha256')
+        .update('rf:v1:capability:008:' + issued.quote.quoteFingerprint, 'utf8').digest('hex') } }
     if (!previous) current.receipts.set(body.idempotencyKey, { request: structuredClone(body), receipt })
     // Physical socket loss is reserved for the separate transport diagnostic.
     if (current.destroyResponse) return res.destroy()
     res.json({ data: { ...receipt, idempotent: Boolean(previous) } })
+  })
+  app.get('/api/v2/public/catalog/variant-prices', (req, res) => {
+    const ids = new Set(String(req.query.ids ?? '').split(','))
+    const pricingAt = new Date().toISOString()
+    const items = [variantRow, secondVariantRow]
+      .filter((row) => ids.has(row.id) && row.active && row.available && productRow.active && productRow.status === 'Published')
+      .map((row) => {
+        const regularPrice = Number(row.regular_price), salePrice = row.sale_price == null ? null : Number(row.sale_price)
+        const effectivePrice = salePrice ?? regularPrice
+        return { variantId: row.id, productId: row.product_id, regularPrice, effectivePrice, price: effectivePrice,
+          salePrice, saleActive: salePrice !== null, pricingAt, validUntil: null }
+      })
+    res.json({ data: { currency: 'PKR', items } })
   })
   app.get('/api/public/storefront', (_req, res) => res.json({ products: [], categories: [], collections: [], blogs: [legacyBlog], settings: {}, homepage: {}, shipping: {}, payments: [], seo: [] }))
   app.use('/api', (_req, res) => res.json({ data: [] }))
@@ -122,8 +157,7 @@ before(async () => {
     server: { host: '127.0.0.1', port: 0, hmr: false },
   })
   await vite.listen(); origin = `http://127.0.0.1:${vite.httpServer.address().port}`
-  try { browser = await playwright.chromium.launch({ headless: true, timeout: 15000 }) }
-  catch { browser = await playwright.chromium.launch({ headless: true, timeout: 15000, channel: 'chrome' }) }
+  browser = await playwright.chromium.launch({ headless: true, channel: 'chromium', timeout: 15000 })
 }, { timeout: 60000 })
 after(async () => { await browser?.close(); await vite?.close(); network.restore(); assert.deepEqual(network.attempts, []) })
 
@@ -131,7 +165,7 @@ export async function integrationPage(t, { documentMode = true, nativeBlogs = tr
   const fixture = blogFixture(); change(fixture.records)
   const diagnostics = []
   const delivery = await createInjectedBlogDelivery({ service: fixture.service, canonicalOrigin: configuration.canonicalOrigin, documentMode, logger: { warn: value => diagnostics.push(value) } })
-  const state = { fixture, delivery, documentMode, diagnostics, requests: [], orders: [], receipts: new Map(), orderingEnabled, lostResponse: false, destroyResponse: false, unexpected: [], errors: [],
+  const state = { fixture, delivery, documentMode, diagnostics, requests: [], orders: [], receipts: new Map(), issued: new Map(), orderingEnabled, lostResponse: false, destroyResponse: false, unexpected: [], errors: [],
     checkout: { uiEvents: [], applicationFetches: [], browserRequests: [], controlledLosses: [] } }
   current = state
   const context = await browser.newContext({ serviceWorkers: 'block', reducedMotion: 'reduce', javaScriptEnabled })
@@ -198,7 +232,7 @@ export async function integrationPage(t, { documentMode = true, nativeBlogs = tr
     if (url.hostname === 'catalog.invalid' && method === 'GET' && !url.pathname.includes('/rpc/')) {
       const table = url.pathname.split('/').at(-1)
       if (table === 'products') return fulfill([productRow])
-      if (table === 'product_variants') return fulfill([variantRow, { ...variantRow, id: secondVariantId, option_value: '100 ml', display_order: 1 }])
+      if (table === 'product_variants') return fulfill([variantRow, secondVariantRow])
       if (table === 'categories') return fulfill([{ id: 'category', name: 'Eau de Parfum', slug: 'eau-de-parfum' }])
       if (table === 'public_site_settings') return fulfill([{ key: 'shipping', value: { defaultShippingFee: 250, freeShippingAbove: 7000 } }, { key: 'payments', value: [{ id: 'cod', name: 'Cash on Delivery', active: true }] }])
       return fulfill([])
@@ -226,5 +260,8 @@ export async function projectedCart(page) {
 }
 export async function fillCheckout(page) {
   for (const [label,value] of [['Full Name','Fixture Customer'],['Email','customer@example.invalid'],['Phone','00000000000'],['Address','Fixture Address'],['City','Lahore'],['Province / Region','Punjab']]) await page.getByLabel(label,{exact:true}).fill(value)
+  const confirmation = page.getByRole('checkbox', { name: /I confirm the quoted total of Rs/ })
+  await confirmation.waitFor({ state: 'visible' })
+  await confirmation.check()
   await page.waitForFunction(() => { const button = [...document.querySelectorAll('button')].find(button => button.textContent.includes('Place Order')); return Boolean(button && !button.disabled) })
 }

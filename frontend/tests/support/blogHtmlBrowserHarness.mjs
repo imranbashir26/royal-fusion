@@ -35,9 +35,7 @@ before(async () => {
   app.get('/', (_req, res) => res.type('html').send('<!doctype html><html lang="en"><head><title>Fixture home</title></head><body><h1>Unrelated home fixture</h1><a href="/blogs">Journal</a></body></html>'))
   server = app.listen(0, '127.0.0.1'); await once(server, 'listening')
   origin = `http://127.0.0.1:${server.address().port}`
-  // Match existing Royal Fusion harnesses: use installed Chrome if bundled Chromium is absent.
-  try { browser = await playwright.chromium.launch({ headless: true, timeout: 15000 }) }
-  catch { browser = await playwright.chromium.launch({ headless: true, timeout: 15000, channel: 'chrome' }) }
+  browser = await playwright.chromium.launch({ headless: true, channel: 'chromium', timeout: 15000 })
 })
 after(async () => {
   await browser?.close(); await vite?.close()

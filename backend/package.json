@@ -68,6 +68,7 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
     "groq-js": "2.0.0",
-    "pg": "8.23.1"
+    "pg": "8.23.1",
+    "playwright": "1.62.1"
   }
 }

@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { readFile } from 'node:fs/promises'
 import express from 'express'
 import helmet from 'helmet'
 import cors from 'cors'
@@ -11,6 +12,7 @@ import rateLimit from 'express-rate-limit'
 import { createServer } from 'vite'
 import { createPublicBlogsV1Router } from '../../../backend/server/routes/blogsV1.js'
 import { requestContext } from '../../../backend/server/middleware/authSecurity.js'
+import { mountSanityBlogApi } from '../../../backend/server/services/blogActivation.js'
 import { blockExternalBlogTestNetwork } from '../../../backend/server/tests/support/sanityBlogFixtures.js'
 import { blogFixture, configuration, legacyBlog } from './blogFixtures.mjs'
 import { productRow, variantRow } from '../variantFixtures.mjs'
@@ -24,10 +26,15 @@ export let origin
 before(async () => {
   network = blockExternalBlogTestNetwork()
   const api = express()
+  const disabledActivation = await mountSanityBlogApi(api, { environment: { NODE_ENV: 'production' },
+    clientFactory() { assert.fail('Disabled backend blogs must not construct a Sanity client') } })
+  assert.equal(disabledActivation.status, 'disabled')
+  const deploymentRouting = JSON.parse(await readFile(new URL('../../vercel.json', import.meta.url), 'utf8'))
   api.use(helmet(), requestContext, cors(), rateLimit({ windowMs: 15 * 60 * 1000, limit: 400, standardHeaders: true, legacyHeaders: false }))
   api.use('/api/v1/public/blogs', async (req, res, next) => {
     const selected = current
     if (!selected) return res.status(503).json({ error: { code: 'BLOGS_UNAVAILABLE' } })
+    if (selected.vercelRouting) return res.status(404).end()
     selected.requests.push({ path: req.originalUrl, method: req.method, headers: req.headers })
     res.on('close', () => { if (!res.writableEnded) selected.cancelled.push(req.originalUrl) })
     const gate = [...selected.gates].find(([suffix]) => req.path === suffix)?.[1]
@@ -40,6 +47,19 @@ before(async () => {
     return createPublicBlogsV1Router(selected.fixture.service)(req, res, next)
   })
   // Unrelated public/auth fixtures are memory-only and cannot write orders or access a database.
+  api.get('/api/health', (_req, res) => res.json({ status: 'ok', fixture: 'belmo-health' }))
+  api.get('/api/v2/public/catalog/variant-prices', (req, res) => {
+    const ids = String(req.query.ids ?? '').split(',')
+    current?.priceRequests.push(ids)
+    const regularPrice = Number(variantRow.regular_price)
+    const salePrice = variantRow.sale_price == null ? null : Number(variantRow.sale_price)
+    const effectivePrice = salePrice ?? regularPrice
+    res.json({ data: { currency: 'PKR', items: ids.includes(variantRow.id) ? [{
+      variantId: variantRow.id, productId: variantRow.product_id, regularPrice,
+      effectivePrice, price: effectivePrice, salePrice, saleActive: salePrice !== null,
+      pricingAt: new Date().toISOString(), validUntil: null,
+    }] : [] } })
+  })
   api.get('/api/v1/auth/session', (_req, res) => res.json({ data: { authenticated: false, csrfToken: 'fixture-csrf' } }))
   api.get('/api/public/storefront', (_req, res) => res.json({ products: [], categories: [], collections: [], blogs: [legacyBlog], settings: {}, homepage: {}, shipping: {}, payments: [], seo: [] }))
   api.get(/^\/api\//, (_req, res) => res.json({ data: [] }))
@@ -47,7 +67,29 @@ before(async () => {
     cacheDir: 'node_modules/.vite-blogs-browser', logLevel: 'silent',
     plugins: [{ name: 'fixture-only-blog-integration',
       configureServer(vite) {
-        vite.middlewares.use((req, res, next) => req.url?.startsWith('/api/') ? api(req, res, next) : next())
+        vite.middlewares.use((req, res, next) => {
+          if (!current?.vercelRouting) return req.url?.startsWith('/api/') ? api(req, res, next) : next()
+          const pathname = new URL(req.url, 'http://routing-fixture.invalid').pathname
+          const rule = deploymentRouting.rewrites.find(({ source }) => {
+            if (source === pathname || source === '/(.*)') return true
+            if (!source.endsWith('/:path*')) return false
+            const prefix = source.slice(0, -'/:path*'.length)
+            return pathname === prefix || pathname.startsWith(prefix + '/')
+          })
+          assert(rule, 'Deployment routing must handle the request')
+          if (rule.destination.startsWith('https://')) {
+            assert(rule.destination.startsWith('https://royal-fusion-3fd8.onbelmo.uk/'))
+            const suffix = rule.source.endsWith('/:path*') ? pathname.slice(rule.source.length - '/:path*'.length).replace(/^\//, '') : ''
+            const target = new URL(rule.destination.replace(':path*', suffix))
+            assert.equal(target.pathname, pathname, 'Proxy must preserve the backend path')
+            current.proxyRequests.push({ path: pathname, destination: target.href })
+            // Local upstream only; deliberately do not fall through to the Vite SPA
+            // when a proxied XML/API resource is missing from the disabled backend.
+            return api(req, res)
+          }
+          assert.equal(rule.destination, '/')
+          next()
+        })
         vite.middlewares.use(async (req, res, next) => {
           if (!req.headers.accept?.includes('text/html')) return next()
           res.setHeader('Content-Type', 'text/html')
@@ -96,13 +138,12 @@ before(async () => {
     server: { host: '127.0.0.1', port: 0, strictPort: false },
   })
   await server.listen(); origin = `http://127.0.0.1:${server.httpServer.address().port}`
-  try { browser = await playwright.chromium.launch({ headless: true, timeout: 15000 }) }
-  catch { browser = await playwright.chromium.launch({ headless: true, timeout: 15000, channel: 'chrome' }) }
+  browser = await playwright.chromium.launch({ headless: true, channel: 'chromium', timeout: 15000 })
 }, { timeout: 60000 })
 after(async () => { await browser?.close(); await server?.close(); network.restore(); assert.deepEqual(network.attempts, []) })
 
-export async function blogPage(t, { enabled = true, mode = 'normal', documents, ignoreCancellation = false, canonicalOrigin = configuration.canonicalOrigin } = {}) {
-  const state = { fixture: blogFixture(documents), mode, requests: [], cancelled: [], gates: new Map() }
+export async function blogPage(t, { enabled = true, mode = 'normal', documents, ignoreCancellation = false, canonicalOrigin = configuration.canonicalOrigin, vercelRouting = false } = {}) {
+  const state = { fixture: blogFixture(documents), mode, requests: [], cancelled: [], gates: new Map(), vercelRouting, proxyRequests: [], priceRequests: [] }
   current = state
   state.hold = suffix => {
     let release, startedResolve

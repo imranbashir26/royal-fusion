@@ -5,14 +5,6 @@
       "destination": "https://royal-fusion-3fd8.onbelmo.uk/api/:path*"
     },
     {
-      "source": "/blogs",
-      "destination": "https://royal-fusion-3fd8.onbelmo.uk/blogs"
-    },
-    {
-      "source": "/blogs/:path*",
-      "destination": "https://royal-fusion-3fd8.onbelmo.uk/blogs/:path*"
-    },
-    {
       "source": "/blog-sitemap.xml",
       "destination": "https://royal-fusion-3fd8.onbelmo.uk/blog-sitemap.xml"
     },
@@ -22,24 +14,6 @@
     }
   ],
   "headers": [
-    {
-      "source": "/blogs",
-      "headers": [
-        {
-          "key": "x-vercel-enable-rewrite-caching",
-          "value": "0"
-        }
-      ]
-    },
-    {
-      "source": "/blogs/:path*",
-      "headers": [
-        {
-          "key": "x-vercel-enable-rewrite-caching",
-          "value": "0"
-        }
-      ]
-    },
     {
       "source": "/blog-sitemap.xml",
       "headers": [

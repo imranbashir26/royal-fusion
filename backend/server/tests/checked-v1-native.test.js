@@ -17,9 +17,19 @@ async function order(db,confirmation,id=randomUUID(),coupon=''){return (await db
 async function legacy(db,id){return (await db.query('select create_order_transaction($1,$2::jsonb,$3::jsonb,$4::jsonb,$5,null,null,null) q',['checkout:'+id,JSON.stringify(request().items),JSON.stringify(contact),JSON.stringify(shipping),'Cash on Delivery'])).rows[0].q}
 async function reset(db){await db.query('update product_variants set stock_quantity=12,regular_price=2900,sale_price=null,standard_manual_available=true where id=$1',[variant]);await db.query('update shipping_methods set base_fee=250,free_shipping_threshold=null where code=$1',['rf007']);await db.query('delete from shipping_rates where shipping_method_id in(select id from shipping_methods where code=$1)',['rf007'])}
 async function lockWait(observer,client){const pid=(await client.query('select pg_backend_pid() pid')).rows[0].pid;return async()=>{for(let i=0;i<100;i++){if((await observer.query('select wait_event_type w from pg_stat_activity where pid=$1',[pid])).rows[0]?.w==='Lock')return;await new Promise(r=>setTimeout(r,20))}assert.fail('No actual lock wait')}}
-async function assertCommitted(db,receipt,quoted,priorStock,couponId=null){
+async function assertCommitted(db,receipt,quoted,priorStock,couponId=null,fingerprintContract='release007'){
  const saved=(await db.query('select to_jsonb(o) row from orders o where id=$1',[receipt.id])).rows[0].row
- assert.equal(saved.checkout_version,1);assert.equal(saved.v1_quote_fingerprint,quoted.quoteFingerprint)
+ assert.equal(saved.checkout_version,1)
+ // Release 007 stores its price confirmation; Release 008 stores only a verifier.
+ // Boolean comparisons keep bearer capabilities out of assertion diagnostics.
+ if(fingerprintContract==='release008'){
+  const verifier=createHash('sha256').update('rf:v1:capability:008:'+quoted.quoteFingerprint,'utf8').digest('hex')
+  assert.ok(saved.v1_quote_fingerprint===verifier,'Release 008 must store the canonical capability verifier')
+  assert.ok(saved.v1_quote_fingerprint!==quoted.quoteFingerprint,'Release 008 must never store the raw capability')
+ }else{
+  assert.equal(fingerprintContract,'release007','Unknown fingerprint contract')
+  assert.ok(saved.v1_quote_fingerprint===quoted.quoteFingerprint,'Release 007 must retain its exact price confirmation')
+ }
  assert.deepEqual([saved.subtotal,saved.discount,saved.shipping_fee,saved.total],[quoted.subtotal,quoted.discount,quoted.shippingFee,quoted.total])
  assert.equal(saved.coupon_id,couponId)
  const payment=(await db.query('select to_jsonb(p) row from payments p where order_id=$1',[receipt.id])).rows
@@ -340,7 +350,7 @@ test('Release 007 native private-function ACL adversarial acceptance; stop at fi
   assert.equal(replay.id,saved.id);assert.equal(replay.idempotent,true);assert.deepEqual(await state014(db),before)
   const q=await quote(db),body=['checkout:'+q.idempotencyKey,JSON.stringify(request().items),JSON.stringify(contact),JSON.stringify(shipping),'Cash on Delivery',null,null,null,q.quoteFingerprint]
   const receipt=(await db.query('select public.create_order_transaction_v1_checked($1,$2::jsonb,$3::jsonb,$4::jsonb,$5,$6,$7::uuid,$8::uuid,$9) q',body)).rows[0].q
-  await assertCommitted(db,receipt,q,11)
+  await assertCommitted(db,receipt,q,11,null,'release008')
   const committed=await state014(db);assert.equal((await db.query('select public.create_order_transaction_v1_checked($1,$2::jsonb,$3::jsonb,$4::jsonb,$5,$6,$7::uuid,$8::uuid,$9) q',body)).rows[0].q.id,receipt.id);assert.deepEqual(await state014(db),committed)
   const stale=await quote(db);await db.query("update shipping_methods set base_fee=251 where code='rf007-acl'")
   body[0]='checkout:'+stale.idempotencyKey;body[8]=stale.quoteFingerprint

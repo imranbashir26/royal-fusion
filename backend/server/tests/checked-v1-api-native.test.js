@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFile } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import express from 'express'
 import cookieParser from 'cookie-parser'
 import {createAuthConfig} from '../auth/config.js'
@@ -70,11 +70,22 @@ test('Checked V1 issued-token application adapters against native PG17; stop on 
     const receipt = await orders.create(input)
     assert.equal(receipt.total, quote.total); assert.equal(receipt.idempotent, false)
     const stored = (await db.query('select subtotal,discount,shipping_fee,total,v1_quote_fingerprint from orders where id=$1', [receipt.id])).rows[0]
-    assert.deepEqual([Number(stored.subtotal), Number(stored.discount), Number(stored.shipping_fee), Number(stored.total)], [quote.subtotal, quote.discount, quote.shippingFee, quote.total]); assert.equal(stored.v1_quote_fingerprint, input.quoteFingerprint)
+    assert.deepEqual([Number(stored.subtotal), Number(stored.discount), Number(stored.shipping_fee), Number(stored.total)], [quote.subtotal, quote.discount, quote.shippingFee, quote.total])
+    const expectedVerifier = createHash('sha256').update('rf:v1:capability:008:' + input.quoteFingerprint, 'utf8').digest('hex')
+    // Release 008 persists the verifier, never the bearer. Boolean assertions
+    // prevent a storage regression from printing the raw capability in TAP.
+    assert.ok(stored.v1_quote_fingerprint === expectedVerifier, 'Stored confirmation must equal the canonical verifier')
+    assert.ok(stored.v1_quote_fingerprint !== input.quoteFingerprint, 'Raw quote capability must not be stored')
     assert.equal((await db.query('select amount from payments where order_id=$1', [receipt.id])).rows.length, 1)
     assert.equal(Number((await db.query('select amount from payments where order_id=$1', [receipt.id])).rows[0].amount), quote.total)
     assert.equal((await db.query('select stock_quantity from product_variants where id=$1', [variantId])).rows[0].stock_quantity, stock - 1)
-    const before = await state014(db); assert.equal((await orders.create(input)).idempotent, true); assert.deepEqual(await state014(db), before)
+    const before = await state014(db)
+    await assert.rejects(() => orders.create({ ...input, quoteFingerprint: stored.v1_quote_fingerprint }), { status: 409, code: 'IDEMPOTENCY_CONFLICT' })
+    assert.deepEqual(await state014(db), before)
+    const replay = await orders.create(input)
+    assert.equal(replay.idempotent, true)
+    assert.ok(replay.id === receipt.id, 'Committed replay must return the original order')
+    assert.deepEqual(await state014(db), before)
   })
   await scenario('Missing, forged and mismatched issuance cannot authorize replacement or produce effects', async () => {
     const issued = orderInput(await quotes.quote(quotedInput())), other = orderInput(await quotes.quote(quotedInput()))

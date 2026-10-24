@@ -38,7 +38,12 @@ test('Phase 3 navigation, resource permissions and clients use canonical cookie/
 
 test('public SEO mapping accepts only active static pages and safe metadata URLs', async t => {
   const load = await modules(t), { staticSeoPaths, mapPublicSeoRows } = await load('/src/services/storefrontSeo.ts')
-  assert.deepEqual(staticSeoPaths, Object.values(seoPages))
+  const expectedStaticSeoPaths = [
+    '/', '/shop', '/collections', '/attars', '/about', '/contact',
+    '/privacy-policy', '/terms-and-conditions', '/shipping-policy', '/returns-refunds',
+  ]
+  assert.deepEqual(Object.values(seoPages), expectedStaticSeoPaths.slice(0, 6))
+  assert.deepEqual(staticSeoPaths, expectedStaticSeoPaths)
   const rows = mapPublicSeoRows([
     { active: true, route_path: '/contact', title: 'Contact', robots: 'noindex,follow', canonical_url: 'https://royalfusion.example/contact' },
     { active: false, route_path: '/about', title: 'Hidden' }, { active: true, route_path: '/blogs/article', title: 'CMS-owned' },

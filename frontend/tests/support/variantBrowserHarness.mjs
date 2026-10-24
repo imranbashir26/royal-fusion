@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { randomUUID,randomBytes } from 'node:crypto'
+import { createHash,randomUUID,randomBytes } from 'node:crypto'
 import { createServer } from 'vite'
 import { productId, secondVariantId, productRow, variantRow } from '../variantFixtures.mjs'
 
@@ -82,11 +82,7 @@ before(async () => {
   })
   await server.listen()
   origin = `http://127.0.0.1:${server.httpServer.address().port}`
-  try { browser = await playwright.chromium.launch({ headless: true, timeout: 15000 }) }
-  catch (chromiumError) {
-    try { browser = await playwright.chromium.launch({ headless: true, timeout: 15000, channel: 'chrome' }) }
-    catch (chromeError) { throw new Error(`Cannot launch browser tests. Bundled Chromium: ${chromiumError.message}; installed Chrome: ${chromeError.message}. No browser is downloaded.`) }
-  }
+  browser = await playwright.chromium.launch({ headless: true, channel: 'chromium', timeout: 15000 })
 }, { timeout: 60000 })
 
 after(async () => {
@@ -153,7 +149,13 @@ export async function pageFixture(t, { admin = null, webLocks = true, checkout =
       const {subtotal,discount,shippingFee,total}=attempt.quote
       attempt.receipt=receiptFor(body,{subtotal,discount,shippingFee,total},false);
       if(attempt.quote.lines)attempt.receipt.lines=attempt.quote.lines.map(line=>({...structuredClone(line),id:randomUUID()}));
-      if(attempt.quote.pricingOutcome)attempt.receipt.pricingOutcome=structuredClone(attempt.quote.pricingOutcome);attempt.request=structuredClone(rawBody);attempt.state='committed'
+      if(attempt.quote.pricingOutcome){
+        attempt.receipt.pricingOutcome=structuredClone(attempt.quote.pricingOutcome)
+        if(url.pathname.endsWith('/v1/public/orders')){
+          attempt.receipt.pricingOutcome.acceptedQuoteFingerprint=createHash('sha256').update('rf:v1:capability:008:'+attempt.quote.quoteFingerprint,'utf8').digest('hex')
+        }
+      }
+      attempt.request=structuredClone(rawBody);attempt.state='committed'
       return route.fulfill({ json: { data: checkout.mode === 'malformed' ? { id: 'bad' } : attempt.receipt } })
     }
     if (url.pathname.endsWith('/v1/auth/session')) return route.fulfill({ json: { data: admin?.session ?? { authenticated: false, csrfToken: 'fixture-csrf' } } })

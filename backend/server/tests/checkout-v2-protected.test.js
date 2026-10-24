@@ -20,6 +20,15 @@ import {stripTypeScriptTypes} from 'node:module'
 // immutable saved identity, and durable-rejection recovery guards. The other 40
 // fixed fingerprints and CRLF -> LF-only canonicalization remain unchanged.
 // Provenance: royal-fusion-stage2f12-1792001661741/before.json and protected-before.js.
+// Cart persistence checkpoint reconciled against the intentional tester-pack
+// implementation in 0d3e76a2fdecbb3477c00fcad3cbdf041e48f555. The current file
+// matches that Git blob exactly; only its fixed hash advances here. All other
+// checkpoints, CRLF -> LF-only canonicalization and mutation checks are retained.
+// Subsequent reviewed feature checkpoints: cartStore.ts and checkoutIntentStore.ts
+// match d60d08b (tester shopping), following 0d3e76a (V2 pack integration);
+// checkoutAttempt.ts matches 0d3e76a; customerAuthStore.ts matches 10a595f
+// (account/session handling). Each matches committed HEAD after CRLF -> LF only.
+// All 41 files remain pinned; executable V1/V2 boundaries complement these hashes.
 const expectedLF={
   "backend/.env.example": "27F22E6BA512857624AF4EBFD72C0CA9A6DA9C59278AEABF874ED31B48C45F91",
   "backend/server/auth/config.js": "24378615C55D7FE64E2F8A0687C8E5C2F5DA4BB2A0C470E04F55091BC87DE1F2",
@@ -43,11 +52,11 @@ const expectedLF={
   "backend/supabase/release-migrations/002_single_admin_fulfillment.sql": "05CABE7CA3ADDE772073F1B9FB22A51B9635F232C598436EF331B29D3C41667A",
   "backend/supabase/release-migrations/003_single_admin_retirement.sql": "CB17DFF3D9FF041EF6071B9084AD7E4EE75C8FA17B3F984CA3CBC37957C32737",
   "frontend/.env.example": "2AFFA64AE8FD7488AB86E7D7757E9D4664394CF2EBDE6049CBE784BBEBD592DE",
-  "frontend/src/store/cartPersistence.ts": "BC6B1061E1A37FDF62FDCF3DA478990B3A26D2EA7A2EBE9768A9D3083B9E9E40",
-  "frontend/src/store/cartStore.ts": "7B340C2053083B31D61B03AE6FD1896703C541A40A16CBFA5BAB121FC5F36916",
-  "frontend/src/store/checkoutAttempt.ts": "7015807478B8F9A6CE21A5A9FFA63C0DD562FB1EB303141620ABDAB0FD92C925",
-  "frontend/src/store/checkoutIntentStore.ts": "A694C3EF1189E07BEE14CBBD2F21C4F584A62ABB10C4A6177620DED63542070C",
-  "frontend/src/store/customerAuthStore.ts": "9084A928447C33D2DE292B567848BE69F3F1DB5D166A25BDA5629A0EFC701FC3",
+  "frontend/src/store/cartPersistence.ts": "E5E7727C857661F042E60C8B7F30B530BFFB6444CB19AC6C9F6C486AC8FCD42F",
+  "frontend/src/store/cartStore.ts": "0624092890E8794F589D2A25F9D869C6CD3CADF0B528FDF96C5257EBC960D565",
+  "frontend/src/store/checkoutAttempt.ts": "7CA902086C0E5B21080864D985AFE212EABE2D63000C8751EC10D332285B601D",
+  "frontend/src/store/checkoutIntentStore.ts": "EEC9CBE221D1F08081EB182617DB3C1538CD3215B4FDC9749CAC1B1A5E278FE0",
+  "frontend/src/store/customerAuthStore.ts": "709047150CBDE8408FF602CE3EC068F79D54AA697460645292BE153424A8A010",
   "frontend/src/store/wishlistStore.ts": "04E959CFBF7A7DF0ACBE0FC16A0AFA65E230F56B95BDCA125750FF587FDF21A3",
   "frontend/tests/checkoutIntegration.test.mjs": "811F54D2D493C58A4C2B233913519FD51CEB458196A4C443D2D5299E6F990778",
   "sanity/.env.example": "FA776BBCEEA229AE0ECCA47EFEF7775C8A2EB348DB5EDB05D59DBE3362896B0C",
@@ -77,6 +86,7 @@ function textRepresentations(lf) {
  return [lf,lf.replaceAll('\n','\r\n'),lf.replace(/\n/g,()=>line++%2?'\r\n':'\n')]
 }
 test('protected migration/auth/cart/config and reviewed Studio text matches fixed LF checkpoints',async()=>{
+ assert.equal(Object.keys(expectedLF).length,41)
  for(const path of Object.keys(expectedLF))verifyProtectedText(path,await readFile(new URL('../../../'+path,import.meta.url)))
 })
 test('all 41 fixed checkpoints accept equivalent LF, CRLF and mixed text',async()=>{
@@ -169,6 +179,151 @@ test('quote rejection classification never treats uncertain results as authority
  assert.equal(quoteAcceptanceKey('original-inputs',{...quote,quoteFingerprint:undefined},'Cash on Delivery'),null)
  for(const idempotencyKey of [undefined,'invalid'])assert.equal(quoteAcceptanceKey('original-inputs',{...quote,idempotencyKey},'Cash on Delivery'),null)
  for(const quoteFingerprint of [undefined,'invalid','A'.repeat(64)])assert.equal(quoteAcceptanceKey('original-inputs',{...quote,quoteFingerprint},'Cash on Delivery'),null)
+})
+
+// Deterministic synthetic server snapshots exercise the production validators and
+// real cart/intent stores. Storage and transport are isolated; no database or live
+// service issues credentials here. Persisted entry UUIDs avoid random fixture state.
+async function packAttemptFixture(consumeOverride){
+ const {createCartStore,getFixedPackLineId,getConfigurablePackLineId}=await import('../../../frontend/src/store/cartStore.ts')
+ const {createCheckoutIntentStore}=await import('../../../frontend/src/store/checkoutIntentStore.ts')
+ const {validIntent}=await import('../../../frontend/src/store/checkoutAttempt.ts')
+ const {isOrderReceipt}=await import('../../../frontend/src/services/checkoutClient.ts')
+ const {matchesV2Checkout}=await import('../../../frontend/src/services/checkoutV2Validation.ts')
+ const f=attemptFixture(),fixed='75000000-0000-4000-8000-000000000001',configured='75000000-0000-4000-8000-000000000002'
+ const a='b35b3be7-a7dd-4c70-9c14-d1a9394d4711',b='c35b3be7-a7dd-4c70-9c14-d1a9394d4711'
+ const selections=[{variantId:a,quantityPerPack:2},{variantId:b,quantityPerPack:1}]
+ const requests=[{kind:'fixed_tester_pack',packId:fixed,definitionRevision:'3',quantity:2},
+  {kind:'configurable_tester_pack',packId:configured,definitionRevision:'5',quantity:1,selections}]
+ const ids=[getFixedPackLineId(fixed,'3'),getConfigurablePackLineId(configured,'5',selections)]
+ const entries=['71000000-0000-4000-8000-000000000001','71000000-0000-4000-8000-000000000002']
+ const items=requests.map((line,i)=>({...structuredClone(line),productId:line.packId,lineId:ids[i],size:'Tester pack',identity:'canonical'}))
+ const values=new Map(),storage={getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)}
+ storage.setItem('royal-fusion-cart',JSON.stringify({version:2,state:{items,selectedLineIds:ids,
+  lineInstances:Object.fromEntries(ids.map((id,i)=>[id,entries[i]])),lineAppliedUnits:Object.fromEntries(ids.map(id=>[id,0]))}}))
+ const cart=createCartStore(storage),lines=cart.getState().capturePurchase(requests.map((line,i)=>({...structuredClone(line),lineId:ids[i]})))
+ assert.deepEqual(lines.map(line=>line.entryId),entries)
+ const {items:unused,...base}=f.request,request={...base,lines:structuredClone(requests)}
+ let generated=0
+ const consumption=[]
+ const store=createCheckoutIntentStore(storage,()=>{generated++;return f.other},async(...args)=>{
+  consumption.push(structuredClone(args))
+  return consumeOverride?consumeOverride(...args):cart.getState().consumePurchased(...args)
+ })
+ const frozen=store.getState().freeze(request,lines,f.token)
+ assert.equal(validIntent(frozen),true);assert.equal(generated,0)
+ const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex')
+ const component=(suffix,variantId,quantityPerPack,packQuantity)=>({id:'74000000-0000-4000-8000-00000000000'+suffix,
+  testerVariantId:variantId,testerProductId:'76000000-0000-4000-8000-000000000001',testerName:'Fixture tester',
+  position:0,size:'5 ml',volumeMl:5,quantityPerPack,totalPhysicalQuantity:quantityPerPack*packQuantity,referenceUnitPrice:100})
+ const snapshots=requests.map((line,i)=>{
+  const identity=[line.kind,line.packId,line.definitionRevision,...(i?[[[a,2],[b,1]]]:[])]
+  return {...structuredClone(line),id:'73000000-0000-4000-8000-00000000000'+(i+1),productId:line.packId,name:'Fixture pack',
+   position:i,identity,identityHash:digest(identity),definitionFingerprint:'d'.repeat(64),unitPrice:i?300:500,lineTotal:i?300:1000,
+   components:i?[component(2,a,2,1),{...component(3,b,1,1),position:1}]:[component(1,a,2,2)]}
+ })
+ const receipt={id:'72000000-0000-4000-8000-000000000001',idempotencyKey:f.token,orderNumber:'RF-20261021-ABCDEF01',
+  status:'Pending',paymentStatus:'Unpaid',paymentMethod:request.paymentMethod,idempotent:false,currency:'PKR',
+  subtotal:1300,discount:0,shippingFee:250,total:1550,contractVersion:2,snapshotVersion:2,
+  quoteFingerprint:request.quoteFingerprint,requestFingerprint:digest(frozen.request),lines:snapshots,
+  pricingOutcome:{policy:'GLOBAL_PERCENTAGE_V1',strategy:'SALE',couponOutcome:'not_requested',requestedCouponCode:'',
+   appliedCouponId:null,appliedCouponCode:null,regularSubtotal:1300,saleSubtotal:1300,couponSubtotal:null,couponDiscount:0,
+   merchandiseTotal:1300,acceptedQuoteFingerprint:request.quoteFingerprint}}
+ assert.equal(isOrderReceipt(receipt),true,'Positive fixture must satisfy the real receipt validator')
+ assert.equal(matchesV2Checkout(receipt,request.lines,request.quoteFingerprint),true,'Positive fixture must match the real V2 binding')
+ return {...f,request,lines,frozen,store,cart,storage,values,consumption,receipt,validIntent,isOrderReceipt,matchesV2Checkout,createCheckoutIntentStore}
+}
+
+test('V2 frozen packs reject revision, tester selection and canonical purchase identity mismatches',async t=>{
+ const f=await packAttemptFixture(),original={request:structuredClone(f.frozen.request),lines:structuredClone(f.lines)}
+ const equivalent=structuredClone(original);equivalent.request.lines[1].selections.reverse()
+ assert.equal(f.validIntent(equivalent),true,'Selection order does not change canonical identity')
+ for(const [name,mutate] of [
+  ['requested revision',x=>x.request.lines[0].definitionRevision='4'],
+  ['purchased revision',x=>x.lines[0].definitionRevision='4'],
+  ['requested tester',x=>x.request.lines[1].selections[0].variantId=x.request.lines[1].selections[1].variantId],
+  ['purchased tester quantity',x=>x.lines[1].selections[0].quantityPerPack++],
+  ['canonical line identity',x=>x.lines[0].lineId=x.lines[1].lineId],
+ ])await t.test(name,()=>{
+  const changed=structuredClone(original);mutate(changed)
+  assert.equal(f.validIntent(changed),false)
+  const values=new Map(),storage={getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value)}
+  const store=f.createCheckoutIntentStore(storage,()=>f.other)
+  const {idempotencyKey,...request}=changed.request
+  assert.throws(()=>store.getState().freeze(request,changed.lines,idempotencyKey),/Invalid checkout intent/)
+  assert.equal(store.getState().intent,null);assert.equal(values.size,0,'Invalid identity must not be persisted')
+ })
+ assert.throws(()=>{f.frozen.request.lines[0].definitionRevision='4'},TypeError)
+ assert.throws(()=>{f.frozen.lines[1].selections[0].quantityPerPack++},TypeError)
+})
+
+test('V2 completion rejects otherwise valid receipts for another attempt, quote or pack identity before consuming',async t=>{
+ const f=await packAttemptFixture(),before=[...f.values]
+ for(const [name,mutate] of [
+  ['attempt',r=>r.idempotencyKey=f.other],
+  ['payment method',r=>r.paymentMethod='Bank Transfer'],
+  ['accepted quote',r=>{r.quoteFingerprint='2'.repeat(64);r.pricingOutcome.acceptedQuoteFingerprint=r.quoteFingerprint}],
+  ['pack revision',r=>{r.lines[0].definitionRevision='4';r.lines[0].identity[2]='4'}],
+  ['canonical identity',r=>r.lines[0].identity[1]=r.lines[1].packId],
+  ['tester composition',r=>{r.lines[1].components[0].quantityPerPack=3;r.lines[1].components[0].totalPhysicalQuantity=3}],
+ ])await t.test(name,async()=>{
+  const changed=structuredClone(f.receipt);mutate(changed)
+  assert.equal(f.isOrderReceipt(changed),true,'Negative fixture must remain a structurally valid receipt')
+  await assert.rejects(()=>f.store.getState().complete(changed),/Invalid checkout receipt or attempt identity/)
+  assert.equal(f.store.getState().intent,f.frozen);assert.equal(f.store.getState().pendingReceipt,null)
+  assert.equal(f.consumption.length,0);assert.deepEqual([...f.values],before,'Rejected receipt must not change persisted state')
+ })
+})
+
+test('V2 successful completion and hydrated replay consume each captured cart entry only once',async()=>{
+ const f=await packAttemptFixture()
+ await f.store.getState().complete(f.receipt)
+ assert.equal(f.consumption.length,1)
+ assert.deepEqual(f.consumption[0],[f.token,f.receipt.id,f.lines])
+ assert.deepEqual(f.cart.getState().items,[])
+ assert.equal(f.store.getState().completion.consumption,'consumed')
+ const after=[...f.values],replay={...structuredClone(f.receipt),idempotent:true}
+ await f.store.getState().complete(replay)
+ const hydrated=f.createCheckoutIntentStore(f.storage,()=>f.other,async()=>{assert.fail('Completed replay must not consume again')})
+ assert.equal(hydrated.getState().hydrationStatus,'completed')
+ await hydrated.getState().complete(replay)
+ assert.equal(await f.cart.getState().consumePurchased(f.token,f.receipt.id,f.lines),'already-consumed')
+ assert.equal(f.consumption.length,1);assert.deepEqual([...f.values],after)
+})
+
+test('V2 unknown transport outcome retains the immutable original attempt and cart for exact retry',async()=>{
+ const f=await packAttemptFixture(),before=[...f.values]
+ const {createCheckoutClient,CheckoutClientError}=await import('../../../frontend/src/services/checkoutClient.ts')
+ const {isDefinitiveQuoteRejection}=await import('../../../frontend/src/services/checkoutConfirmation.ts')
+ const sent=[],client=createCheckoutClient(async(url,options)=>{
+  if(url==='/api/v1/auth/session')return {ok:true,json:async()=>({data:{csrfToken:'isolated-fixture-csrf'}})}
+  assert.equal(url,'/api/v2/public/orders');assert.equal(options.method,'POST');sent.push(JSON.parse(options.body))
+  return {ok:false,status:503,json:async()=>({error:{code:'CHECKOUT_UNAVAILABLE',message:'Unknown fixture outcome'}})}
+ },'/api','v2')
+ await assert.rejects(()=>client.createOrder(f.frozen.request),error=>error instanceof CheckoutClientError
+  && error.code==='CHECKOUT_UNAVAILABLE'&&error.unknownOutcome&&!isDefinitiveQuoteRejection(error))
+ assert.deepEqual(sent,[{contractVersion:2,...f.frozen.request}])
+ assert.equal(f.store.getState().intent,f.frozen);assert.equal(f.consumption.length,0)
+ const hydrated=f.createCheckoutIntentStore(f.storage,()=>f.other),original=hydrated.getState().intent
+ assert.equal(hydrated.getState().hydrationStatus,'active');assert.deepEqual(original,f.frozen)
+ assert.equal(hydrated.getState().freeze({...f.request,quoteFingerprint:'2'.repeat(64)},f.lines,f.other),original)
+ assert.throws(()=>{original.request.lines[1].selections[0].quantityPerPack++},TypeError)
+ assert.deepEqual([...f.values],before)
+})
+
+test('V2 confirmed receipt survives failed cart cleanup and blocks replacement while recovery is required',async()=>{
+ const f=await packAttemptFixture(async()=>{throw Error('Fixture cart persistence unavailable')})
+ const cartBefore=structuredClone(f.cart.getState().items)
+ await assert.rejects(()=>f.store.getState().complete(f.receipt),/Fixture cart persistence unavailable/)
+ assert.equal(f.consumption.length,1);assert.equal(f.store.getState().intent,f.frozen)
+ assert.deepEqual(f.store.getState().pendingReceipt,f.receipt)
+ assert.equal(f.store.getState().recovery.attemptId,f.token)
+ const hydrated=f.createCheckoutIntentStore(f.storage,()=>f.other),before=[...f.values]
+ assert.equal(hydrated.getState().hydrationStatus,'recovery_required')
+ assert.deepEqual(hydrated.getState().pendingReceipt,f.receipt)
+ assert.throws(()=>hydrated.getState().freeze(f.request,f.lines,f.other),/requires explicit recovery/)
+ assert.throws(()=>hydrated.getState().rejectQuote(f.token),/requires recovery/)
+ assert.deepEqual([...f.values],before);assert.deepEqual(f.cart.getState().items,cartBefore)
 })
 
 // This deterministic RPC-response fixture models a single server-issued quote.
@@ -304,14 +459,11 @@ test('canonicalization preserves non-line-ending bytes and rejects invalid or bi
  assert.throws(()=>canonicalProtectedText(Buffer.from([0])),assert.AssertionError)
 })
 
-// 408f039 intentionally added blog HTML/sitemap rewrites after the old CRLF hash
-// checkpoint. Pin the complete reviewed configuration semantically: formatting
-// and LF/CRLF may vary; destinations, route order and security headers may not.
-// Local routing evidence: royal-fusion-blog-routing-20261011/verification-report.md.
-// This protects preparation only. Deployment still needs approved backend flags,
-// frontend document navigation, frontend project root and actual edge verification.
+// Blog pages use the existing SPA while backend blog features remain disabled.
+// Keep the XML resource separate: its disabled upstream returns an actual 404,
+// never the SPA shell. Pin destinations, precedence and cache headers semantically.
 const backendOrigin='https://royal-fusion-3fd8.onbelmo.uk'
-const blogScopes=['/blogs','/blogs/:path*','/blog-sitemap.xml']
+const blogScopes=['/blog-sitemap.xml']
 const approvedFrontendRouting={
  rewrites:[
   {source:'/api/:path*',destination:backendOrigin+'/api/:path*'},
@@ -335,15 +487,17 @@ test('routing guard rejects unsafe destinations, route precedence changes, publi
  for(const change of [
   c=>c.rewrites[0].destination='https://untrusted.example.invalid/api/:path*',
   c=>c.rewrites[0].destination=backendOrigin+'/:path*',
-  c=>c.rewrites[1].destination='http://royal-fusion-3fd8.onbelmo.uk/blogs',
-  c=>c.rewrites[2].destination='https://royal-fusion-3fd8.onbelmo.uk@untrusted.example.invalid/blogs/:path*',
+  c=>c.rewrites[1].destination='http://royal-fusion-3fd8.onbelmo.uk/blog-sitemap.xml',
+  c=>c.rewrites[1].destination='https://royal-fusion-3fd8.onbelmo.uk@untrusted.example.invalid/blog-sitemap.xml',
   c=>c.rewrites.unshift(c.rewrites.pop()),
   c=>c.rewrites[2].source='/blogs/:slug',
+  c=>c.rewrites.splice(1,0,{source:'/blogs',destination:backendOrigin+'/blogs'}),
+  c=>c.rewrites[1].destination='/',
   c=>c.rewrites.splice(1,0,{source:'/admin/:path*',destination:backendOrigin+'/admin/:path*'}),
   c=>c.headers[0].headers[0].value='1',
   c=>c.headers.pop(),
   c=>c.headers.push({source:'/api/:path*',headers:[{key:'Cache-Control',value:'public, max-age=3600'}]}),
-  c=>c.headers[1].headers.push({key:'Content-Security-Policy',value:"default-src * 'unsafe-inline'"}),
+  c=>c.headers[0].headers.push({key:'Content-Security-Policy',value:"default-src * 'unsafe-inline'"}),
  ]){
   const changed=structuredClone(approvedFrontendRouting);change(changed)
   assert.throws(()=>verifyFrontendRouting(JSON.stringify(changed)),assert.AssertionError)
