@@ -21,6 +21,28 @@ if (fs.existsSync(cluster)) throw Error('Refusing to reuse an existing cluster; 
 fs.mkdirSync(output,{recursive:true})
 const suffix=process.platform==='win32'?'.exe':''
 const command=(name,args,log)=>{const fd=fs.openSync(path.join(output,log),'a');try{return execFileSync(path.join(bin,name+suffix),args,{stdio:['ignore',fd,fd],windowsHide:true,timeout:45000})}finally{fs.closeSync(fd)}}
+const startupLogTail=name=>{
+ let fd
+ try{
+  fd=fs.openSync(path.join(output,name),'r')
+  const size=fs.fstatSync(fd).size,length=Math.min(size,8192),buffer=Buffer.alloc(length)
+  fs.readSync(fd,buffer,0,length,size-length)
+  return {available:true,text:buffer.toString('utf8')}
+ }catch{return {available:false,text:''}}
+ finally{if(fd!==undefined)fs.closeSync(fd)}
+}
+const startupFailure=error=>{
+ const pgCtl=startupLogTail('pg_ctl.log'),postgres=startupLogTail('postgres.log')
+ const evidence=pgCtl.text+'\n'+postgres.text
+ const matches=[
+  ['permission_denied',/permission denied|operation not permitted|access is denied/i],
+  ['port_conflict',/address already in use|port \d+ (?:is )?(?:already in use|occupied)/i],
+  ['configuration_rejected',/unrecognized configuration parameter|invalid value for parameter|configuration file .* contains errors|syntax error in file/i],
+  ['data_directory_failure',/data directory .* (?:does not exist|has wrong ownership|has invalid permissions|is not a database cluster)|database files are incompatible|lock file "postmaster\.pid" already exists/i],
+ ].filter(([,pattern])=>pattern.test(evidence))
+ const category=matches.length===1?matches[0][0]:'unknown'
+ return {exitCode:Number.isInteger(error?.status)?error.status:null,category,pgCtlLogAvailable:pgCtl.available,postgresLogAvailable:postgres.available}
+}
 let interrupted=false,stopActiveTest
 const initializationAbort=new AbortController()
 const interrupt=()=>{interrupted=true;initializationAbort.abort();stopActiveTest?.()}
@@ -65,7 +87,8 @@ try {
  if(interrupted)throw Error('Interrupted before PostgreSQL startup')
  fs.writeFileSync(path.join(cluster,'release005-owned-marker'),marker)
  phase='startup';report.startup.started=true
- command('pg_ctl',['start','-D',cluster,'-l',path.join(output,'postgres.log'),'-o','-h 127.0.0.1 -p '+port,'-w','-t','20'],'pg_ctl.log');started=true
+ try{command('pg_ctl',['start','-D',cluster,'-l',path.join(output,'postgres.log'),'-o','-h 127.0.0.1 -p '+port,'-w','-t','20'],'pg_ctl.log');started=true}
+ catch(error){report.startup.failure=startupFailure(error);console.error('POSTGRES_STARTUP_DIAGNOSTIC '+JSON.stringify(report.startup.failure));throw error}
  report.startup.succeeded=true
  const config={cluster:cluster.replaceAll('\\','/'),marker,port,pgModule:path.resolve(pgModule),version,pgBin:path.resolve(bin)}
  const configuration=path.join(output,'native-config.json');fs.writeFileSync(configuration,JSON.stringify(config,null,2))
@@ -80,7 +103,7 @@ try {
  if(result.status!==0)throw Error(result.error?.message??'Native tests failed')
  if(interrupted)throw Error('Native verification interrupted')
 } catch(error) {
- primaryError=error;report.error=error.message;report.failedPhase=phase
+ primaryError=error;report.error=phase==='startup'?'PostgreSQL startup failed':error.message;report.failedPhase=phase
 } finally {
  try{
   const initialization=report.initialization.command
