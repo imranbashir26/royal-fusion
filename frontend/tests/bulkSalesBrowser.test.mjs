@@ -16,7 +16,7 @@ function product(n, {count = 1, tester = false} = {}) {
 function pack(n, mode = 'fixed') {
   return {...snapshot(450), id: id(50000 + n * 100), name: `Pack ${n}`, slug: `pack-${n}`, commerceKind: 'tester_pack', mode, catalogRevision: '8', definitionRevision: '9', sku: `PACK-${n}`, image: '/favicon.svg', gallery: [], description: '', shortDescription: '', scentFamily: 'Discovery', categoryId: null, status: 'Draft', active: false, minimumUnits: null, maximumUnits: null, fixedRegularPrice: 450, fixedSalePrice: null, fixedSaleStartsAt: null, fixedSaleEndsAt: null, manualAvailable: false, available: false, availablePackCount: 0, components: [{testerVariantId: id(9001), quantityPerPack: 2, displayOrder: 0}], allowedVariants: [], diagnostics: {structurallyComplete: true, hiddenOrInactiveCount: 0}}
 }
-async function fixture(t, {products = [product(1), product(2)], packs = [pack(3), pack(4, 'configurable')], capability = true, onWrite, list, permissions = ['*']} = {}) {
+async function fixture(t, {products = [product(1), product(2)], packs = [pack(3), pack(4, 'configurable')], capability = true, onWrite, onDetailRead, list, permissions = ['*']} = {}) {
   const authentication = admin(); authentication.session.administrator.permissions = permissions
   const {page} = await pageFixture(t, {admin: authentication}), writes = [], reads = []
   const data = new Map([...products, ...packs].map(p => [p.id, structuredClone(p)]))
@@ -45,7 +45,11 @@ async function fixture(t, {products = [product(1), product(2)], packs = [pack(3)
     }
     reads.push(last)
     if (last === 'tester-options') return route.fulfill({json: {data: []}})
-    if (data.has(last)) return route.fulfill({json: {data: data.get(last)}})
+    if (data.has(last)) {
+      const detail = data.get(last)
+      onDetailRead?.(request, detail)
+      return route.fulfill({json: {data: detail}})
+    }
     if (url.pathname.includes('tester-packs')) return route.fulfill({json: {data: {items: packs, totalPages: 1}}})
     return route.fulfill({json: {data: list ? list(url) : {items: products, page: 1, pageSize: 25, total: products.length, totalPages: 1}}})
   }
@@ -358,19 +362,63 @@ test('Unsupported product kind and view-only authorization cannot enter the bulk
 test('Server expiry refresh accepts authoritative effective price without replacing reviewed financial configuration', {timeout: 90000}, async t => {
   const products = [product(1)]
   Object.assign(products[0].variants[0], {salePrice: 2400.25, effectivePrice: 2400.25, saleActive: true, saleEndsAt: '2026-10-16T00:00:03Z', validUntil: '2026-10-16T00:00:03Z'})
-  const {page, data, reads} = await fixture(t, {products})
-  await page.addInitScript(() => {Date.now = () => 4102444800000})
-  await open(page)
-  await editor(page).getByRole('button', {name: 'Choose Perfume 1', exact: true}).click()
-  const add = editor(page).getByRole('button', {name: 'Add Perfume 1 Size: 50 ml', exact: true})
-  await add.waitFor()
-  assert.equal(reads.filter(x => x === products[0].id).length, 1, 'Initial selection must use the expiring sale snapshot')
-  Object.assign(data.get(products[0].id).variants[0], {effectivePrice: 2900, saleActive: false, pricingAt: '2026-10-16T00:00:04Z', validUntil: null})
-  await add.click()
-  await row(page, 'Perfume 1').getByText(/Effective at database snapshot:.*2,900.00/).waitFor({timeout: 12000})
-  assert.equal(reads.filter(x => x === products[0].id).length, 2)
-  assert.equal(await row(page, 'Perfume 1').getByLabel('Fixed sale amount (PKR)').inputValue(), '2400.25')
-  assert.equal(await row(page, 'Perfume 1').getByLabel('Sale end (exclusive, ISO offset)').inputValue(), '2026-10-16T00:00:03Z')
+  const started = performance.now(), detailEvents = [], byRequest = new WeakMap()
+  let detailGetCount = 0
+  const elapsed = () => Math.round(performance.now() - started)
+  const isDetailGet = request => request.method() === 'GET' && new URL(request.url()).pathname === `/api/v1/admin/products/${products[0].id}`
+  const record = request => {
+    let event = byRequest.get(request)
+    if (!event) {
+      event = {number: ++detailGetCount, requestedMs: elapsed()}
+      byRequest.set(request, event)
+      if (detailEvents.length < 8) detailEvents.push(event)
+    }
+    return event
+  }
+  const expected = products[0].variants[0]
+  const {page, data, reads} = await fixture(t, {products, onDetailRead: (request, detail) => {
+    const variant = detail.variants?.find(v => v.id === expected.id)
+    Object.assign(record(request), {
+      handledMs: elapsed(), fixturePrice: variant?.effectivePrice ?? null,
+      productIdentityMatches: detail.id === products[0].id,
+      variantIdentityMatches: variant?.productId === products[0].id,
+      revisionMatches: detail.catalogRevision === products[0].catalogRevision,
+      reviewedConfigMatches: Boolean(variant && ['regularPrice', 'salePrice', 'saleStartsAt', 'saleEndsAt'].every(key => variant[key] === expected[key])),
+    })
+  }})
+  page.on('request', request => {if (isDetailGet(request)) record(request)})
+  page.on('response', response => {const event = byRequest.get(response.request()); if (event) {event.status = response.status(); event.respondedMs = elapsed()}})
+  page.on('requestfinished', request => {const event = byRequest.get(request); if (event) event.finishedMs = elapsed()})
+  page.on('requestfailed', request => {const event = byRequest.get(request); if (event) event.failedMs = elapsed()})
+  try {
+    await page.addInitScript(() => {Date.now = () => 4102444800000})
+    await open(page)
+    await editor(page).getByRole('button', {name: 'Choose Perfume 1', exact: true}).click()
+    const add = editor(page).getByRole('button', {name: 'Add Perfume 1 Size: 50 ml', exact: true})
+    await add.waitFor()
+    assert.equal(reads.filter(x => x === products[0].id).length, 1, 'Initial selection must use the expiring sale snapshot')
+    Object.assign(data.get(products[0].id).variants[0], {effectivePrice: 2900, saleActive: false, pricingAt: '2026-10-16T00:00:04Z', validUntil: null})
+    await add.click()
+    await row(page, 'Perfume 1').getByText(/Effective at database snapshot:.*2,900.00/).waitFor({timeout: 12000})
+    assert.equal(reads.filter(x => x === products[0].id).length, 2)
+    assert.equal(await row(page, 'Perfume 1').getByLabel('Fixed sale amount (PKR)').inputValue(), '2400.25')
+    assert.equal(await row(page, 'Perfume 1').getByLabel('Sale end (exclusive, ISO offset)').inputValue(), '2026-10-16T00:00:03Z')
+  } catch (error) {
+    try {
+      const saleRow = row(page, 'Perfume 1'), exists = await saleRow.count(), visible = exists > 0 && await saleRow.isVisible()
+      const safe = value => String(value).replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, '<uuid>').replace(/[0-9a-f]{64}/gi, '<hex>').replace(/\S+@\S+/g, '<email>').replace(/\s+/g, ' ').slice(0, 320)
+      const text = visible ? safe(await saleRow.innerText({timeout: 500})) : ''
+      const alerts = (await editor(page).locator('[role="alert"]').allInnerTexts()).slice(0, 3).map(safe)
+      t.diagnostic(`BULK_EXPIRY_FAILURE ${JSON.stringify({
+        elapsedMs: elapsed(), detailGetCount, detailEvents, refreshCompletedBeforeFailure: Boolean(detailEvents[1]?.finishedMs),
+        rowExists: exists > 0, rowVisible: visible, rowText: text, refreshRequired: text.includes('Refresh required'),
+        expectedTextInRow: /Effective at database snapshot:.*2,900\.00/.test(text),
+        locatorMatches: visible ? await saleRow.getByText(/Effective at database snapshot:.*2,900\.00/).count() : 0,
+        alerts,
+      })}`)
+    } catch {t.diagnostic('BULK_EXPIRY_FAILURE diagnostic collection was unavailable')}
+    throw error
+  }
 })
 
 test('Mismatched authoritative parent identity fails selection instead of editing a different product', {timeout: 90000}, async t => {
